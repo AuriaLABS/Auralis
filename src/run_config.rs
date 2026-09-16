@@ -198,7 +198,7 @@ impl RunConfig {
             validation_fraction: required(validation_fraction, "validation_fraction")?,
             bpe_merges: required(bpe_merges, "bpe_merges")?,
         };
-        cfg.validate().map_err(str::to_string)?;
+        cfg.validate().map_err(|error| error.to_string())?;
         Ok(cfg)
     }
 
