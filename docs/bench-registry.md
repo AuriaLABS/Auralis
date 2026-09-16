@@ -5,12 +5,15 @@
 ```
 auralis bench list
 auralis bench describe engine
+auralis bench list --json
+auralis bench list --csv
+auralis bench describe engine --json
 ```
 
-Machine-readable catalog (library API; CLI flags next slice):
+`--json` and `--csv` are exclusive. Library helpers:
 
-- `bench::list_json()` — `{"count":N,"benches":[...]}`
-- `bench::list_csv()` — header + one row per bench
+- `bench::list_json()` / `bench::list_csv()`
+- `bench_format::render(command, id, format)`
 
 To add a benchmark:
 
