@@ -277,6 +277,142 @@ pub fn attention_forward_row_slices_into(
     }
 }
 
+/// Reference causal multi-head attention backward pass matching `model.rs`.
+pub fn attention_backward_reference_into(
+    dout: &[f32],
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    probs: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+    dq: &mut [f32],
+    dk: &mut [f32],
+    dv: &mut [f32],
+    dp: &mut [f32],
+) {
+    assert_eq!(dout.len(), t * d);
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert_eq!(probs.len(), n_head * t * t);
+    assert_eq!(dq.len(), t * d);
+    assert_eq!(dk.len(), t * d);
+    assert_eq!(dv.len(), t * d);
+    assert_eq!(dp.len(), t);
+    assert!(n_head > 0 && d % n_head == 0);
+    dq.fill(0.0);
+    dk.fill(0.0);
+    dv.fill(0.0);
+    dp.fill(0.0);
+
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+    for h in 0..n_head {
+        let hoff = h * hd;
+        for i in 0..t {
+            dp[..=i].fill(0.0);
+            for j in 0..=i {
+                let p = probs[(h * t + i) * t + j];
+                for z in 0..hd {
+                    let go = dout[i * d + hoff + z];
+                    dp[j] += go * v[j * d + hoff + z];
+                    dv[j * d + hoff + z] += p * go;
+                }
+            }
+            let mut dot = 0.0;
+            for j in 0..=i {
+                dot += dp[j] * probs[(h * t + i) * t + j];
+            }
+            for j in 0..=i {
+                let p = probs[(h * t + i) * t + j];
+                let ds = p * (dp[j] - dot) * scale;
+                for z in 0..hd {
+                    let qi = q[i * d + hoff + z];
+                    let kj = k[j * d + hoff + z];
+                    dq[i * d + hoff + z] += ds * kj;
+                    dk[j * d + hoff + z] += ds * qi;
+                }
+            }
+        }
+    }
+}
+
+/// Slice-based attention backward preserving the exact `h -> i -> j -> z` order.
+pub fn attention_backward_row_slices_into(
+    dout: &[f32],
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    probs: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+    dq: &mut [f32],
+    dk: &mut [f32],
+    dv: &mut [f32],
+    dp: &mut [f32],
+) {
+    assert_eq!(dout.len(), t * d);
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert_eq!(probs.len(), n_head * t * t);
+    assert_eq!(dq.len(), t * d);
+    assert_eq!(dk.len(), t * d);
+    assert_eq!(dv.len(), t * d);
+    assert_eq!(dp.len(), t);
+    assert!(n_head > 0 && d % n_head == 0);
+    dq.fill(0.0);
+    dk.fill(0.0);
+    dv.fill(0.0);
+    dp.fill(0.0);
+
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+    for h in 0..n_head {
+        let hoff = h * hd;
+        for i in 0..t {
+            dp[..=i].fill(0.0);
+            let dout_head = &dout[i * d + hoff..i * d + hoff + hd];
+            let q_head = &q[i * d + hoff..i * d + hoff + hd];
+            let prob_start = (h * t + i) * t;
+            let prob_row = &probs[prob_start..prob_start + t];
+
+            for j in 0..=i {
+                let p = prob_row[j];
+                let v_head = &v[j * d + hoff..j * d + hoff + hd];
+                let dv_head = &mut dv[j * d + hoff..j * d + hoff + hd];
+                for z in 0..hd {
+                    let go = dout_head[z];
+                    dp[j] += go * v_head[z];
+                    dv_head[z] += p * go;
+                }
+            }
+
+            let mut dot = 0.0f32;
+            for j in 0..=i {
+                dot += dp[j] * prob_row[j];
+            }
+
+            let dq_head = &mut dq[i * d + hoff..i * d + hoff + hd];
+            for j in 0..=i {
+                let p = prob_row[j];
+                let ds = p * (dp[j] - dot) * scale;
+                let k_head = &k[j * d + hoff..j * d + hoff + hd];
+                let dk_head = &mut dk[j * d + hoff..j * d + hoff + hd];
+                for z in 0..hd {
+                    let qi = q_head[z];
+                    let kj = k_head[z];
+                    dq_head[z] += ds * kj;
+                    dk_head[z] += ds * qi;
+                }
+            }
+        }
+    }
+}
+
 /// Reference gradient for the right-hand matrix in `A * B`.
 ///
 /// Adds `A^T * dY` into `dB`. This preserves the original scalar loop order.
@@ -340,6 +476,7 @@ pub fn matmul_grad_b_rowwise_zeroed(
 #[cfg(test)]
 mod tests {
     use super::{
+        attention_backward_reference_into, attention_backward_row_slices_into,
         attention_forward_reference_into, attention_forward_row_slices_into,
         matmul_b_t_reference_add_into, matmul_b_t_reference_into,
         matmul_b_t_row_slices_add_into, matmul_b_t_row_slices_into,
@@ -445,6 +582,68 @@ mod tests {
         assert_eq!(sliced_out, reference_out);
     }
 
+    fn assert_attention_backward_exact(t: usize, d: usize, n_head: usize) {
+        let q = data(t * d, 37);
+        let k = data(t * d, 41);
+        let v = data(t * d, 43);
+        let dout = data(t * d, 47);
+        let mut forward_out = vec![0.0; t * d];
+        let mut probs = vec![0.0; n_head * t * t];
+        attention_forward_reference_into(
+            &q,
+            &k,
+            &v,
+            t,
+            d,
+            n_head,
+            &mut forward_out,
+            &mut probs,
+        );
+
+        let mut reference_dq = vec![f32::NAN; t * d];
+        let mut reference_dk = vec![f32::NAN; t * d];
+        let mut reference_dv = vec![f32::NAN; t * d];
+        let mut reference_dp = vec![f32::NAN; t];
+        let mut sliced_dq = vec![f32::NAN; t * d];
+        let mut sliced_dk = vec![f32::NAN; t * d];
+        let mut sliced_dv = vec![f32::NAN; t * d];
+        let mut sliced_dp = vec![f32::NAN; t];
+
+        attention_backward_reference_into(
+            &dout,
+            &q,
+            &k,
+            &v,
+            &probs,
+            t,
+            d,
+            n_head,
+            &mut reference_dq,
+            &mut reference_dk,
+            &mut reference_dv,
+            &mut reference_dp,
+        );
+        attention_backward_row_slices_into(
+            &dout,
+            &q,
+            &k,
+            &v,
+            &probs,
+            t,
+            d,
+            n_head,
+            &mut sliced_dq,
+            &mut sliced_dk,
+            &mut sliced_dv,
+            &mut sliced_dp,
+        );
+
+        assert_eq!(sliced_dq, reference_dq);
+        assert_eq!(sliced_dk, reference_dk);
+        assert_eq!(sliced_dv, reference_dv);
+        assert_eq!(sliced_dp, reference_dp);
+    }
+
     #[test]
     fn rowwise_grad_b_kernel_matches_reference_bit_for_bit() {
         for (rows, inner, cols) in [
@@ -494,6 +693,13 @@ mod tests {
     fn row_slice_attention_forward_matches_reference_bit_for_bit() {
         for (t, d, n_head) in [(1, 4, 1), (4, 8, 2), (7, 8, 2), (32, 32, 4)] {
             assert_attention_forward_exact(t, d, n_head);
+        }
+    }
+
+    #[test]
+    fn row_slice_attention_backward_matches_reference_bit_for_bit() {
+        for (t, d, n_head) in [(1, 4, 1), (4, 8, 2), (7, 8, 2), (32, 32, 4)] {
+            assert_attention_backward_exact(t, d, n_head);
         }
     }
 
