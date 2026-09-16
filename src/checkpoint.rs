@@ -14,6 +14,8 @@ use std::path::Path;
 const MAGIC1: &[u8; 8] = b"AURLIS01";
 const MAGIC2: &[u8; 8] = b"AURLIS02";
 const MAGIC3: &[u8; 8] = b"AURLIS03";
+const MAX_CHECKPOINT_STRING: u32 = 1_048_576;
+const MAX_BPE_TABLE: u32 = 65_536;
 
 fn invalid_data(msg: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, msg.into())
@@ -41,10 +43,25 @@ fn write_str(f: &mut File, s: &str) -> std::io::Result<()> {
 }
 
 fn read_str(f: &mut File) -> std::io::Result<String> {
-    let n = read_u32(f)? as usize;
-    let mut b = vec![0u8; n];
+    let n = read_u32(f)?;
+    if n > MAX_CHECKPOINT_STRING {
+        return Err(invalid_data(format!(
+            "checkpoint string length {n} exceeds {MAX_CHECKPOINT_STRING}"
+        )));
+    }
+    let mut b = vec![0u8; n as usize];
     f.read_exact(&mut b)?;
     String::from_utf8(b).map_err(|e| invalid_data(e.to_string()))
+}
+
+fn read_bounded_count(f: &mut File, what: &str) -> std::io::Result<u32> {
+    let n = read_u32(f)?;
+    if n > MAX_BPE_TABLE {
+        return Err(invalid_data(format!(
+            "{what} count {n} exceeds {MAX_BPE_TABLE}"
+        )));
+    }
+    Ok(n)
 }
 
 fn validate_cfg(cfg: Config) -> std::io::Result<()> {
@@ -55,6 +72,12 @@ fn validate_cfg(cfg: Config) -> std::io::Result<()> {
         || cfg.block == 0
         || cfg.n_ff == 0
         || cfg.n_embd % cfg.n_head != 0
+        || cfg.vocab > 65_536
+        || cfg.n_embd > 4_096
+        || cfg.n_head > 256
+        || cfg.n_layer > 64
+        || cfg.block > 8_192
+        || cfg.n_ff > 16_384
     {
         return Err(invalid_data("invalid model configuration in checkpoint"));
     }
@@ -199,12 +222,12 @@ pub fn load_full(path: impl AsRef<Path>) -> std::io::Result<(Gpt, AnyTok, Option
             AnyTok::Char(CharTokenizer { stoi, itos })
         }
         1 => {
-            let nv = read_u32(&mut f)? as usize;
+            let nv = read_bounded_count(&mut f, "BPE vocabulary")? as usize;
             let mut itos = Vec::with_capacity(nv);
             for _ in 0..nv {
                 itos.push(read_str(&mut f)?);
             }
-            let nm = read_u32(&mut f)? as usize;
+            let nm = read_bounded_count(&mut f, "BPE merges")? as usize;
             let mut merges = Vec::with_capacity(nm);
             for _ in 0..nm {
                 merges.push((read_str(&mut f)?, read_str(&mut f)?));
@@ -224,9 +247,6 @@ pub fn load_full(path: impl AsRef<Path>) -> std::io::Result<(Gpt, AnyTok, Option
         return Err(invalid_data("vocabulary size mismatch"));
     }
 
-    // Build first so the current architecture determines the expected count.
-    // This turns obsolete AURLIS checkpoints into a clean error instead of an
-    // assertion panic in `write_params`.
     let mut gpt = build_model(cfg)?;
     let expected = gpt.collect_params().len();
     let n = read_u32(&mut f)? as usize;
@@ -296,8 +316,13 @@ fn load_v1(f: &mut File) -> std::io::Result<(Gpt, AnyTok)> {
     };
     validate_cfg(cfg)?;
 
-    let vlen = read_u32(f)? as usize;
-    let mut vb = vec![0u8; vlen];
+    let vlen = read_u32(f)?;
+    if vlen > MAX_CHECKPOINT_STRING {
+        return Err(invalid_data(format!(
+            "AURLIS01 vocab length {vlen} exceeds {MAX_CHECKPOINT_STRING}"
+        )));
+    }
+    let mut vb = vec![0u8; vlen as usize];
     f.read_exact(&mut vb)?;
     let vocab = String::from_utf8(vb).map_err(|e| invalid_data(e.to_string()))?;
     let itos: Vec<char> = vocab.chars().collect();
