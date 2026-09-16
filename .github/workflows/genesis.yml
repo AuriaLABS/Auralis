@@ -122,3 +122,13 @@ jobs:
           grep -q 'kernel=matmul_grad_b' <<< "$summary"
           grep -q 'exact_output=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
+
+      - name: E2 forward matmul benchmark
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_matmul_bench -- 5 40 5 2>&1)"
+          printf '%s\n' "$output"
+          test "$(grep -c '^matmul_bench_run |' <<< "$output")" -eq 5
+          summary="$(grep '^matmul_bench_summary |' <<< "$output")"
+          grep -q 'exact_output=true' <<< "$summary"
+          grep -q 'repeats=5' <<< "$summary"
