@@ -43,9 +43,22 @@ The Foundation gates are deliberately broad because GitHub-hosted runner perform
 
 Engine 0.3 can add tighter hardware-calibrated relative baselines once optimized kernels exist.
 
+## Engine matmul microbenchmarks
+
+Engine E2 keeps auditable scalar matrix-multiplication kernels as numerical oracles. The current contract, layout, representative shapes and exact-vs-tolerant equivalence rules are documented in [`engine-matmul-contract.md`](engine-matmul-contract.md).
+
+Run the reference/candidate harnesses with release optimizations:
+
+```bash
+cargo run --release --bin auralis_matmul_bench -- 5 40 5
+cargo run --release --bin auralis_matmul_bt_bench -- 5 40 5
+```
+
+The arguments are warmup iterations, measured iterations and repetitions. These harnesses validate correctness before timing, keep setup outside the timed kernel loop, alternate run order and report medians. They are intended for side-by-side experiments; they do not by themselves justify promoting a candidate kernel.
+
 ## Overrides
 
-The harness accepts environment overrides for controlled experiments:
+The Foundation harness accepts environment overrides for controlled experiments:
 
 - `AURALIS_BENCH_STEPS`
 - `AURALIS_BENCH_REPEATS`
