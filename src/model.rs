@@ -760,43 +760,11 @@ fn attention_forward(
     d: usize,
     n_head: usize,
 ) -> (Vec<f32>, Vec<f32>) {
-    let hd = d / n_head;
-    let scale = 1.0 / (hd as f32).sqrt();
     let mut probs = vec![0.0; n_head * t * t];
     let mut out = vec![0.0; t * d];
-
-    for h in 0..n_head {
-        let hoff = h * hd;
-        for i in 0..t {
-            let mut max_score = f32::NEG_INFINITY;
-            for j in 0..=i {
-                let mut s = 0.0;
-                for z in 0..hd {
-                    s += q[i * d + hoff + z] * k[j * d + hoff + z];
-                }
-                s *= scale;
-                let idx = (h * t + i) * t + j;
-                probs[idx] = s;
-                max_score = max_score.max(s);
-            }
-            let mut sum = 0.0;
-            for j in 0..=i {
-                let idx = (h * t + i) * t + j;
-                let e = (probs[idx] - max_score).exp();
-                probs[idx] = e;
-                sum += e;
-            }
-            let inv = 1.0 / sum.max(1e-20);
-            for j in 0..=i {
-                let pidx = (h * t + i) * t + j;
-                probs[pidx] *= inv;
-                let p = probs[pidx];
-                for z in 0..hd {
-                    out[i * d + hoff + z] += p * v[j * d + hoff + z];
-                }
-            }
-        }
-    }
+    crate::kernels::attention_forward_row_slices_into(
+        q, k, v, t, d, n_head, &mut out, &mut probs,
+    );
     (out, probs)
 }
 
