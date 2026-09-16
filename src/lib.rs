@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod arena;
 pub mod batch;
 pub mod bpe;
 pub mod checkpoint;
