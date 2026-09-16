@@ -316,7 +316,6 @@ impl Gpt {
             let c = &cache.layers[li];
             let bg = &mut gg.blocks[li];
 
-            // x_out = r1 + ff_out
             let mut dr1 = dx.clone();
             let dff_out = dx;
 
@@ -338,7 +337,6 @@ impl Gpt {
             add_inplace(&mut bg.ln2_b, &db2);
             add_inplace(&mut dr1, &dln2);
 
-            // r1 = x_in + attention_projection
             let dproj = dr1.clone();
             let mut dx_in = dr1;
 
@@ -579,7 +577,6 @@ fn matmul(a: &[f32], rows: usize, inner: usize, b: &[f32], cols: usize) -> Vec<f
     out
 }
 
-// dB += A^T * dY
 fn matmul_grad_b(
     a: &[f32],
     rows: usize,
@@ -600,8 +597,6 @@ fn matmul_grad_b(
     }
 }
 
-// dA = dY * B^T, where B is [out_cols, result_cols] when viewed as
-// [result_cols x out_cols] before transposition.
 fn matmul_b_t(
     dy: &[f32],
     rows: usize,
@@ -761,11 +756,12 @@ fn attention_backward(
     let mut dq = vec![0.0; t * d];
     let mut dk = vec![0.0; t * d];
     let mut dv = vec![0.0; t * d];
+    let mut dp = vec![0.0; t];
 
     for h in 0..n_head {
         let hoff = h * hd;
         for i in 0..t {
-            let mut dp = vec![0.0; i + 1];
+            dp[..=i].fill(0.0);
             for j in 0..=i {
                 let p = probs[(h * t + i) * t + j];
                 for z in 0..hd {
