@@ -1,0 +1,45 @@
+name: Genesis CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: genesis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  genesis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Unit and acceptance tests
+        run: cargo test --all-targets
+
+      - name: Gradient check CLI
+        shell: bash
+        run: |
+          output="$(cargo run --release -- check 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'ok=true' <<< "$output"
+
+      - name: BPE roundtrip
+        run: cargo run --release -- bpe
+
+      - name: Training and checkpoint smoke test
+        run: |
+          cargo run --release -- train-fresh 3 /tmp/auralis-genesis.bin
+          test -s /tmp/auralis-genesis.bin
+          cargo run --release -- train 1 /tmp/auralis-genesis.bin
+          cargo run --release -- eval /tmp/auralis-genesis.bin

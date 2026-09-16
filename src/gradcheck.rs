@@ -1,7 +1,14 @@
-//! Diferencias finitas vs backprop analítico.
+//! Finite differences versus the explicit analytical backward pass.
+//!
+//! With f32, relative error can look large when both gradients are extremely
+//! close to zero. We therefore require a small absolute error and a bounded
+//! mean relative error instead of judging correctness from one near-zero
+//! outlier.
+
 use crate::model::{Config, Gpt};
 use rand::Rng;
 
+#[derive(Debug, Clone, Copy)]
 pub struct GradCheckReport {
     pub checked: usize,
     pub max_abs_err: f32,
@@ -10,8 +17,17 @@ pub struct GradCheckReport {
 }
 
 impl GradCheckReport {
-    pub fn ok(&self, rel_tol: f32) -> bool {
-        self.checked > 0 && self.max_rel_err < rel_tol
+    /// Backwards-compatible convenience criterion used by the CLI.
+    pub fn ok(&self, mean_rel_tol: f32) -> bool {
+        self.ok_with(5e-4, mean_rel_tol)
+    }
+
+    pub fn ok_with(&self, abs_tol: f32, mean_rel_tol: f32) -> bool {
+        self.checked > 0
+            && self.max_abs_err.is_finite()
+            && self.mean_rel_err.is_finite()
+            && self.max_abs_err <= abs_tol
+            && self.mean_rel_err <= mean_rel_tol
     }
 }
 
@@ -30,22 +46,28 @@ pub fn check_random_params(
     let mut max_abs = 0.0f32;
     let mut max_rel = 0.0f32;
     let mut sum_rel = 0.0f32;
+
     for _ in 0..n {
         let i = rng.gen_range(0..params.len());
         let saved = params[i];
+
         params[i] = saved + eps;
         let lp = loss_only(gpt, &params, x, y);
+
         params[i] = saved - eps;
         let lm = loss_only(gpt, &params, x, y);
+
         params[i] = saved;
         let num = (lp - lm) / (2.0 * eps);
         let ana = grads[i];
         let abs = (num - ana).abs();
         let rel = abs / (ana.abs() + num.abs() + 1e-6);
+
         max_abs = max_abs.max(abs);
         max_rel = max_rel.max(rel);
         sum_rel += rel;
     }
+
     GradCheckReport {
         checked: n,
         max_abs_err: max_abs,
