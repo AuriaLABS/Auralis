@@ -39,23 +39,37 @@ jobs:
       - name: BPE roundtrip
         run: cargo run --release -- bpe
 
-      - name: Training, manifest and checkpoint smoke test
+      - name: Training, accumulation, manifest and checkpoint smoke test
         shell: bash
         run: |
-          cargo run --release -- train-fresh 3 /tmp/auralis-foundation.bin
+          output="$(cargo run --release -- train-fresh 3 /tmp/auralis-foundation.bin 659918 2 2 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'run_summary |' <<< "$output"
+          grep -q 'effective_batch=4' <<< "$output"
+
           test -s /tmp/auralis-foundation.bin
           test -s /tmp/auralis-foundation.bin.manifest
+          grep -q 'auralis_manifest=3' /tmp/auralis-foundation.bin.manifest
           grep -q "code_revision=${AURALIS_COMMIT_SHA}" /tmp/auralis-foundation.bin.manifest
           grep -q 'seed=659918' /tmp/auralis-foundation.bin.manifest
+          grep -q 'batch_size=2' /tmp/auralis-foundation.bin.manifest
+          grep -q 'gradient_accumulation_steps=2' /tmp/auralis-foundation.bin.manifest
 
           before="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
-          if cargo run --release -- train 1 /tmp/auralis-foundation.bin 123 4; then
+          if cargo run --release -- train 1 /tmp/auralis-foundation.bin 123 2 2; then
             echo 'resume with a different seed unexpectedly succeeded'
             exit 1
           fi
           after="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
           test "$before" = "$after"
 
-          cargo run --release -- train 1 /tmp/auralis-foundation.bin
+          if cargo run --release -- train 1 /tmp/auralis-foundation.bin 659918 2 1; then
+            echo 'resume with different accumulation unexpectedly succeeded'
+            exit 1
+          fi
+          after_accum="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
+          test "$before" = "$after_accum"
+
+          cargo run --release -- train 1 /tmp/auralis-foundation.bin 659918 2 2
           test -s /tmp/auralis-foundation.bin.manifest
           cargo run --release -- eval /tmp/auralis-foundation.bin
