@@ -7,7 +7,7 @@ use crate::batch::{
     backward_batch_into, backward_deterministic_batch_from_stream_into,
     deterministic_batch_from_stream,
 };
-use crate::model::Gpt;
+use crate::model::{BackwardWorkspace, Gpt};
 use crate::optim::Adam;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,13 +64,14 @@ pub struct StepMetrics {
 /// Reusable Engine buffers that sit outside the optimizer-step hot path.
 ///
 /// Besides micro/sample gradients, Engine keeps a flat parameter mirror for
-/// Adam. The mirror is initialized once from the model and stays synchronized
-/// because every Engine optimizer step writes it back to the model.
+/// Adam and an opaque model backward workspace. All are initialized once and
+/// reused across samples and optimizer steps.
 #[derive(Debug)]
 pub struct TrainWorkspace {
     micro_grads: Vec<f32>,
     sample_grads: Vec<f32>,
     params: Vec<f32>,
+    backward: BackwardWorkspace,
 }
 
 impl TrainWorkspace {
@@ -81,6 +82,7 @@ impl TrainWorkspace {
             micro_grads: vec![0.0; param_count],
             sample_grads: vec![0.0; param_count],
             params,
+            backward: BackwardWorkspace::new(gpt),
         }
     }
 
@@ -92,15 +94,20 @@ impl TrainWorkspace {
         self.micro_grads.is_empty()
     }
 
-    fn matches(&self, param_count: usize) -> bool {
+    fn matches(&self, gpt: &Gpt, param_count: usize) -> bool {
         self.micro_grads.len() == param_count
             && self.sample_grads.len() == param_count
             && self.params.len() == param_count
+            && self.backward.matches(gpt)
     }
 }
 
 pub fn global_l2_norm(values: &[f32]) -> f32 {
-    values.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32
+    values
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt() as f32
 }
 
 /// Execute one optimizer step using deterministic microbatch accumulation.
@@ -162,8 +169,8 @@ pub fn train_step(
 /// Data selection, example order, gradient accumulation order, clipping and
 /// Adam updates are identical to `train_step`. The only difference is memory
 /// behavior: deterministic windows are borrowed directly from the token stream,
-/// full-size gradient buffers are reused, and Adam updates a persistent flat
-/// parameter mirror rather than calling `collect_params()` every step.
+/// flat buffers are reused, model-structured gradients are reset in place, and
+/// Adam updates a persistent flat parameter mirror.
 pub fn train_step_reuse(
     gpt: &mut Gpt,
     adam: &mut Adam,
@@ -175,8 +182,8 @@ pub fn train_step_reuse(
 ) -> Result<StepMetrics, &'static str> {
     cfg.validate()?;
     let effective_batch_size = cfg.effective_batch_size()?;
-    if !workspace.matches(grads.len()) {
-        return Err("training workspace has wrong size");
+    if !workspace.matches(gpt, grads.len()) {
+        return Err("training workspace has wrong size or model config");
     }
 
     grads.fill(0.0);
@@ -196,6 +203,7 @@ pub fn train_step_reuse(
             stream_offset,
             &mut workspace.micro_grads,
             &mut workspace.sample_grads,
+            &mut workspace.backward,
         )?;
         for (dst, src) in grads.iter_mut().zip(&workspace.micro_grads) {
             *dst += *src;
@@ -333,7 +341,14 @@ mod tests {
     use rand::SeedableRng;
 
     fn model(seed: u64) -> Gpt {
-        let cfg = Config { vocab: 7, n_embd: 8, n_head: 2, n_layer: 1, block: 4, n_ff: 16 };
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
         let mut rng = StdRng::seed_from_u64(seed);
         Gpt::new(cfg, &mut rng)
     }
@@ -427,8 +442,24 @@ mod tests {
             grad_clip_norm: 1000.0,
         };
 
-        let a = train_step(&mut accumulated, &mut adam_acc, &tokens, acc_cfg, 7, &mut g_acc).unwrap();
-        let b = train_step(&mut reference, &mut adam_ref, &tokens, ref_cfg, 7, &mut g_ref).unwrap();
+        let a = train_step(
+            &mut accumulated,
+            &mut adam_acc,
+            &tokens,
+            acc_cfg,
+            7,
+            &mut g_acc,
+        )
+        .unwrap();
+        let b = train_step(
+            &mut reference,
+            &mut adam_ref,
+            &tokens,
+            ref_cfg,
+            7,
+            &mut g_ref,
+        )
+        .unwrap();
 
         assert_eq!(a.effective_batch_size, 6);
         assert_eq!(a.tokens, b.tokens);
@@ -436,7 +467,11 @@ mod tests {
         for (x, y) in g_acc.iter().zip(&g_ref) {
             assert!((*x - *y).abs() < 1e-5);
         }
-        for (x, y) in accumulated.collect_params().iter().zip(reference.collect_params()) {
+        for (x, y) in accumulated
+            .collect_params()
+            .iter()
+            .zip(reference.collect_params())
+        {
             assert!((*x - y).abs() < 1e-5);
         }
         assert_eq!(adam_acc.t, 1);
