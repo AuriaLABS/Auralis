@@ -21,6 +21,7 @@ pub mod release;
 pub mod run_config;
 pub mod sampling;
 pub mod sec;
+pub mod sec_overflow;
 pub mod sec_path;
 pub mod tensor;
 pub mod tokenizer;
