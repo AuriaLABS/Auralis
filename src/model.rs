@@ -377,12 +377,11 @@ impl Gpt {
             let c = &cache.layers[li];
             let bg = &mut gg.blocks[li];
 
-            let mut dr1 = dx.clone();
-            let dff_out = dx;
+            let dff_out = dx.as_slice();
 
-            matmul_grad_b(&c.ff_act, t, self.cfg.n_ff, &dff_out, d, &mut bg.w2);
-            sum_rows_into(&dff_out, t, d, &mut bg.b2);
-            let dff_act = matmul_b_t(&dff_out, t, d, &b.w2, self.cfg.n_ff);
+            matmul_grad_b(&c.ff_act, t, self.cfg.n_ff, dff_out, d, &mut bg.w2);
+            sum_rows_into(dff_out, t, d, &mut bg.b2);
+            let dff_act = matmul_b_t(dff_out, t, d, &b.w2, self.cfg.n_ff);
 
             let mut dff_pre = dff_act;
             for i in 0..dff_pre.len() {
@@ -396,13 +395,12 @@ impl Gpt {
             let (dln2, dg2, db2) = layernorm_backward(&dh2, &c.ln2, &b.ln2_g);
             add_inplace(&mut bg.ln2_g, &dg2);
             add_inplace(&mut bg.ln2_b, &db2);
+            let mut dr1 = dx;
             add_inplace(&mut dr1, &dln2);
 
-            let dproj = dr1.clone();
-            let mut dx_in = dr1;
-
-            matmul_grad_b(&c.att, t, d, &dproj, d, &mut bg.wo);
-            let datt = matmul_b_t(&dproj, t, d, &b.wo, d);
+            let dproj = dr1.as_slice();
+            matmul_grad_b(&c.att, t, d, dproj, d, &mut bg.wo);
+            let datt = matmul_b_t(dproj, t, d, &b.wo, d);
 
             let (dq, dk, dv) = attention_backward(
                 &datt,
@@ -420,12 +418,13 @@ impl Gpt {
             matmul_grad_b(&c.h1, t, d, &dv, d, &mut bg.wv);
 
             let mut dh1 = matmul_b_t(&dq, t, d, &b.wq, d);
-            add_inplace(&mut dh1, &matmul_b_t(&dk, t, d, &b.wk, d));
-            add_inplace(&mut dh1, &matmul_b_t(&dv, t, d, &b.wv, d));
+            matmul_b_t_add_into(&dk, t, d, &b.wk, d, &mut dh1);
+            matmul_b_t_add_into(&dv, t, d, &b.wv, d, &mut dh1);
 
             let (dln1, dg1, db1) = layernorm_backward(&dh1, &c.ln1, &b.ln1_g);
             add_inplace(&mut bg.ln1_g, &dg1);
             add_inplace(&mut bg.ln1_b, &db1);
+            let mut dx_in = dr1;
             add_inplace(&mut dx_in, &dln1);
             dx = dx_in;
         }
@@ -484,7 +483,7 @@ impl Gpt {
             let v = matmul(&h1, t, d, &b.wv, d);
             let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
             let proj = matmul(&att, t, d, &b.wo, d);
-            let mut r1 = x.clone();
+            let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
             let (h2, ln2) = layernorm_forward(&r1, t, d, &b.ln2_g, &b.ln2_b);
@@ -677,6 +676,28 @@ fn matmul_b_t(
         }
     }
     out
+}
+
+fn matmul_b_t_add_into(
+    dy: &[f32],
+    rows: usize,
+    out_cols: usize,
+    b: &[f32],
+    result_cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(dy.len(), rows * out_cols);
+    assert_eq!(b.len(), result_cols * out_cols);
+    assert_eq!(out.len(), rows * result_cols);
+    for i in 0..rows {
+        for k in 0..result_cols {
+            let mut s = 0.0;
+            for j in 0..out_cols {
+                s += dy[i * out_cols + j] * b[k * out_cols + j];
+            }
+            out[i * result_cols + k] += s;
+        }
+    }
 }
 
 fn layernorm_forward(
