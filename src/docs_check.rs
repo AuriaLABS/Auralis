@@ -73,6 +73,22 @@ mod tests {
         src[start..].to_string()
     }
 
+    fn rust_fences(markdown: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = markdown;
+        while let Some(start) = rest.find("```rust\n") {
+            rest = &rest[start + 8..];
+            match rest.find("```") {
+                Some(end) => {
+                    out.push(rest[..end].trim().to_string());
+                    rest = &rest[end + 3..];
+                }
+                None => break,
+            }
+        }
+        out
+    }
+
     const CLI_LINES: &[&str] = &[
         "auralis train ",
         "auralis train-fresh ",
@@ -88,6 +104,12 @@ mod tests {
         "auralis check",
         "auralis bpe",
     ];
+
+    const VERIFY_SNIPPET: &str = concat!(
+        "assert!(!auralis::ci_matrix::required_pr_jobs().is_empty());\n",
+        "assert_eq!(auralis::sec::EXPECTED_UNSAFE_BLOCKS, 0);\n",
+        "assert!(!auralis::bench::list_json().is_empty());"
+    );
 
     #[test]
     fn required_docs_exist() {
@@ -143,6 +165,15 @@ mod tests {
             assert!(usage.contains(flag), "fn usage() missing {flag}");
             assert!(cli.contains(flag), "docs/cli.md missing {flag}");
         }
+    }
+
+    #[test]
+    fn verify_rust_snippet_is_canonical_and_runs() {
+        let fences = rust_fences(&docs("verify.md"));
+        assert_eq!(fences, [VERIFY_SNIPPET]);
+        assert!(!crate::ci_matrix::required_pr_jobs().is_empty());
+        assert_eq!(crate::sec::EXPECTED_UNSAFE_BLOCKS, 0);
+        assert!(!crate::bench::list_json().is_empty());
     }
 
     #[test]

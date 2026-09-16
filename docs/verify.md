@@ -31,6 +31,17 @@ cargo run --release -- sec-audit src
 
 `train-fresh` corto deja checkpoint + manifiesto. No sustituye al soak de Foundation.
 
+## Snippet compilable (API pública)
+
+Este bloque vive en `docs/verify.md` y se ejecuta en `docs_check`.
+Si cambia la API, el test falla.
+
+```rust
+assert!(!auralis::ci_matrix::required_pr_jobs().is_empty());
+assert_eq!(auralis::sec::EXPECTED_UNSAFE_BLOCKS, 0);
+assert!(!auralis::bench::list_json().is_empty());
+```
+
 ## Contratos que ya tienen test de docs
 
 | Doc | Qué se comprueba |
@@ -40,8 +51,8 @@ cargo run --release -- sec-audit src
 | `docs/sec-unsafe.md` | límites y `EXPECTED_UNSAFE_BLOCKS == 0` |
 | `docs/cli.md` | verbos presentes en `fn usage()` |
 | `README.md` | comandos del ciclo documentado |
-| esta página | existe y nombra los mismos comandos |
+| esta página | gates, snippet Rust y comandos |
 
 ## Fuera de este slice
 
-Links externos, snippets Rust compilables, hardware GPU.
+Links externos, hardware GPU.
