@@ -9,7 +9,7 @@ use auralis::manifest::{self, ExperimentManifest};
 use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
-use auralis::release::{check_release, default_root};
+use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use auralis::training::{train_step_reuse, TrainWorkspace};
@@ -470,6 +470,76 @@ fn run_release_check(args: &[String]) {
     }
 }
 
+fn run_release_manifest(args: &[String]) {
+    let mut verify: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut root = default_root();
+    let mut i = 2;
+    while i < args.len() {
+        if args[i] == "--verify" {
+            let path = args.get(i + 1).expect("--verify requires a path");
+            verify = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
+        if args[i] == "--out" {
+            let path = args.get(i + 1).expect("--out requires a path");
+            out = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
+        root = PathBuf::from(&args[i]);
+        i += 1;
+    }
+
+    if let Some(path) = verify {
+        let text = match fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", path.display());
+                std::process::exit(2);
+            }
+        };
+        match ReleaseManifest::decode(&text).and_then(|m| m.verify(&root).map(|_| m)) {
+            Ok(m) => {
+                println!(
+                    "release-manifest | verified=true artifacts={} revision={}",
+                    m.artifacts.len(),
+                    m.code_revision
+                );
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    match ReleaseManifest::capture(&root, DEFAULT_RELEASE_ARTIFACTS) {
+        Ok(m) => {
+            let encoded = m.encode();
+            if let Some(path) = out {
+                if let Err(e) = fs::write(&path, &encoded) {
+                    eprintln!("error: cannot write {}: {e}", path.display());
+                    std::process::exit(2);
+                }
+                println!(
+                    "release-manifest → {} artifacts={}",
+                    path.display(),
+                    m.artifacts.len()
+                );
+            } else {
+                print!("{encoded}");
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
     let mut config_path: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -516,7 +586,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -541,6 +611,7 @@ fn main() {
         Some("config") => print_config(args.get(2).map(Path::new)),
         Some("inspect") => run_inspect(&args),
         Some("release-check") => run_release_check(&args),
+        Some("release-manifest") => run_release_manifest(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
