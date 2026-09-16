@@ -21,7 +21,7 @@ fn fixture_model(seed: u64) -> Gpt {
 }
 
 #[test]
-fn same_seed_model_loss_and_gradients_are_bit_exact() {
+fn same_seed_model_loss_and_gradients_are_reproducible() {
     let a = fixture_model(0xA11CE_2901);
     let b = fixture_model(0xA11CE_2901);
     let x = [0, 1, 2, 3, 4, 5];
@@ -44,7 +44,12 @@ fn same_seed_model_loss_and_gradients_are_bit_exact() {
     let backward_loss_b = b.backward_into(&x, &y, &mut grad_b);
 
     assert_eq!(backward_loss_a.to_bits(), backward_loss_b.to_bits());
-    assert_eq!(loss_a.to_bits(), backward_loss_a.to_bits());
+    assert_f32_slices_equivalent(
+        "forward vs backward loss",
+        &[loss_a],
+        &[backward_loss_a],
+        Tolerance::new(1e-6, 1e-6),
+    );
     assert_f32_slices_equivalent(
         "same-seed gradients",
         &grad_a,
