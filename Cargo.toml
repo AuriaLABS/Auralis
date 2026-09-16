@@ -2,6 +2,7 @@
 name = "auralis"
 version = "0.1.0"
 edition = "2021"
+default-run = "auralis"
 authors = ["Auralis — diseñado por IA"]
 description = "Motor cognitivo mínimo: transformer decoder-only desde cero en Rust"
 license = "MIT"
