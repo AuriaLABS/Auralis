@@ -1,11 +1,12 @@
 use auralis::agent::Agent;
 use auralis::bpe::BpeTokenizer;
-use auralis::gradcheck;
 use auralis::checkpoint;
+use auralis::gradcheck;
 use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -33,7 +34,14 @@ fn load_corpus() -> String {
     format!("{base}\n{}", anchor.repeat(8))
 }
 
-fn sample_prompt(gpt: &Gpt, tok: &AnyTok, prompt: &str, n: usize, temp: f32, rng: &mut impl Rng) -> String {
+fn sample_prompt(
+    gpt: &Gpt,
+    tok: &AnyTok,
+    prompt: &str,
+    n: usize,
+    temp: f32,
+    rng: &mut impl Rng,
+) -> String {
     let mut out = tok.encode(prompt);
     if out.is_empty() {
         out = tok.encode("A");
@@ -66,7 +74,11 @@ fn train(steps: usize, ckpt: &Path, fresh: bool) {
     let ids_all = tok.encode(&text);
     println!(
         "Auralis train | tok={} vocab={} tokens={} chars={} steps={}",
-        tok.kind(), tok.vocab_size(), ids_all.len(), text.chars().count(), steps
+        tok.kind(),
+        tok.vocab_size(),
+        ids_all.len(),
+        text.chars().count(),
+        steps
     );
     let block = gpt.cfg.block;
     let mut params = gpt.collect_params();
@@ -105,7 +117,9 @@ fn train(steps: usize, ckpt: &Path, fresh: bool) {
         let gnorm: f32 = grads.iter().map(|g| g * g).sum::<f32>().sqrt();
         if gnorm > 1.0 {
             let s = 1.0 / gnorm;
-            for g in grads.iter_mut() { *g *= s; }
+            for g in grads.iter_mut() {
+                *g *= s;
+            }
         }
         adam.step(&mut params, &grads);
         gpt.write_params(&params);
@@ -122,13 +136,21 @@ fn train(steps: usize, ckpt: &Path, fresh: bool) {
     }
     let secs = t0.elapsed().as_secs_f32().max(1e-6);
     let toks = steps as f32 * block as f32;
-    println!("tiempo={:.1}s  {:.0} tok/s  adam.t={}", secs, toks / secs, adam.t);
+    println!(
+        "tiempo={:.1}s  {:.0} tok/s  adam.t={}",
+        secs,
+        toks / secs,
+        adam.t
+    );
 }
 
 fn eval_ckpt(ckpt: &Path) {
     let (gpt, tok) = match checkpoint::load(ckpt) {
         Ok(v) => v,
-        Err(e) => { eprintln!("carga {ckpt:?}: {e}"); return; }
+        Err(e) => {
+            eprintln!("carga {ckpt:?}: {e}");
+            return;
+        }
     };
     let mut rng = rand::thread_rng();
     for prompt in ["Auralis es", "Hola", "El gato", "Pregunta"] {
@@ -143,7 +165,10 @@ fn eval_ckpt(ckpt: &Path) {
 fn chat(ckpt: &Path) {
     let (gpt, tok) = match checkpoint::load(ckpt) {
         Ok(v) => v,
-        Err(e) => { eprintln!("carga {ckpt:?}: {e}\nEntrena antes: auralis train 80"); return; }
+        Err(e) => {
+            eprintln!("carga {ckpt:?}: {e}\nEntrena antes: auralis train 80");
+            return;
+        }
     };
     let mut agent = Agent::new();
     let mut rng = rand::thread_rng();
@@ -153,10 +178,16 @@ fn chat(ckpt: &Path) {
         print!("tú> ");
         let _ = io::stdout().flush();
         let mut line = String::new();
-        if stdin.read_line(&mut line).is_err() { break; }
+        if stdin.read_line(&mut line).is_err() {
+            break;
+        }
         let line = line.trim();
-        if line.is_empty() { continue; }
-        if line == "/salir" || line == "/quit" { break; }
+        if line.is_empty() {
+            continue;
+        }
+        if line == "/salir" || line == "/quit" {
+            break;
+        }
         let reply = agent.reply(line, &gpt, &tok, &mut rng, 60);
         println!("auralis> {reply}");
     }
@@ -166,23 +197,40 @@ fn run_check() {
     let text = load_corpus();
     let tok = CharTokenizer::fit(&text);
     let ids = tok.encode(&text);
-    let mut rng = rand::thread_rng();
+    let mut rng = StdRng::seed_from_u64(0xA11CE);
     let cfg = gradcheck::tiny_check_config(tok.vocab_size());
     let block = cfg.block.min(ids.len().saturating_sub(2).max(2));
-    let mut gpt = Gpt::new(Config { block, ..cfg }, &mut rng);
+    let gpt = Gpt::new(Config { block, ..cfg }, &mut rng);
     let x = &ids[0..block];
     let y = &ids[1..block + 1];
-    println!("gradcheck | params={} block={} vocab={}", gpt.collect_params().len(), block, tok.vocab_size());
-    let report = gradcheck::check_random_params(&gpt, x, y, 6, 1e-3, &mut rng);
-    println!("checked={}  max_abs={:.4e}  max_rel={:.4}  mean_rel={:.4}  ok={}",
-        report.checked, report.max_abs_err, report.max_rel_err, report.mean_rel_err, report.ok(0.25));
+    println!(
+        "gradcheck | params={} block={} vocab={}",
+        gpt.collect_params().len(),
+        block,
+        tok.vocab_size()
+    );
+    let report = gradcheck::check_random_params(&gpt, x, y, 24, 1e-3, &mut rng);
+    let ok = report.ok_with(1e-3, 0.25);
+    println!(
+        "checked={}  max_abs={:.4e}  max_rel={:.4}  mean_rel={:.4}  ok={}",
+        report.checked, report.max_abs_err, report.max_rel_err, report.mean_rel_err, ok
+    );
+    if !ok {
+        std::process::exit(2);
+    }
 }
 
 fn run_bpe() {
     let text = load_corpus();
     let bpe = BpeTokenizer::fit(&text, 80);
     let ids = bpe.encode(&text);
-    println!("bpe | merges={} vocab={} chars={} tokens={}", bpe.merges.len(), bpe.vocab_size(), text.chars().count(), ids.len());
+    println!(
+        "bpe | merges={} vocab={} chars={} tokens={}",
+        bpe.merges.len(),
+        bpe.vocab_size(),
+        text.chars().count(),
+        ids.len()
+    );
     for (i, (a, b)) in bpe.merges.iter().take(8).enumerate() {
         println!("  merge {i}: {a:?} + {b:?} -> {:?}", format!("{a}{b}"));
     }
@@ -213,7 +261,9 @@ fn main() {
         Some("bpe") => run_bpe(),
         Some("eval") => eval_ckpt(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("-h" | "--help" | "help") => usage(),
-        Some(n) if n.chars().all(|c| c.is_ascii_digit()) => train(n.parse().unwrap(), ckpt_default, false),
+        Some(n) if n.chars().all(|c| c.is_ascii_digit()) => {
+            train(n.parse().unwrap(), ckpt_default, false)
+        }
         None => train(80, ckpt_default, false),
         _ => usage(),
     }
