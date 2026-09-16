@@ -132,3 +132,15 @@ jobs:
           summary="$(grep '^matmul_bench_summary |' <<< "$output")"
           grep -q 'exact_output=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
+
+      - name: E2 B-transpose matmul benchmark
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_matmul_bt_bench -- 5 40 5 2>&1)"
+          printf '%s\n' "$output"
+          test "$(grep -c '^matmul_bt_bench_run |' <<< "$output")" -eq 5
+          summary="$(grep '^matmul_bt_bench_summary |' <<< "$output")"
+          grep -q 'calls_per_iteration=13' <<< "$summary"
+          grep -q 'add_calls_per_iteration=4' <<< "$summary"
+          grep -q 'exact_output=true' <<< "$summary"
+          grep -q 'repeats=5' <<< "$summary"
