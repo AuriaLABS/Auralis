@@ -11,7 +11,7 @@ use crate::tokenizer::AnyTok;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExperimentManifest {
@@ -20,6 +20,7 @@ pub struct ExperimentManifest {
     pub seed: u64,
     pub dataset_fingerprint: u64,
     pub batch_size: usize,
+    pub gradient_accumulation_steps: usize,
     pub learning_rate: f32,
     pub grad_clip_norm: f32,
     pub train_fraction: f32,
@@ -52,6 +53,7 @@ impl ExperimentManifest {
             seed: run.seed,
             dataset_fingerprint,
             batch_size: run.batch_size,
+            gradient_accumulation_steps: run.gradient_accumulation_steps,
             learning_rate: run.learning_rate,
             grad_clip_norm: run.grad_clip_norm,
             train_fraction: run.train_fraction,
@@ -85,12 +87,25 @@ impl ExperimentManifest {
         }
         check("code_revision", self.code_revision.as_str(), build_revision())?;
         check("seed", self.seed, run.seed)?;
-        check("dataset_fingerprint", self.dataset_fingerprint, dataset_fingerprint)?;
+        check(
+            "dataset_fingerprint",
+            self.dataset_fingerprint,
+            dataset_fingerprint,
+        )?;
         check("batch_size", self.batch_size, run.batch_size)?;
+        check(
+            "gradient_accumulation_steps",
+            self.gradient_accumulation_steps,
+            run.gradient_accumulation_steps,
+        )?;
         check_f32("learning_rate", self.learning_rate, run.learning_rate)?;
         check_f32("grad_clip_norm", self.grad_clip_norm, run.grad_clip_norm)?;
         check_f32("train_fraction", self.train_fraction, run.train_fraction)?;
-        check_f32("validation_fraction", self.validation_fraction, run.validation_fraction)?;
+        check_f32(
+            "validation_fraction",
+            self.validation_fraction,
+            run.validation_fraction,
+        )?;
         check("bpe_merges", self.bpe_merges, run.bpe_merges)?;
         check("tokenizer_kind", self.tokenizer_kind.as_str(), tok.kind())?;
         check("vocab", self.vocab, gpt.cfg.vocab)?;
@@ -102,7 +117,11 @@ impl ExperimentManifest {
 
         let params = gpt.collect_params();
         check("parameter_count", self.parameter_count, params.len())?;
-        check("parameter_fingerprint", self.parameter_fingerprint, fingerprint_params(&params))?;
+        check(
+            "parameter_fingerprint",
+            self.parameter_fingerprint,
+            fingerprint_params(&params),
+        )?;
         Ok(())
     }
 
@@ -114,6 +133,7 @@ impl ExperimentManifest {
                 "seed={}\n",
                 "dataset_fingerprint={:016x}\n",
                 "batch_size={}\n",
+                "gradient_accumulation_steps={}\n",
                 "learning_rate={}\n",
                 "grad_clip_norm={}\n",
                 "train_fraction={}\n",
@@ -135,6 +155,7 @@ impl ExperimentManifest {
             self.seed,
             self.dataset_fingerprint,
             self.batch_size,
+            self.gradient_accumulation_steps,
             self.learning_rate,
             self.grad_clip_norm,
             self.train_fraction,
@@ -160,7 +181,9 @@ impl ExperimentManifest {
                 .ok_or_else(|| format!("manifest missing {key}"))
         }
         fn number<T: std::str::FromStr>(text: &str, key: &str) -> Result<T, String> {
-            value(text, key)?.parse::<T>().map_err(|_| format!("invalid manifest value for {key}"))
+            value(text, key)?
+                .parse::<T>()
+                .map_err(|_| format!("invalid manifest value for {key}"))
         }
         fn hex_u64(text: &str, key: &str) -> Result<u64, String> {
             u64::from_str_radix(value(text, key)?, 16)
@@ -173,6 +196,7 @@ impl ExperimentManifest {
             seed: number(text, "seed")?,
             dataset_fingerprint: hex_u64(text, "dataset_fingerprint")?,
             batch_size: number(text, "batch_size")?,
+            gradient_accumulation_steps: number(text, "gradient_accumulation_steps")?,
             learning_rate: number(text, "learning_rate")?,
             grad_clip_norm: number(text, "grad_clip_norm")?,
             train_fraction: number(text, "train_fraction")?,
@@ -213,7 +237,10 @@ pub fn manifest_path(checkpoint: impl AsRef<Path>) -> PathBuf {
     PathBuf::from(os)
 }
 
-pub fn save_manifest(checkpoint: impl AsRef<Path>, manifest: &ExperimentManifest) -> std::io::Result<PathBuf> {
+pub fn save_manifest(
+    checkpoint: impl AsRef<Path>,
+    manifest: &ExperimentManifest,
+) -> std::io::Result<PathBuf> {
     let path = manifest_path(checkpoint);
     fs::write(&path, manifest.encode())?;
     Ok(path)
@@ -221,7 +248,8 @@ pub fn save_manifest(checkpoint: impl AsRef<Path>, manifest: &ExperimentManifest
 
 pub fn load_manifest(checkpoint: impl AsRef<Path>) -> Result<ExperimentManifest, String> {
     let path = manifest_path(checkpoint);
-    let text = fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let text = fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     ExperimentManifest::decode(&text)
 }
 
@@ -229,11 +257,23 @@ fn check<T>(name: &str, expected: T, actual: T) -> Result<(), String>
 where
     T: PartialEq + std::fmt::Display,
 {
-    if expected == actual { Ok(()) } else { Err(format!("resume mismatch for {name}: checkpoint={expected} requested={actual}")) }
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(format!(
+            "resume mismatch for {name}: checkpoint={expected} requested={actual}"
+        ))
+    }
 }
 
 fn check_f32(name: &str, expected: f32, actual: f32) -> Result<(), String> {
-    if expected.to_bits() == actual.to_bits() { Ok(()) } else { Err(format!("resume mismatch for {name}: checkpoint={expected} requested={actual}")) }
+    if expected.to_bits() == actual.to_bits() {
+        Ok(())
+    } else {
+        Err(format!(
+            "resume mismatch for {name}: checkpoint={expected} requested={actual}"
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -246,7 +286,14 @@ mod tests {
 
     fn fixture(seed: u64) -> (Gpt, AnyTok) {
         let tok = AnyTok::Bpe(BpeTokenizer::fit("auralis auralis", 4));
-        let cfg = Config { vocab: tok.vocab_size(), n_embd: 8, n_head: 2, n_layer: 1, block: 4, n_ff: 16 };
+        let cfg = Config {
+            vocab: tok.vocab_size(),
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
         let mut rng = StdRng::seed_from_u64(seed);
         (Gpt::new(cfg, &mut rng), tok)
     }
@@ -265,12 +312,25 @@ mod tests {
         let (gpt, tok) = fixture(2);
         let run = RunConfig::default();
         let manifest = ExperimentManifest::capture(&gpt, &tok, &run, 99, 0);
+
         let mut different_seed = run;
         different_seed.seed += 1;
-        assert!(manifest.validate_resume(&gpt, &tok, &different_seed, 99).is_err());
+        assert!(manifest
+            .validate_resume(&gpt, &tok, &different_seed, 99)
+            .is_err());
+
         let mut different_lr = run;
         different_lr.learning_rate *= 2.0;
-        assert!(manifest.validate_resume(&gpt, &tok, &different_lr, 99).is_err());
+        assert!(manifest
+            .validate_resume(&gpt, &tok, &different_lr, 99)
+            .is_err());
+
+        let mut different_accum = run;
+        different_accum.gradient_accumulation_steps = 2;
+        assert!(manifest
+            .validate_resume(&gpt, &tok, &different_accum, 99)
+            .is_err());
+
         assert!(manifest.validate_resume(&gpt, &tok, &run, 100).is_err());
         assert!(manifest.validate_resume(&gpt, &tok, &run, 99).is_ok());
     }
