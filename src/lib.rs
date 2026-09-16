@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod arena;
 pub mod batch;
+pub mod bench;
 pub mod bpe;
 pub mod checkpoint;
 pub mod cpu_matmul;
