@@ -89,6 +89,8 @@ pub fn list_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     #[test]
     fn required_pr_set_is_stable() {
@@ -108,6 +110,20 @@ mod tests {
         let blob = list_json();
         for job in JOBS {
             assert!(blob.contains(&format!("\"id\":\"{}\"", job.id)));
+        }
+    }
+
+    #[test]
+    fn docs_table_names_every_job() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/ci-pruebas.md");
+        let text = fs::read_to_string(&path).expect("docs/ci-pruebas.md");
+        for job in JOBS {
+            let needle = format!("`{}`", job.id);
+            assert!(
+                text.contains(&needle),
+                "docs/ci-pruebas.md missing {}",
+                needle
+            );
         }
     }
 }
