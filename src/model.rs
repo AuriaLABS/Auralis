@@ -662,16 +662,7 @@ fn matmul_grad_b(
     cols: usize,
     db: &mut [f32],
 ) {
-    assert_eq!(db.len(), inner * cols);
-    for k in 0..inner {
-        for j in 0..cols {
-            let mut s = 0.0;
-            for i in 0..rows {
-                s += a[i * inner + k] * dy[i * cols + j];
-            }
-            db[k * cols + j] += s;
-        }
-    }
+    crate::kernels::matmul_grad_b_rowwise_zeroed(a, rows, inner, dy, cols, db);
 }
 
 fn matmul_b_t(
