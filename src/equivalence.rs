@@ -32,12 +32,16 @@ impl Comparison {
     }
 }
 
-/// Compare two same-shaped `f32` slices using an explicit absolute/relative
-/// tolerance contract.
+/// Compare two same-shaped `f32` slices using an explicit exact or
+/// absolute/relative tolerance contract.
 ///
-/// A value passes when `abs_error <= abs + rel * max(|reference|, 1e-8)`.
-/// NaN never compares equivalent. Infinities compare equivalent only when they
-/// are exactly equal (same sign).
+/// `Tolerance::EXACT` compares finite values and infinities by their IEEE-754
+/// bit pattern, so `+0.0` and `-0.0` are intentionally distinct. NaN is never
+/// accepted silently, even when the payload bits match.
+///
+/// In tolerant mode a finite value passes when
+/// `abs_error <= abs + rel * max(|reference|, 1e-8)`. Infinities compare
+/// equivalent only when they are exactly equal (same sign).
 pub fn compare_f32_slices(
     reference: &[f32],
     candidate: &[f32],
@@ -47,6 +51,7 @@ pub fn compare_f32_slices(
     assert!(tolerance.abs >= 0.0, "absolute tolerance must be non-negative");
     assert!(tolerance.rel >= 0.0, "relative tolerance must be non-negative");
 
+    let exact = tolerance == Tolerance::EXACT;
     let mut result = Comparison {
         len: reference.len(),
         mismatches: 0,
@@ -58,6 +63,8 @@ pub fn compare_f32_slices(
     for (index, (&expected, &actual)) in reference.iter().zip(candidate).enumerate() {
         let equivalent = if expected.is_nan() || actual.is_nan() {
             false
+        } else if exact {
+            expected.to_bits() == actual.to_bits()
         } else if expected.is_infinite() || actual.is_infinite() {
             expected == actual
         } else {
@@ -68,6 +75,18 @@ pub fn compare_f32_slices(
             result.max_rel_error = result.max_rel_error.max(rel_error);
             abs_error <= tolerance.abs + tolerance.rel * denom
         };
+
+        if !exact && expected.is_finite() && actual.is_finite() {
+            let abs_error = (actual - expected).abs();
+            let denom = expected.abs().max(1e-8);
+            result.max_abs_error = result.max_abs_error.max(abs_error);
+            result.max_rel_error = result.max_rel_error.max(abs_error / denom);
+        } else if exact && expected.is_finite() && actual.is_finite() {
+            let abs_error = (actual - expected).abs();
+            let denom = expected.abs().max(1e-8);
+            result.max_abs_error = result.max_abs_error.max(abs_error);
+            result.max_rel_error = result.max_rel_error.max(abs_error / denom);
+        }
 
         if !equivalent {
             result.mismatches += 1;
@@ -113,6 +132,16 @@ mod tests {
     }
 
     #[test]
+    fn exact_mode_distinguishes_signed_zero_bit_patterns() {
+        let reference = [0.0f32];
+        let candidate = [-0.0f32];
+        assert_ne!(reference[0].to_bits(), candidate[0].to_bits());
+        let report = compare_f32_slices(&reference, &candidate, Tolerance::EXACT);
+        assert_eq!(report.mismatches, 1);
+        assert_eq!(report.first_mismatch, Some(0));
+    }
+
+    #[test]
     fn exact_mode_detects_artificial_perturbation() {
         let reference = [1.0, 2.0, 3.0, 4.0];
         let candidate = [1.0, 2.0, 3.000_001, 4.0];
@@ -135,6 +164,12 @@ mod tests {
     }
 
     #[test]
+    fn tolerant_mode_accepts_signed_zero() {
+        let report = compare_f32_slices(&[0.0], &[-0.0], Tolerance::new(1e-6, 1e-6));
+        assert!(report.is_equivalent());
+    }
+
+    #[test]
     fn tolerance_rejects_material_difference() {
         let reference = [1.0, 2.0, 3.0];
         let candidate = [1.0, 2.1, 3.0];
@@ -154,6 +189,9 @@ mod tests {
         let report = compare_f32_slices(&reference, &candidate, Tolerance::new(1.0, 1.0));
         assert_eq!(report.mismatches, 1);
         assert_eq!(report.first_mismatch, Some(1));
+
+        let exact = compare_f32_slices(&reference, &candidate, Tolerance::EXACT);
+        assert_eq!(exact.mismatches, 1);
     }
 
     #[test]
