@@ -30,6 +30,22 @@ pub fn deterministic_batch(
     seed: u64,
     global_step: u64,
 ) -> Result<SequenceBatch, &'static str> {
+    deterministic_batch_from_stream(tokens, block, batch_size, seed, global_step, 0)
+}
+
+/// Build a deterministic minibatch beginning at an explicit sample stream.
+///
+/// Splitting one effective batch into several calls with consecutive stream
+/// offsets yields the same examples as one larger call. Gradient accumulation
+/// can therefore change memory usage without changing data selection.
+pub fn deterministic_batch_from_stream(
+    tokens: &[usize],
+    block: usize,
+    batch_size: usize,
+    seed: u64,
+    global_step: u64,
+    stream_offset: u64,
+) -> Result<SequenceBatch, &'static str> {
     if block == 0 || batch_size == 0 {
         return Err("block and batch_size must be positive");
     }
@@ -42,7 +58,10 @@ pub fn deterministic_batch(
     let mut targets = Vec::with_capacity(batch_size);
 
     for sample in 0..batch_size {
-        let start = deterministic_index(seed, global_step, sample as u64, n_starts);
+        let stream = stream_offset
+            .checked_add(sample as u64)
+            .ok_or("batch stream overflow")?;
+        let start = deterministic_index(seed, global_step, stream, n_starts);
         inputs.push(tokens[start..start + block].to_vec());
         targets.push(tokens[start + 1..start + block + 1].to_vec());
     }
@@ -106,6 +125,20 @@ mod tests {
         assert_eq!(a.len(), 4);
         assert!(a.inputs.iter().all(|x| x.len() == 8));
         assert!(a.targets.iter().all(|x| x.len() == 8));
+    }
+
+    #[test]
+    fn consecutive_streams_equal_one_larger_batch() {
+        let tokens: Vec<usize> = (0..96).map(|x| x % 11).collect();
+        let whole = deterministic_batch(&tokens, 8, 6, 77, 4).unwrap();
+        let first = deterministic_batch_from_stream(&tokens, 8, 2, 77, 4, 0).unwrap();
+        let second = deterministic_batch_from_stream(&tokens, 8, 4, 77, 4, 2).unwrap();
+
+        let mut inputs = first.inputs;
+        inputs.extend(second.inputs);
+        let mut targets = first.targets;
+        targets.extend(second.targets);
+        assert_eq!(whole, SequenceBatch { inputs, targets });
     }
 
     #[test]
