@@ -12,7 +12,7 @@ REPEATS="${AURALIS_BENCH_REPEATS:-3}"
 SEED="${AURALIS_BENCH_SEED:-659918}"
 BATCH="${AURALIS_BENCH_BATCH:-2}"
 ACCUM="${AURALIS_BENCH_ACCUM:-2}"
-BASELINE_FILE="${AURALIS_BENCH_BASELINE:-benchmarks/foundation-baseline.env}"
+BASELINE_FILE="${AURALIS_BENCH_BASELINE:-benchmarks/foundation-baseline.conf}"
 BIN="${AURALIS_BENCH_BIN:-target/release/auralis}"
 
 if [[ ! -x "$BIN" ]]; then
