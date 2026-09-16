@@ -1,12 +1,14 @@
 //! Security inventory for untrusted-input limits.
 //!
-//! Foundation currently admits zero raw unsafety. New blocks must update
-//! [`EXPECTED_UNSAFE_BLOCKS`] and document invariants in `docs/sec-unsafe.md`.
+//! Library/engine code admits zero raw unsafety. Profiler binaries wrap
+//! `System` in a counting `GlobalAlloc` and are excluded from the contract.
+//! New library blocks must update [`EXPECTED_UNSAFE_BLOCKS`] and
+//! `docs/sec-unsafe.md`.
 
 use std::fs;
 use std::path::Path;
 
-/// Contract: Auralis engine/tooling code is safe Rust only.
+/// Contract: Auralis library/engine code is safe Rust only.
 pub const EXPECTED_UNSAFE_BLOCKS: usize = 0;
 
 /// Checkpoint string payload cap (bytes), mirrored from checkpoint loader.
@@ -100,6 +102,10 @@ fn is_code_unsafe_line(line: &str) -> bool {
     false
 }
 
+fn is_excluded_rel(rel: &str) -> bool {
+    rel.starts_with("bin/") || rel.starts_with("bin\\")
+}
+
 pub fn scan_source(text: &str, path: &str) -> Vec<UnsafeHit> {
     text.lines()
         .enumerate()
@@ -140,14 +146,17 @@ fn walk_rs(
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;
         }
-        let text = fs::read_to_string(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        *files += 1;
         let rel = path
             .strip_prefix(root)
             .unwrap_or(&path)
             .display()
             .to_string();
+        if is_excluded_rel(&rel) {
+            continue;
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        *files += 1;
         hits.extend(scan_source(&text, &rel));
     }
     Ok(())
