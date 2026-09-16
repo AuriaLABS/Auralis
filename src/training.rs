@@ -63,19 +63,24 @@ pub struct StepMetrics {
 
 /// Reusable Engine buffers that sit outside the optimizer-step hot path.
 ///
-/// They correspond to the per-microbatch accumulator and per-sample scratch
-/// gradient that Foundation used to allocate repeatedly.
+/// Besides micro/sample gradients, Engine keeps a flat parameter mirror for
+/// Adam. The mirror is initialized once from the model and stays synchronized
+/// because every Engine optimizer step writes it back to the model.
 #[derive(Debug)]
 pub struct TrainWorkspace {
     micro_grads: Vec<f32>,
     sample_grads: Vec<f32>,
+    params: Vec<f32>,
 }
 
 impl TrainWorkspace {
-    pub fn new(param_count: usize) -> Self {
+    pub fn new(gpt: &Gpt) -> Self {
+        let params = gpt.collect_params();
+        let param_count = params.len();
         Self {
             micro_grads: vec![0.0; param_count],
             sample_grads: vec![0.0; param_count],
+            params,
         }
     }
 
@@ -88,7 +93,9 @@ impl TrainWorkspace {
     }
 
     fn matches(&self, param_count: usize) -> bool {
-        self.micro_grads.len() == param_count && self.sample_grads.len() == param_count
+        self.micro_grads.len() == param_count
+            && self.sample_grads.len() == param_count
+            && self.params.len() == param_count
     }
 }
 
@@ -150,12 +157,13 @@ pub fn train_step(
     )
 }
 
-/// Engine E1 optimizer step.
+/// Engine optimizer step with reusable data/gradient/parameter buffers.
 ///
 /// Data selection, example order, gradient accumulation order, clipping and
 /// Adam updates are identical to `train_step`. The only difference is memory
-/// behavior: deterministic windows are borrowed directly from the token stream
-/// and full-size micro/sample gradient buffers are reused across steps.
+/// behavior: deterministic windows are borrowed directly from the token stream,
+/// full-size gradient buffers are reused, and Adam updates a persistent flat
+/// parameter mirror rather than calling `collect_params()` every step.
 pub fn train_step_reuse(
     gpt: &mut Gpt,
     adam: &mut Adam,
@@ -194,7 +202,7 @@ pub fn train_step_reuse(
         }
     }
 
-    finish_step(
+    finish_step_with_params(
         gpt,
         adam,
         cfg,
@@ -202,18 +210,15 @@ pub fn train_step_reuse(
         effective_batch_size,
         grads,
         loss_sum,
+        &mut workspace.params,
     )
 }
 
-fn finish_step(
-    gpt: &mut Gpt,
-    adam: &mut Adam,
+fn prepare_grads(
     cfg: TrainConfig,
-    global_step: u64,
-    effective_batch_size: usize,
     grads: &mut [f32],
     loss_sum: f32,
-) -> Result<StepMetrics, &'static str> {
+) -> Result<(f32, f32, f32), &'static str> {
     let inv_accum = 1.0 / cfg.gradient_accumulation_steps as f32;
     for g in grads.iter_mut() {
         *g *= inv_accum;
@@ -235,14 +240,18 @@ fn finish_step(
             *g *= grad_scale;
         }
     }
+    Ok((loss, grad_norm, grad_scale))
+}
 
-    let mut params = gpt.collect_params();
-    adam.step(&mut params, grads);
-    if params.iter().any(|x| !x.is_finite()) {
-        return Err("optimizer produced non-finite parameters");
-    }
-    gpt.write_params(&params);
-
+fn make_metrics(
+    gpt: &Gpt,
+    cfg: TrainConfig,
+    global_step: u64,
+    effective_batch_size: usize,
+    loss: f32,
+    grad_norm: f32,
+    grad_scale: f32,
+) -> Result<StepMetrics, &'static str> {
     let tokens = effective_batch_size
         .checked_mul(gpt.cfg.block)
         .ok_or("processed token count overflow")?;
@@ -256,6 +265,64 @@ fn finish_step(
         microbatches: cfg.gradient_accumulation_steps,
         effective_batch_size,
     })
+}
+
+fn finish_step(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    cfg: TrainConfig,
+    global_step: u64,
+    effective_batch_size: usize,
+    grads: &mut [f32],
+    loss_sum: f32,
+) -> Result<StepMetrics, &'static str> {
+    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+
+    let mut params = gpt.collect_params();
+    adam.step(&mut params, grads);
+    if params.iter().any(|x| !x.is_finite()) {
+        return Err("optimizer produced non-finite parameters");
+    }
+    gpt.write_params(&params);
+
+    make_metrics(
+        gpt,
+        cfg,
+        global_step,
+        effective_batch_size,
+        loss,
+        grad_norm,
+        grad_scale,
+    )
+}
+
+fn finish_step_with_params(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    cfg: TrainConfig,
+    global_step: u64,
+    effective_batch_size: usize,
+    grads: &mut [f32],
+    loss_sum: f32,
+    params: &mut [f32],
+) -> Result<StepMetrics, &'static str> {
+    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+
+    adam.step(params, grads);
+    if params.iter().any(|x| !x.is_finite()) {
+        return Err("optimizer produced non-finite parameters");
+    }
+    gpt.write_params(params);
+
+    make_metrics(
+        gpt,
+        cfg,
+        global_step,
+        effective_batch_size,
+        loss,
+        grad_norm,
+        grad_scale,
+    )
 }
 
 #[cfg(test)]
@@ -392,7 +459,7 @@ mod tests {
         let mut candidate_adam = Adam::new(n, 2e-3);
         let mut reference_grads = vec![0.0; n];
         let mut candidate_grads = vec![0.0; n];
-        let mut workspace = TrainWorkspace::new(n);
+        let mut workspace = TrainWorkspace::new(&candidate);
 
         let a = train_step(
             &mut reference,
@@ -417,6 +484,56 @@ mod tests {
         assert_eq!(b, a);
         assert_eq!(candidate_grads, reference_grads);
         assert_eq!(candidate.collect_params(), reference.collect_params());
+        let (_, at, am, av) = reference_adam.export();
+        let (_, bt, bm, bv) = candidate_adam.export();
+        assert_eq!(bt, at);
+        assert_eq!(bm, am);
+        assert_eq!(bv, av);
+    }
+
+    #[test]
+    fn reuse_workspace_stays_exact_across_multiple_steps() {
+        let mut reference = model(202);
+        let mut candidate = reference.clone();
+        let tokens: Vec<usize> = (0..160).map(|i| (i * 3 + 4) % 7).collect();
+        let cfg = TrainConfig {
+            seed: 991,
+            batch_size: 2,
+            gradient_accumulation_steps: 2,
+            grad_clip_norm: 1.0,
+        };
+        let n = reference.collect_params().len();
+        let mut reference_adam = Adam::new(n, 2e-3);
+        let mut candidate_adam = Adam::new(n, 2e-3);
+        let mut reference_grads = vec![0.0; n];
+        let mut candidate_grads = vec![0.0; n];
+        let mut workspace = TrainWorkspace::new(&candidate);
+
+        for step in 0..3 {
+            let a = train_step(
+                &mut reference,
+                &mut reference_adam,
+                &tokens,
+                cfg,
+                step,
+                &mut reference_grads,
+            )
+            .unwrap();
+            let b = train_step_reuse(
+                &mut candidate,
+                &mut candidate_adam,
+                &tokens,
+                cfg,
+                step,
+                &mut candidate_grads,
+                &mut workspace,
+            )
+            .unwrap();
+            assert_eq!(b, a);
+            assert_eq!(candidate_grads, reference_grads);
+            assert_eq!(candidate.collect_params(), reference.collect_params());
+        }
+
         let (_, at, am, av) = reference_adam.export();
         let (_, bt, bm, bv) = candidate_adam.export();
         assert_eq!(bt, at);
