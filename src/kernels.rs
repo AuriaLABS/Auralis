@@ -161,6 +161,122 @@ pub fn matmul_b_t_row_slices_add_into(
     }
 }
 
+/// Reference causal multi-head attention forward pass matching `model.rs`.
+pub fn attention_forward_reference_into(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+    out: &mut [f32],
+    probs: &mut [f32],
+) {
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert_eq!(out.len(), t * d);
+    assert_eq!(probs.len(), n_head * t * t);
+    assert!(n_head > 0 && d % n_head == 0);
+    out.fill(0.0);
+    probs.fill(0.0);
+
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+    for h in 0..n_head {
+        let hoff = h * hd;
+        for i in 0..t {
+            let mut max_score = f32::NEG_INFINITY;
+            for j in 0..=i {
+                let mut s = 0.0;
+                for z in 0..hd {
+                    s += q[i * d + hoff + z] * k[j * d + hoff + z];
+                }
+                s *= scale;
+                let idx = (h * t + i) * t + j;
+                probs[idx] = s;
+                max_score = max_score.max(s);
+            }
+            let mut sum = 0.0;
+            for j in 0..=i {
+                let idx = (h * t + i) * t + j;
+                let e = (probs[idx] - max_score).exp();
+                probs[idx] = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            for j in 0..=i {
+                let pidx = (h * t + i) * t + j;
+                probs[pidx] *= inv;
+                let p = probs[pidx];
+                for z in 0..hd {
+                    out[i * d + hoff + z] += p * v[j * d + hoff + z];
+                }
+            }
+        }
+    }
+}
+
+/// Slice-based causal attention preserving every `z` and `j` accumulation order.
+pub fn attention_forward_row_slices_into(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+    out: &mut [f32],
+    probs: &mut [f32],
+) {
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert_eq!(out.len(), t * d);
+    assert_eq!(probs.len(), n_head * t * t);
+    assert!(n_head > 0 && d % n_head == 0);
+    out.fill(0.0);
+    probs.fill(0.0);
+
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+    for h in 0..n_head {
+        let hoff = h * hd;
+        for i in 0..t {
+            let q_head = &q[i * d + hoff..i * d + hoff + hd];
+            let prob_start = (h * t + i) * t;
+            let prob_row = &mut probs[prob_start..prob_start + t];
+            let mut max_score = f32::NEG_INFINITY;
+            for j in 0..=i {
+                let k_head = &k[j * d + hoff..j * d + hoff + hd];
+                let mut s = 0.0f32;
+                for (&qv, &kv) in q_head.iter().zip(k_head) {
+                    s += qv * kv;
+                }
+                s *= scale;
+                prob_row[j] = s;
+                max_score = max_score.max(s);
+            }
+
+            let mut sum = 0.0f32;
+            for score in &mut prob_row[..=i] {
+                let e = (*score - max_score).exp();
+                *score = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            let out_head = &mut out[i * d + hoff..i * d + hoff + hd];
+            for j in 0..=i {
+                prob_row[j] *= inv;
+                let p = prob_row[j];
+                let v_head = &v[j * d + hoff..j * d + hoff + hd];
+                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                    *dst += p * vv;
+                }
+            }
+        }
+    }
+}
+
 /// Reference gradient for the right-hand matrix in `A * B`.
 ///
 /// Adds `A^T * dY` into `dB`. This preserves the original scalar loop order.
@@ -224,6 +340,7 @@ pub fn matmul_grad_b_rowwise_zeroed(
 #[cfg(test)]
 mod tests {
     use super::{
+        attention_forward_reference_into, attention_forward_row_slices_into,
         matmul_b_t_reference_add_into, matmul_b_t_reference_into,
         matmul_b_t_row_slices_add_into, matmul_b_t_row_slices_into,
         matmul_grad_b_reference, matmul_grad_b_rowwise_zeroed, matmul_reference_into,
@@ -294,6 +411,40 @@ mod tests {
         assert_eq!(sliced_add, reference_add);
     }
 
+    fn assert_attention_forward_exact(t: usize, d: usize, n_head: usize) {
+        let q = data(t * d, 37);
+        let k = data(t * d, 41);
+        let v = data(t * d, 43);
+        let mut reference_out = vec![f32::NAN; t * d];
+        let mut sliced_out = vec![f32::NAN; t * d];
+        let mut reference_probs = vec![f32::NAN; n_head * t * t];
+        let mut sliced_probs = vec![f32::NAN; n_head * t * t];
+
+        attention_forward_reference_into(
+            &q,
+            &k,
+            &v,
+            t,
+            d,
+            n_head,
+            &mut reference_out,
+            &mut reference_probs,
+        );
+        attention_forward_row_slices_into(
+            &q,
+            &k,
+            &v,
+            t,
+            d,
+            n_head,
+            &mut sliced_out,
+            &mut sliced_probs,
+        );
+
+        assert_eq!(sliced_probs, reference_probs);
+        assert_eq!(sliced_out, reference_out);
+    }
+
     #[test]
     fn rowwise_grad_b_kernel_matches_reference_bit_for_bit() {
         for (rows, inner, cols) in [
@@ -336,6 +487,13 @@ mod tests {
             (32, 32, 32),
         ] {
             assert_matmul_b_t_exact(rows, out_cols, result_cols);
+        }
+    }
+
+    #[test]
+    fn row_slice_attention_forward_matches_reference_bit_for_bit() {
+        for (t, d, n_head) in [(1, 4, 1), (4, 8, 2), (7, 8, 2), (32, 32, 4)] {
+            assert_attention_forward_exact(t, d, n_head);
         }
     }
 
