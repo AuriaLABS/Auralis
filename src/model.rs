@@ -640,18 +640,7 @@ fn matmul_into(
     cols: usize,
     out: &mut [f32],
 ) {
-    assert_eq!(a.len(), rows * inner);
-    assert_eq!(b.len(), inner * cols);
-    assert_eq!(out.len(), rows * cols);
-    out.fill(0.0);
-    for i in 0..rows {
-        for k in 0..inner {
-            let av = a[i * inner + k];
-            for j in 0..cols {
-                out[i * cols + j] += av * b[k * cols + j];
-            }
-        }
-    }
+    crate::kernels::matmul_row_slices_into(a, rows, inner, b, cols, out);
 }
 
 fn matmul_grad_b(
