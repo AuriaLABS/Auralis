@@ -21,11 +21,15 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Unit tests
+      - name: Unit and acceptance tests
         run: cargo test --all-targets
 
-      - name: Gradient check
-        run: cargo run --release -- check
+      - name: Gradient check CLI
+        shell: bash
+        run: |
+          output="$(cargo run --release -- check 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'ok=true' <<< "$output"
 
       - name: BPE roundtrip
         run: cargo run --release -- bpe
