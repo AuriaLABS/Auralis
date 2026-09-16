@@ -17,7 +17,12 @@ pub struct GradCheckReport {
 }
 
 impl GradCheckReport {
-    pub fn ok(&self, abs_tol: f32, mean_rel_tol: f32) -> bool {
+    /// Backwards-compatible convenience criterion used by the CLI.
+    pub fn ok(&self, mean_rel_tol: f32) -> bool {
+        self.ok_with(5e-4, mean_rel_tol)
+    }
+
+    pub fn ok_with(&self, abs_tol: f32, mean_rel_tol: f32) -> bool {
         self.checked > 0
             && self.max_abs_err.is_finite()
             && self.mean_rel_err.is_finite()
