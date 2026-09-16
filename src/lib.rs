@@ -7,6 +7,7 @@ pub mod bpe;
 pub mod checkpoint;
 pub mod ci_matrix;
 pub mod cpu_matmul;
+pub mod docs_check;
 pub mod equivalence;
 pub mod eval;
 pub mod experiment;
