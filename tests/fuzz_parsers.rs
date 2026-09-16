@@ -165,6 +165,25 @@ fn truncated_checkpoint_header_is_an_error() {
 }
 
 #[test]
+fn oversized_string_length_is_rejected() {
+    let mut bytes = Vec::from(&b"AURLIS02"[..]);
+    for n in [5u32, 8, 2, 1, 4, 16] {
+        bytes.extend_from_slice(&n.to_le_bytes());
+    }
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+    let path = tmp("huge-str.bin");
+    fs::write(&path, bytes).unwrap();
+    let err = match checkpoint::load_full(&path) {
+        Ok(_) => panic!("oversized string was accepted"),
+        Err(err) => err,
+    };
+    let _ = fs::remove_file(&path);
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds"));
+}
+
+#[test]
 fn garbage_magic_is_invalid_data() {
     let path = tmp("garbage.bin");
     fs::write(&path, b"NOTAURALIS").unwrap();
