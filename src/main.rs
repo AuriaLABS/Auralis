@@ -16,7 +16,7 @@ use rand::{Rng, SeedableRng};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn load_corpus() -> String {
@@ -119,6 +119,7 @@ fn validate_resume_manifest(
 fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), String> {
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
+    print!("{}", run.effective_report());
 
     let effective_batch = run
         .effective_batch_size()
@@ -394,35 +395,71 @@ fn run_bpe() {
     println!("roundtrip: {}", bpe.decode(&bpe.encode(&sample)) == sample);
 }
 
-fn parse_train_args(args: &[String]) -> (usize, &Path, RunConfig) {
-    let steps = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(80);
-    let ckpt = args
-        .get(3)
-        .map(Path::new)
-        .unwrap_or_else(|| Path::new("auralis.bin"));
-    let defaults = RunConfig::default();
-    let seed = args
-        .get(4)
+fn print_config(path: Option<&Path>) {
+    let run = match path {
+        Some(p) => match RunConfig::load(p) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
+        None => RunConfig::default(),
+    };
+    if let Err(e) = run.validate() {
+        eprintln!("error: configuración inválida: {e}");
+        std::process::exit(2);
+    }
+    print!("{}", run.effective_report());
+}
+
+fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
+    let mut config_path: Option<&str> = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 2;
+    while i < args.len() {
+        if args[i] == "--config" {
+            let path = args.get(i + 1).ok_or("--config requires a path")?;
+            config_path = Some(path.as_str());
+            i += 2;
+            continue;
+        }
+        positional.push(args[i].as_str());
+        i += 1;
+    }
+
+    let mut run = match config_path {
+        Some(path) => RunConfig::load(path)?,
+        None => RunConfig::default(),
+    };
+    run.validate()
+        .map_err(|e| format!("configuración inválida: {e}"))?;
+
+    let steps = positional
+        .first()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(defaults.seed);
-    let batch = args
-        .get(5)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(defaults.batch_size);
-    let accum = args
-        .get(6)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(defaults.gradient_accumulation_steps);
-    (
-        steps,
-        ckpt,
-        defaults.with_cli_overrides(seed, batch, accum),
-    )
+        .unwrap_or(80);
+    let ckpt = positional
+        .get(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("auralis.bin"));
+    if let Some(seed) = positional.get(2).and_then(|s| s.parse().ok()) {
+        run.seed = seed;
+    }
+    if let Some(batch) = positional.get(3).and_then(|s| s.parse().ok()) {
+        run.batch_size = batch;
+    }
+    if let Some(accum) = positional.get(4).and_then(|s| s.parse().ok()) {
+        run.gradient_accumulation_steps = accum;
+    }
+    run.validate()
+        .map_err(|e| format!("configuración inválida: {e}"))?;
+    Ok((steps, ckpt, run))
 }
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -430,14 +467,21 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let ckpt_default = Path::new("auralis.bin");
     match args.get(1).map(|s| s.as_str()) {
-        Some("train") => {
-            let (steps, ckpt, run) = parse_train_args(&args);
-            run_train_or_exit(steps, ckpt, false, run);
-        }
-        Some("train-fresh") => {
-            let (steps, ckpt, run) = parse_train_args(&args);
-            run_train_or_exit(steps, ckpt, true, run);
-        }
+        Some("train") => match parse_train_args(&args) {
+            Ok((steps, ckpt, run)) => run_train_or_exit(steps, &ckpt, false, run),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
+        Some("train-fresh") => match parse_train_args(&args) {
+            Ok((steps, ckpt, run)) => run_train_or_exit(steps, &ckpt, true, run),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
+        Some("config") => print_config(args.get(2).map(Path::new)),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
