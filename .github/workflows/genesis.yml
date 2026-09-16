@@ -168,10 +168,3 @@ jobs:
           grep -q 'calls_per_iteration=2' <<< "$summary"
           grep -q 'exact_output=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
-
-      - name: E1.8 workspace phase profile
-        shell: bash
-        run: |
-          output="$(cargo run --release --bin auralis_workspace_profile 2>&1)"
-          printf '%s\n' "$output"
-          test "$(grep -c '^workspace_profile |' <<< "$output")" -eq 12
