@@ -1,8 +1,16 @@
 pub mod agent;
+pub mod batch;
 pub mod bpe;
 pub mod checkpoint;
+pub mod eval;
+pub mod experiment;
 pub mod gradcheck;
+pub mod manifest;
+pub mod metrics;
 pub mod model;
 pub mod optim;
+pub mod run_config;
+pub mod sampling;
 pub mod tensor;
 pub mod tokenizer;
+pub mod training;
