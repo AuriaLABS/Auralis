@@ -111,3 +111,14 @@ jobs:
           summary="$(grep '^engine_bench_summary |' <<< "$output")"
           grep -q 'exact_state=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
+
+      - name: E2 grad-B kernel benchmark
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_kernel_bench -- 5 40 5 2>&1)"
+          printf '%s\n' "$output"
+          test "$(grep -c '^kernel_bench_run |' <<< "$output")" -eq 5
+          summary="$(grep '^kernel_bench_summary |' <<< "$output")"
+          grep -q 'kernel=matmul_grad_b' <<< "$summary"
+          grep -q 'exact_output=true' <<< "$summary"
+          grep -q 'repeats=5' <<< "$summary"
