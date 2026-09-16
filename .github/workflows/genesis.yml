@@ -83,3 +83,9 @@ jobs:
           cargo run --release -- train 1 /tmp/auralis-foundation.bin 659918 2 2
           test -s /tmp/auralis-foundation.bin.manifest
           cargo run --release -- eval /tmp/auralis-foundation.bin
+
+      - name: Foundation CPU regression benchmark
+        shell: bash
+        run: |
+          cargo build --release
+          bash scripts/foundation_benchmark.sh
