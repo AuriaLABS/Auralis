@@ -1,0 +1,8 @@
+Auralis es un motor cognitivo escrito en Rust.
+Auralis aprende a predecir el siguiente token a partir del contexto.
+El diseño es un transformer decoder-only con atención causal.
+Hola. Buenos días. El gato duerme en la silla.
+Pregunta: como te llamas. Respuesta: me llamo Auralis.
+Auralis es una inteligencia.
+Auralis recuerda el contexto.
+El siguiente carácter importa.
