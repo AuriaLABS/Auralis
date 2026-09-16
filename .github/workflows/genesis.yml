@@ -101,3 +101,13 @@ jobs:
           grep -q 'exact_state=true' <<< "$delta"
           reduction="$(awk '{ for (i = 1; i <= NF; i++) { split($i, a, "="); if (a[1] == "alloc_bytes_reduction_pct") { print a[2]; exit } } }' <<< "$delta")"
           awk -v reduction="$reduction" 'BEGIN { exit !(reduction > 0.0) }'
+
+      - name: Engine side-by-side throughput benchmark
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_engine_bench -- 3 20 5 2>&1)"
+          printf '%s\n' "$output"
+          test "$(grep -c '^engine_bench_run |' <<< "$output")" -eq 5
+          summary="$(grep '^engine_bench_summary |' <<< "$output")"
+          grep -q 'exact_state=true' <<< "$summary"
+          grep -q 'repeats=5' <<< "$summary"
