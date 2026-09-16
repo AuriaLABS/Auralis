@@ -6,6 +6,7 @@ use auralis::tokenizer::{AnyTok, CharTokenizer};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::fs;
+use std::io::ErrorKind;
 
 #[test]
 fn analytical_backward_matches_finite_differences() {
@@ -118,4 +119,36 @@ fn checkpoint_roundtrip_preserves_model_tokenizer_and_adam() {
     assert_eq!(t_a, t_b);
     assert_eq!(m_a, m_b);
     assert_eq!(v_a, v_b);
+}
+
+#[test]
+fn incompatible_checkpoint_is_an_error_not_a_panic() {
+    // Minimal AURLIS02 header with a valid model/tokenizer configuration but
+    // a deliberately impossible parameter count. The loader must reject it
+    // before attempting to write the vector into the model.
+    let path = std::env::temp_dir().join(format!(
+        "auralis-genesis-invalid-checkpoint-{}.bin",
+        std::process::id()
+    ));
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AURLIS02");
+    for n in [5u32, 8, 2, 1, 4, 16] {
+        bytes.extend_from_slice(&n.to_le_bytes());
+    }
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // char tokenizer
+    let vocab = "abc\n ".as_bytes();
+    bytes.extend_from_slice(&(vocab.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(vocab);
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // wrong parameter count
+    fs::write(&path, bytes).unwrap();
+
+    let err = match checkpoint::load_full(&path) {
+        Ok(_) => panic!("incompatible checkpoint was accepted"),
+        Err(err) => err,
+    };
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(err.kind(), ErrorKind::InvalidData);
+    assert!(err.to_string().contains("parameter count mismatch"));
 }
