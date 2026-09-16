@@ -31,5 +31,6 @@ Run `auralis sec-audit [SRC_ROOT]` before merging engine changes.
 | run config | unknown/duplicate/future fields | decode error |
 | release artifacts | reject `..` and absolute paths | error |
 | untrusted paths | `sec_path::confine` — no `..` escape, no absolute, max 32 components | error |
+| size arithmetic | `sec_overflow::{checked_add,checked_mul,checked_product}` | error, never wrap |
 
 Malformed checkpoints and configs must fail closed. They must not panic into parameter writes.
