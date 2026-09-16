@@ -380,9 +380,7 @@ impl Gpt {
             }
         }
 
-        let flat = flatten_grads(&gg);
-        assert_eq!(flat.len(), grads.len());
-        grads.copy_from_slice(&flat);
+        copy_grads_into(&gg, grads);
         loss
     }
 
@@ -510,29 +508,35 @@ fn copy_param(dst: &mut [f32], src: &[f32], p: &mut usize) {
     *p = end;
 }
 
-fn flatten_grads(g: &GptGrad) -> Vec<f32> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&g.tok_emb);
-    out.extend_from_slice(&g.pos_emb);
+fn copy_grad(src: &[f32], dst: &mut [f32], p: &mut usize) {
+    let end = *p + src.len();
+    dst[*p..end].copy_from_slice(src);
+    *p = end;
+}
+
+fn copy_grads_into(g: &GptGrad, out: &mut [f32]) {
+    let mut p = 0usize;
+    copy_grad(&g.tok_emb, out, &mut p);
+    copy_grad(&g.pos_emb, out, &mut p);
     for b in &g.blocks {
-        out.extend_from_slice(&b.ln1_g);
-        out.extend_from_slice(&b.ln1_b);
-        out.extend_from_slice(&b.wq);
-        out.extend_from_slice(&b.wk);
-        out.extend_from_slice(&b.wv);
-        out.extend_from_slice(&b.wo);
-        out.extend_from_slice(&b.ln2_g);
-        out.extend_from_slice(&b.ln2_b);
-        out.extend_from_slice(&b.w1);
-        out.extend_from_slice(&b.b1);
-        out.extend_from_slice(&b.w2);
-        out.extend_from_slice(&b.b2);
+        copy_grad(&b.ln1_g, out, &mut p);
+        copy_grad(&b.ln1_b, out, &mut p);
+        copy_grad(&b.wq, out, &mut p);
+        copy_grad(&b.wk, out, &mut p);
+        copy_grad(&b.wv, out, &mut p);
+        copy_grad(&b.wo, out, &mut p);
+        copy_grad(&b.ln2_g, out, &mut p);
+        copy_grad(&b.ln2_b, out, &mut p);
+        copy_grad(&b.w1, out, &mut p);
+        copy_grad(&b.b1, out, &mut p);
+        copy_grad(&b.w2, out, &mut p);
+        copy_grad(&b.b2, out, &mut p);
     }
-    out.extend_from_slice(&g.ln_f_g);
-    out.extend_from_slice(&g.ln_f_b);
-    out.extend_from_slice(&g.w_out);
-    out.extend_from_slice(&g.b_out);
-    out
+    copy_grad(&g.ln_f_g, out, &mut p);
+    copy_grad(&g.ln_f_b, out, &mut p);
+    copy_grad(&g.w_out, out, &mut p);
+    copy_grad(&g.b_out, out, &mut p);
+    debug_assert_eq!(p, out.len());
 }
 
 fn add_inplace(a: &mut [f32], b: &[f32]) {
