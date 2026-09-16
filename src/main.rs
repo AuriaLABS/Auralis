@@ -94,10 +94,10 @@ fn validate_resume_manifest(
     };
     let manifest_path = manifest::manifest_path(ckpt);
     if !manifest_path.exists() {
-        eprintln!(
-            "aviso: checkpoint legacy sin manifiesto; no se puede demostrar identidad exacta del experimento"
-        );
-        return Ok(());
+        return Err(format!(
+            "checkpoint {} no tiene manifiesto Foundation; reanudación rechazada. Usa train-fresh para iniciar un experimento reproducible",
+            ckpt.display()
+        ));
     }
 
     let m = manifest::load_manifest(ckpt)?;
