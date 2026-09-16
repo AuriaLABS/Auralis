@@ -53,7 +53,7 @@ fn run_once(shape: Shape, tile: usize, iters: usize, candidate_first: bool) -> (
     );
     assert_eq!(candidate, reference, "candidate must match reference exactly");
 
-    let run_reference = || {
+    let mut run_reference = || {
         let start = Instant::now();
         for _ in 0..iters {
             matmul_reference_into(
@@ -70,7 +70,7 @@ fn run_once(shape: Shape, tile: usize, iters: usize, candidate_first: bool) -> (
         elapsed
     };
 
-    let run_candidate = || {
+    let mut run_candidate = || {
         let start = Instant::now();
         for _ in 0..iters {
             matmul_blocked_cols_into(
