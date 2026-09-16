@@ -206,6 +206,16 @@ impl RunConfig {
         fingerprint_bytes(self.encode().as_bytes())
     }
 
+    /// Human-readable effective config used before any expensive startup.
+    pub fn effective_report(&self) -> String {
+        format!(
+            "effective_config | schema={} fingerprint={:016x}\n{}",
+            RUN_CONFIG_SCHEMA_VERSION,
+            self.fingerprint(),
+            self.encode()
+        )
+    }
+
     pub fn save(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         fs::write(path, self.encode())
     }
@@ -381,5 +391,15 @@ mod tests {
 
         assert_eq!(loaded, cfg);
         assert_eq!(loaded.fingerprint(), cfg.fingerprint());
+    }
+
+    #[test]
+    fn effective_report_includes_schema_fingerprint_and_canonical_body() {
+        let cfg = RunConfig::default();
+        let report = cfg.effective_report();
+        assert!(report.contains("effective_config |"));
+        assert!(report.contains(&format!("schema={RUN_CONFIG_SCHEMA_VERSION}")));
+        assert!(report.contains(&format!("{:016x}", cfg.fingerprint())));
+        assert!(report.contains(&cfg.encode()));
     }
 }
