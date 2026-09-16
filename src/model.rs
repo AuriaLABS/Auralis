@@ -97,6 +97,7 @@ struct ForwardCache {
     h_final: Vec<f32>,
 }
 
+#[derive(Debug)]
 struct BlockGrad {
     ln1_g: Vec<f32>,
     ln1_b: Vec<f32>,
@@ -112,6 +113,7 @@ struct BlockGrad {
     b2: Vec<f32>,
 }
 
+#[derive(Debug)]
 struct GptGrad {
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
@@ -120,6 +122,12 @@ struct GptGrad {
     ln_f_b: Vec<f32>,
     w_out: Vec<f32>,
     b_out: Vec<f32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct BackwardWorkspace {
+    cfg: Config,
+    grads: GptGrad,
 }
 
 fn init_vec(rng: &mut impl Rng, n: usize, scale: f32) -> Vec<f32> {
@@ -141,6 +149,54 @@ fn zeros_block_grad(cfg: Config) -> BlockGrad {
         b1: vec![0.0; cfg.n_ff],
         w2: vec![0.0; cfg.n_ff * d],
         b2: vec![0.0; d],
+    }
+}
+
+impl BlockGrad {
+    fn clear(&mut self) {
+        self.ln1_g.fill(0.0);
+        self.ln1_b.fill(0.0);
+        self.wq.fill(0.0);
+        self.wk.fill(0.0);
+        self.wv.fill(0.0);
+        self.wo.fill(0.0);
+        self.ln2_g.fill(0.0);
+        self.ln2_b.fill(0.0);
+        self.w1.fill(0.0);
+        self.b1.fill(0.0);
+        self.w2.fill(0.0);
+        self.b2.fill(0.0);
+    }
+}
+
+impl GptGrad {
+    fn clear(&mut self) {
+        self.tok_emb.fill(0.0);
+        self.pos_emb.fill(0.0);
+        for block in &mut self.blocks {
+            block.clear();
+        }
+        self.ln_f_g.fill(0.0);
+        self.ln_f_b.fill(0.0);
+        self.w_out.fill(0.0);
+        self.b_out.fill(0.0);
+    }
+}
+
+impl BackwardWorkspace {
+    pub(crate) fn new(gpt: &Gpt) -> Self {
+        Self {
+            cfg: gpt.cfg,
+            grads: gpt.zero_grads(),
+        }
+    }
+
+    pub(crate) fn matches(&self, gpt: &Gpt) -> bool {
+        self.cfg == gpt.cfg
+    }
+
+    fn clear(&mut self) {
+        self.grads.clear();
     }
 }
 
@@ -256,11 +312,23 @@ impl Gpt {
     }
 
     pub fn backward_into(&self, x: &[usize], y: &[usize], grads: &mut [f32]) -> f32 {
+        let mut workspace = BackwardWorkspace::new(self);
+        self.backward_into_reuse(x, y, grads, &mut workspace)
+    }
+
+    pub(crate) fn backward_into_reuse(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        grads: &mut [f32],
+        workspace: &mut BackwardWorkspace,
+    ) -> f32 {
         assert_eq!(x.len(), y.len());
         assert!(!x.is_empty() && x.len() <= self.cfg.block);
         assert_eq!(grads.len(), self.param_count());
         assert!(x.iter().all(|&t| t < self.cfg.vocab));
         assert!(y.iter().all(|&t| t < self.cfg.vocab));
+        assert!(workspace.matches(self), "backward workspace config mismatch");
 
         let (logits, cache) = self.forward_internal(x);
         let t = x.len();
@@ -291,22 +359,15 @@ impl Gpt {
             *g *= inv_t;
         }
 
-        let mut gg = self.zero_grads();
+        workspace.clear();
+        let gg = &mut workspace.grads;
         let d = self.cfg.n_embd;
 
-        matmul_grad_b(
-            &cache.h_final,
-            t,
-            d,
-            &dlogits,
-            v,
-            &mut gg.w_out,
-        );
+        matmul_grad_b(&cache.h_final, t, d, &dlogits, v, &mut gg.w_out);
         sum_rows_into(&dlogits, t, v, &mut gg.b_out);
         let mut dx = matmul_b_t(&dlogits, t, v, &self.w_out, d);
 
-        let (dx_ln, dgamma, dbeta) =
-            layernorm_backward(&dx, &cache.ln_f, &self.ln_f_g);
+        let (dx_ln, dgamma, dbeta) = layernorm_backward(&dx, &cache.ln_f, &self.ln_f_g);
         dx = dx_ln;
         add_inplace(&mut gg.ln_f_g, &dgamma);
         add_inplace(&mut gg.ln_f_b, &dbeta);
@@ -378,7 +439,7 @@ impl Gpt {
             }
         }
 
-        copy_grads_into(&gg, grads);
+        copy_grads_into(gg, grads);
         loss
     }
 
@@ -411,8 +472,7 @@ impl Gpt {
             let tok = tokens[i];
             assert!(tok < self.cfg.vocab);
             for j in 0..d {
-                x[i * d + j] =
-                    self.tok_emb[tok * d + j] + self.pos_emb[i * d + j];
+                x[i * d + j] = self.tok_emb[tok * d + j] + self.pos_emb[i * d + j];
             }
         }
 
@@ -422,8 +482,7 @@ impl Gpt {
             let q = matmul(&h1, t, d, &b.wq, d);
             let k = matmul(&h1, t, d, &b.wk, d);
             let v = matmul(&h1, t, d, &b.wv, d);
-            let (att, probs) =
-                attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
+            let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
             let proj = matmul(&att, t, d, &b.wo, d);
             let mut r1 = x.clone();
             add_inplace(&mut r1, &proj);
@@ -453,8 +512,7 @@ impl Gpt {
             x = out;
         }
 
-        let (h_final, ln_f) =
-            layernorm_forward(&x, t, d, &self.ln_f_g, &self.ln_f_b);
+        let (h_final, ln_f) = layernorm_forward(&x, t, d, &self.ln_f_g, &self.ln_f_b);
         let mut logits = matmul(&h_final, t, d, &self.w_out, self.cfg.vocab);
         add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
 
@@ -485,11 +543,13 @@ impl Gpt {
 
     fn param_count(&self) -> usize {
         let d = self.cfg.n_embd;
-        let per_block =
-            4 * d * d + 2 * d + 2 * d + d * self.cfg.n_ff
-                + self.cfg.n_ff
-                + self.cfg.n_ff * d
-                + d;
+        let per_block = 4 * d * d
+            + 2 * d
+            + 2 * d
+            + d * self.cfg.n_ff
+            + self.cfg.n_ff
+            + self.cfg.n_ff * d
+            + d;
         self.tok_emb.len()
             + self.pos_emb.len()
             + self.cfg.n_layer * per_block
@@ -686,8 +746,7 @@ fn layernorm_backward(
         for j in 0..cols {
             let idx = i * cols + j;
             let z = dy[idx] * gamma[j];
-            dx[idx] = scale
-                * (cols as f32 * z - sum_g - cache.xhat[idx] * sum_gxh);
+            dx[idx] = scale * (cols as f32 * z - sum_g - cache.xhat[idx] * sum_gxh);
         }
     }
     (dx, dgamma, dbeta)
@@ -835,7 +894,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, Gpt};
+    use super::{BackwardWorkspace, Config, Gpt};
 
     #[test]
     fn params_roundtrip() {
@@ -894,6 +953,35 @@ mod tests {
         let mut grads = vec![0.0; gpt.collect_params().len()];
         let backward_loss = gpt.backward_into(&x, &y, &mut grads);
         assert!((forward_loss - backward_loss).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reused_backward_workspace_resets_exactly() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = rand::thread_rng();
+        let gpt = Gpt::new(cfg, &mut rng);
+        let n = gpt.collect_params().len();
+        let mut workspace = BackwardWorkspace::new(&gpt);
+        let mut reference = vec![0.0; n];
+        let mut reused = vec![0.0; n];
+
+        for (x, y) in [
+            ([0, 1, 2, 3], [1, 2, 3, 4]),
+            ([3, 2, 1, 0], [2, 1, 0, 6]),
+        ] {
+            let reference_loss = gpt.backward_into(&x, &y, &mut reference);
+            reused.fill(f32::NAN);
+            let reused_loss = gpt.backward_into_reuse(&x, &y, &mut reused, &mut workspace);
+            assert_eq!(reused_loss, reference_loss);
+            assert_eq!(reused, reference);
+        }
     }
 
     #[test]
