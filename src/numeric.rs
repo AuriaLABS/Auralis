@@ -2,7 +2,7 @@
 //!
 //! Scanning is explicit and off the production hot path until a caller opts in.
 //! Mode-off therefore adds no overhead: nothing in `model`/`training` calls this
-//! module yet (wiring is a later slice of #90 so it does not collide with #27).
+//! module yet (wiring into forward is a later slice of #90 so it does not collide with #27).
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
@@ -32,6 +32,35 @@ pub struct Scan {
 impl Scan {
     pub fn is_finite(&self) -> bool {
         self.first.is_none()
+    }
+}
+
+/// Opt-in gate. Default off; `scan` is a no-op so callers can sit on the hot path later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Diagnostics {
+    pub enabled: bool,
+}
+
+impl Diagnostics {
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+
+    pub fn on() -> Self {
+        Self { enabled: true }
+    }
+
+    pub fn scan(&self, values: &[f32]) -> Option<Scan> {
+        if !self.enabled {
+            return None;
+        }
+        Some(scan_f32(values))
+    }
+}
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self::off()
     }
 }
 
@@ -164,5 +193,19 @@ mod tests {
             (Stage::AdamMoment, "m", [0.01f32, 0.0].as_slice()),
         ]);
         assert!(none.is_none());
+    }
+
+    #[test]
+    fn diagnostics_off_is_a_noop() {
+        let dirty = [1.0f32, f32::NAN];
+        assert!(Diagnostics::off().scan(&dirty).is_none());
+        assert!(Diagnostics::default().scan(&dirty).is_none());
+    }
+
+    #[test]
+    fn diagnostics_on_reports_first_fault() {
+        let dirty = [1.0f32, f32::NAN];
+        let scan = Diagnostics::on().scan(&dirty).expect("enabled");
+        assert_eq!(scan.first, Some(Fault::NaN { index: 1 }));
     }
 }
