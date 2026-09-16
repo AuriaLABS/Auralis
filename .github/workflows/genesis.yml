@@ -1,4 +1,4 @@
-name: Genesis CI
+name: Auralis CI
 
 on:
   push:
@@ -10,13 +10,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: genesis-${{ github.workflow }}-${{ github.ref }}
+  group: auralis-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  genesis:
+  core:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      AURALIS_COMMIT_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,9 +39,23 @@ jobs:
       - name: BPE roundtrip
         run: cargo run --release -- bpe
 
-      - name: Training and checkpoint smoke test
+      - name: Training, manifest and checkpoint smoke test
+        shell: bash
         run: |
-          cargo run --release -- train-fresh 3 /tmp/auralis-genesis.bin
-          test -s /tmp/auralis-genesis.bin
-          cargo run --release -- train 1 /tmp/auralis-genesis.bin
-          cargo run --release -- eval /tmp/auralis-genesis.bin
+          cargo run --release -- train-fresh 3 /tmp/auralis-foundation.bin
+          test -s /tmp/auralis-foundation.bin
+          test -s /tmp/auralis-foundation.bin.manifest
+          grep -q "code_revision=${AURALIS_COMMIT_SHA}" /tmp/auralis-foundation.bin.manifest
+          grep -q 'seed=659918' /tmp/auralis-foundation.bin.manifest
+
+          before="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
+          if cargo run --release -- train 1 /tmp/auralis-foundation.bin 123 4; then
+            echo 'resume with a different seed unexpectedly succeeded'
+            exit 1
+          fi
+          after="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
+          test "$before" = "$after"
+
+          cargo run --release -- train 1 /tmp/auralis-foundation.bin
+          test -s /tmp/auralis-foundation.bin.manifest
+          cargo run --release -- eval /tmp/auralis-foundation.bin
