@@ -1,6 +1,6 @@
 use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
-use auralis::training::{train_step, TrainConfig};
+use auralis::training::{train_step, train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -68,6 +68,32 @@ struct AllocationSnapshot {
     dealloc_bytes: u64,
 }
 
+#[derive(Clone, Copy)]
+enum ProfileMode {
+    Reference,
+    Reuse,
+}
+
+impl ProfileMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Reuse => "reuse",
+        }
+    }
+}
+
+struct ProfileRun {
+    counts: AllocationSnapshot,
+    seconds: f64,
+    processed_tokens: u64,
+    params: usize,
+    final_params: Vec<f32>,
+    adam_t: i32,
+    adam_m: Vec<f32>,
+    adam_v: Vec<f32>,
+}
+
 fn reset_counters() {
     for counter in [
         &ALLOC_CALLS,
@@ -114,6 +140,126 @@ fn token_stream() -> Vec<usize> {
         .collect()
 }
 
+fn execute_step(
+    mode: ProfileMode,
+    model: &mut Gpt,
+    adam: &mut Adam,
+    tokens: &[usize],
+    cfg: TrainConfig,
+    grads: &mut [f32],
+    workspace: &mut TrainWorkspace,
+) -> usize {
+    let global_step = adam.t.max(0) as u64;
+    let metrics = match mode {
+        ProfileMode::Reference => train_step(model, adam, tokens, cfg, global_step, grads),
+        ProfileMode::Reuse => {
+            train_step_reuse(model, adam, tokens, cfg, global_step, grads, workspace)
+        }
+    }
+    .expect("profile training step");
+    metrics.tokens
+}
+
+fn warm(mode: ProfileMode, cfg: TrainConfig, tokens: &[usize]) {
+    let mut model = make_model(1234);
+    let n = model.collect_params().len();
+    let mut adam = Adam::new(n, 3e-3);
+    let mut grads = vec![0.0; n];
+    let mut workspace = TrainWorkspace::new(n);
+    execute_step(mode, &mut model, &mut adam, tokens, cfg, &mut grads, &mut workspace);
+}
+
+fn measure(mode: ProfileMode, steps: usize, cfg: TrainConfig, tokens: &[usize]) -> ProfileRun {
+    let mut model = make_model(1234);
+    let params = model.collect_params().len();
+    let mut adam = Adam::new(params, 3e-3);
+    let mut grads = vec![0.0; params];
+    let mut workspace = TrainWorkspace::new(params);
+
+    reset_counters();
+    let started = Instant::now();
+    let mut processed_tokens = 0u64;
+    for _ in 0..steps {
+        processed_tokens += execute_step(
+            mode,
+            &mut model,
+            &mut adam,
+            tokens,
+            cfg,
+            &mut grads,
+            &mut workspace,
+        ) as u64;
+    }
+    let seconds = started.elapsed().as_secs_f64();
+    let counts = snapshot();
+
+    // Everything below happens after the allocation snapshot and therefore does
+    // not contaminate the measured hot path.
+    let final_params = model.collect_params();
+    let (_, adam_t, m, v) = adam.export();
+    ProfileRun {
+        counts,
+        seconds,
+        processed_tokens,
+        params,
+        final_params,
+        adam_t,
+        adam_m: m.to_vec(),
+        adam_v: v.to_vec(),
+    }
+}
+
+fn tokens_per_second(run: &ProfileRun) -> f64 {
+    if run.seconds > 0.0 {
+        run.processed_tokens as f64 / run.seconds
+    } else {
+        f64::INFINITY
+    }
+}
+
+fn print_run(mode: ProfileMode, steps: usize, run: &ProfileRun) {
+    let alloc_calls_per_step = run.counts.alloc_calls as f64 / steps as f64;
+    let alloc_bytes_per_step = run.counts.alloc_bytes as f64 / steps as f64;
+    let alloc_bytes_per_token = if run.processed_tokens > 0 {
+        run.counts.alloc_bytes as f64 / run.processed_tokens as f64
+    } else {
+        0.0
+    };
+
+    println!(
+        concat!(
+            "engine_profile | mode={} steps={} tokens={} params={} seconds={:.6} tok_per_s={:.3} ",
+            "alloc_calls={} alloc_bytes={} realloc_calls={} realloc_old_bytes={} realloc_new_bytes={} ",
+            "dealloc_calls={} dealloc_bytes={} alloc_calls_per_step={:.3} alloc_bytes_per_step={:.3} ",
+            "alloc_bytes_per_token={:.3}"
+        ),
+        mode.label(),
+        steps,
+        run.processed_tokens,
+        run.params,
+        run.seconds,
+        tokens_per_second(run),
+        run.counts.alloc_calls,
+        run.counts.alloc_bytes,
+        run.counts.realloc_calls,
+        run.counts.realloc_old_bytes,
+        run.counts.realloc_new_bytes,
+        run.counts.dealloc_calls,
+        run.counts.dealloc_bytes,
+        alloc_calls_per_step,
+        alloc_bytes_per_step,
+        alloc_bytes_per_token,
+    );
+}
+
+fn reduction_pct(reference: u64, candidate: u64) -> f64 {
+    if reference == 0 {
+        0.0
+    } else {
+        100.0 * (reference as f64 - candidate as f64) / reference as f64
+    }
+}
+
 fn main() {
     let steps = env::args()
         .nth(1)
@@ -126,84 +272,32 @@ fn main() {
 
     let cfg = profile_config();
     let tokens = token_stream();
+    warm(ProfileMode::Reference, cfg, &tokens);
+    warm(ProfileMode::Reuse, cfg, &tokens);
 
-    // Warm the code path on a separate state so none of its allocations or
-    // optimizer updates contaminate the measured experiment.
-    {
-        let mut warm_model = make_model(1234);
-        let n = warm_model.collect_params().len();
-        let mut warm_adam = Adam::new(n, 3e-3);
-        let mut warm_grads = vec![0.0; n];
-        train_step(
-            &mut warm_model,
-            &mut warm_adam,
-            &tokens,
-            cfg,
-            0,
-            &mut warm_grads,
-        )
-        .expect("warmup training step");
+    let reference = measure(ProfileMode::Reference, steps, cfg, &tokens);
+    let reuse = measure(ProfileMode::Reuse, steps, cfg, &tokens);
+
+    let exact_state = reference.final_params == reuse.final_params
+        && reference.adam_t == reuse.adam_t
+        && reference.adam_m == reuse.adam_m
+        && reference.adam_v == reuse.adam_v;
+    if !exact_state {
+        eprintln!("Engine candidate changed the final training state");
+        std::process::exit(3);
     }
 
-    let mut model = make_model(1234);
-    let params = model.collect_params().len();
-    let mut adam = Adam::new(params, 3e-3);
-    let mut grads = vec![0.0; params];
-
-    reset_counters();
-    let started = Instant::now();
-    let mut processed_tokens = 0u64;
-
-    for _ in 0..steps {
-        let global_step = adam.t.max(0) as u64;
-        let metrics = train_step(
-            &mut model,
-            &mut adam,
-            &tokens,
-            cfg,
-            global_step,
-            &mut grads,
-        )
-        .expect("profile training step");
-        processed_tokens += metrics.tokens as u64;
-    }
-
-    let elapsed = started.elapsed().as_secs_f64();
-    let counts = snapshot();
-    let tok_per_s = if elapsed > 0.0 {
-        processed_tokens as f64 / elapsed
-    } else {
-        f64::INFINITY
-    };
-    let alloc_calls_per_step = counts.alloc_calls as f64 / steps as f64;
-    let alloc_bytes_per_step = counts.alloc_bytes as f64 / steps as f64;
-    let alloc_bytes_per_token = if processed_tokens > 0 {
-        counts.alloc_bytes as f64 / processed_tokens as f64
-    } else {
-        0.0
-    };
-
+    print_run(ProfileMode::Reference, steps, &reference);
+    print_run(ProfileMode::Reuse, steps, &reuse);
     println!(
         concat!(
-            "engine_profile | steps={} tokens={} params={} seconds={:.6} tok_per_s={:.3} ",
-            "alloc_calls={} alloc_bytes={} realloc_calls={} realloc_old_bytes={} realloc_new_bytes={} ",
-            "dealloc_calls={} dealloc_bytes={} alloc_calls_per_step={:.3} alloc_bytes_per_step={:.3} ",
-            "alloc_bytes_per_token={:.3}"
+            "engine_profile_delta | exact_state={} alloc_calls_reduction_pct={:.3} ",
+            "alloc_bytes_reduction_pct={:.3} realloc_calls_reduction_pct={:.3} tok_per_s_ratio={:.3}"
         ),
-        steps,
-        processed_tokens,
-        params,
-        elapsed,
-        tok_per_s,
-        counts.alloc_calls,
-        counts.alloc_bytes,
-        counts.realloc_calls,
-        counts.realloc_old_bytes,
-        counts.realloc_new_bytes,
-        counts.dealloc_calls,
-        counts.dealloc_bytes,
-        alloc_calls_per_step,
-        alloc_bytes_per_step,
-        alloc_bytes_per_token,
+        exact_state,
+        reduction_pct(reference.counts.alloc_calls, reuse.counts.alloc_calls),
+        reduction_pct(reference.counts.alloc_bytes, reuse.counts.alloc_bytes),
+        reduction_pct(reference.counts.realloc_calls, reuse.counts.realloc_calls),
+        tokens_per_second(&reuse) / tokens_per_second(&reference),
     );
 }
