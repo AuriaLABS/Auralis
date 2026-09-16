@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn root() -> &'static Path {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -16,6 +16,55 @@ mod tests {
 
     fn readme() -> String {
         fs::read_to_string(root().join("README.md")).expect("README.md")
+    }
+
+    fn markdown_files() -> Vec<PathBuf> {
+        let mut out = vec![
+            root().join("README.md"),
+            root().join("VISION.md"),
+            root().join("ROADMAP.md"),
+        ];
+        let docs_dir = root().join("docs");
+        if let Ok(entries) = fs::read_dir(&docs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    out.push(path);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    fn internal_targets(markdown: &str) -> Vec<String> {
+        let mut targets = Vec::new();
+        let bytes = markdown.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'[' {
+                if let Some(close) = markdown[i..].find(']') {
+                    let after = i + close + 1;
+                    if after < bytes.len() && bytes[after] == b'(' {
+                        if let Some(end) = markdown[after + 1..].find(')') {
+                            let raw = markdown[after + 1..after + 1 + end].trim();
+                            let href = raw.split('#').next().unwrap_or("").trim();
+                            if !href.is_empty()
+                                && !href.starts_with("http://")
+                                && !href.starts_with("https://")
+                                && !href.starts_with("mailto:")
+                            {
+                                targets.push(href.to_string());
+                            }
+                            i = after + 1 + end + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        targets
     }
 
     #[test]
@@ -33,6 +82,30 @@ mod tests {
         }
         assert!(root().join("VISION.md").is_file());
         assert!(root().join("ROADMAP.md").is_file());
+    }
+
+    #[test]
+    fn internal_markdown_links_resolve() {
+        let mut dangling = Vec::new();
+        for file in markdown_files() {
+            let text = fs::read_to_string(&file).unwrap();
+            let base = file.parent().unwrap();
+            for href in internal_targets(&text) {
+                let target = base.join(&href);
+                if !target.exists() {
+                    dangling.push(format!(
+                        "{} -> {}",
+                        file.strip_prefix(root()).unwrap_or(&file).display(),
+                        href
+                    ));
+                }
+            }
+        }
+        assert!(
+            dangling.is_empty(),
+            "dangling internal markdown links:\n{}",
+            dangling.join("\n")
+        );
     }
 
     #[test]
