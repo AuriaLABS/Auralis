@@ -61,6 +61,106 @@ pub fn matmul_row_slices_into(
     }
 }
 
+/// Reference `dY * B^T` into an existing output buffer.
+pub fn matmul_b_t_reference_into(
+    dy: &[f32],
+    rows: usize,
+    out_cols: usize,
+    b: &[f32],
+    result_cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(dy.len(), rows * out_cols);
+    assert_eq!(b.len(), result_cols * out_cols);
+    assert_eq!(out.len(), rows * result_cols);
+    for i in 0..rows {
+        for k in 0..result_cols {
+            let mut s = 0.0f32;
+            for j in 0..out_cols {
+                s += dy[i * out_cols + j] * b[k * out_cols + j];
+            }
+            out[i * result_cols + k] = s;
+        }
+    }
+}
+
+/// Reference additive `dY * B^T` used when several branches feed one buffer.
+pub fn matmul_b_t_reference_add_into(
+    dy: &[f32],
+    rows: usize,
+    out_cols: usize,
+    b: &[f32],
+    result_cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(dy.len(), rows * out_cols);
+    assert_eq!(b.len(), result_cols * out_cols);
+    assert_eq!(out.len(), rows * result_cols);
+    for i in 0..rows {
+        for k in 0..result_cols {
+            let mut s = 0.0f32;
+            for j in 0..out_cols {
+                s += dy[i * out_cols + j] * b[k * out_cols + j];
+            }
+            out[i * result_cols + k] += s;
+        }
+    }
+}
+
+/// Slice-based `dY * B^T` with the exact same per-cell `j` accumulation order.
+pub fn matmul_b_t_row_slices_into(
+    dy: &[f32],
+    rows: usize,
+    out_cols: usize,
+    b: &[f32],
+    result_cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(dy.len(), rows * out_cols);
+    assert_eq!(b.len(), result_cols * out_cols);
+    assert_eq!(out.len(), rows * result_cols);
+
+    for i in 0..rows {
+        let dy_row = &dy[i * out_cols..(i + 1) * out_cols];
+        let out_row = &mut out[i * result_cols..(i + 1) * result_cols];
+        for k in 0..result_cols {
+            let b_row = &b[k * out_cols..(k + 1) * out_cols];
+            let mut s = 0.0f32;
+            for (&grad, &weight) in dy_row.iter().zip(b_row) {
+                s += grad * weight;
+            }
+            out_row[k] = s;
+        }
+    }
+}
+
+/// Additive slice-based `dY * B^T`, preserving the exact `j` sum order.
+pub fn matmul_b_t_row_slices_add_into(
+    dy: &[f32],
+    rows: usize,
+    out_cols: usize,
+    b: &[f32],
+    result_cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(dy.len(), rows * out_cols);
+    assert_eq!(b.len(), result_cols * out_cols);
+    assert_eq!(out.len(), rows * result_cols);
+
+    for i in 0..rows {
+        let dy_row = &dy[i * out_cols..(i + 1) * out_cols];
+        let out_row = &mut out[i * result_cols..(i + 1) * result_cols];
+        for k in 0..result_cols {
+            let b_row = &b[k * out_cols..(k + 1) * out_cols];
+            let mut s = 0.0f32;
+            for (&grad, &weight) in dy_row.iter().zip(b_row) {
+                s += grad * weight;
+            }
+            out_row[k] += s;
+        }
+    }
+}
+
 /// Reference gradient for the right-hand matrix in `A * B`.
 ///
 /// Adds `A^T * dY` into `dB`. This preserves the original scalar loop order.
@@ -124,6 +224,8 @@ pub fn matmul_grad_b_rowwise_zeroed(
 #[cfg(test)]
 mod tests {
     use super::{
+        matmul_b_t_reference_add_into, matmul_b_t_reference_into,
+        matmul_b_t_row_slices_add_into, matmul_b_t_row_slices_into,
         matmul_grad_b_reference, matmul_grad_b_rowwise_zeroed, matmul_reference_into,
         matmul_row_slices_into,
     };
@@ -161,6 +263,37 @@ mod tests {
         assert_eq!(sliced, reference);
     }
 
+    fn assert_matmul_b_t_exact(rows: usize, out_cols: usize, result_cols: usize) {
+        let dy = data(rows * out_cols, 5);
+        let b = data(result_cols * out_cols, 23);
+        let mut reference = vec![f32::NAN; rows * result_cols];
+        let mut sliced = vec![f32::NAN; rows * result_cols];
+        matmul_b_t_reference_into(&dy, rows, out_cols, &b, result_cols, &mut reference);
+        matmul_b_t_row_slices_into(&dy, rows, out_cols, &b, result_cols, &mut sliced);
+        assert_eq!(sliced, reference);
+
+        let initial = data(rows * result_cols, 31);
+        let mut reference_add = initial.clone();
+        let mut sliced_add = initial;
+        matmul_b_t_reference_add_into(
+            &dy,
+            rows,
+            out_cols,
+            &b,
+            result_cols,
+            &mut reference_add,
+        );
+        matmul_b_t_row_slices_add_into(
+            &dy,
+            rows,
+            out_cols,
+            &b,
+            result_cols,
+            &mut sliced_add,
+        );
+        assert_eq!(sliced_add, reference_add);
+    }
+
     #[test]
     fn rowwise_grad_b_kernel_matches_reference_bit_for_bit() {
         for (rows, inner, cols) in [
@@ -188,6 +321,21 @@ mod tests {
             (32, 32, 100),
         ] {
             assert_matmul_exact(rows, inner, cols);
+        }
+    }
+
+    #[test]
+    fn row_slice_matmul_b_t_matches_reference_bit_for_bit() {
+        for (rows, out_cols, result_cols) in [
+            (1, 1, 1),
+            (4, 3, 5),
+            (7, 8, 3),
+            (32, 100, 32),
+            (32, 32, 96),
+            (32, 96, 32),
+            (32, 32, 32),
+        ] {
+            assert_matmul_b_t_exact(rows, out_cols, result_cols);
         }
     }
 
