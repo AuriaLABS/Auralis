@@ -1,5 +1,6 @@
 use auralis::agent::Agent;
 use auralis::bench;
+use auralis::bench_format::{self, CatalogFormat};
 use auralis::bpe::BpeTokenizer;
 use auralis::checkpoint;
 use auralis::eval::{evaluate_tokens_reference, EvalMetrics};
@@ -562,23 +563,27 @@ fn run_sec_audit(args: &[String]) {
 }
 
 fn run_bench(args: &[String]) {
-    match args.get(2).map(|s| s.as_str()) {
-        Some("list") | None => print!("{}", bench::list_report()),
-        Some("describe") => {
-            let Some(id) = args.get(3) else {
-                eprintln!("error: bench describe requires an id");
-                std::process::exit(2);
-            };
-            match bench::find(id) {
-                Some(spec) => print!("{}", spec.describe()),
-                None => {
-                    eprintln!("error: unknown bench {id}");
-                    std::process::exit(2);
-                }
-            }
+    let json = args.iter().any(|a| a == "--json");
+    let csv = args.iter().any(|a| a == "--csv");
+    let fmt = match CatalogFormat::from_flags(json, csv) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
         }
-        Some(other) => {
-            eprintln!("error: unknown bench subcommand {other}");
+    };
+    let rest: Vec<&str> = args
+        .iter()
+        .skip(2)
+        .map(|s| s.as_str())
+        .filter(|s| *s != "--json" && *s != "--csv")
+        .collect();
+    let command = rest.first().copied().unwrap_or("list");
+    let id = rest.get(1).copied();
+    match bench_format::render(command, id, fmt) {
+        Ok(out) => print!("{out}"),
+        Err(e) => {
+            eprintln!("error: {e}");
             std::process::exit(2);
         }
     }
@@ -630,7 +635,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list\n  auralis bench describe ID\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
