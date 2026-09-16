@@ -16,6 +16,8 @@ Los comandos de abajo no usan red.
 
 `benches` no bloquea PRs. Ver `docs/ci-pruebas.md` y `ci_matrix::JOBS`.
 
+Verbos y flags: [cli.md](cli.md).
+
 ## Ciclo Genesis (README)
 
 ```bash
@@ -36,9 +38,10 @@ cargo run --release -- sec-audit src
 | `docs/ci-pruebas.md` | cada id de `ci_matrix::JOBS` |
 | `docs/bench-registry.md` | verbos `bench list/describe` y flags |
 | `docs/sec-unsafe.md` | límites y `EXPECTED_UNSAFE_BLOCKS == 0` |
+| `docs/cli.md` | verbos presentes en `fn usage()` |
 | `README.md` | comandos del ciclo documentado |
 | esta página | existe y nombra los mismos comandos |
 
 ## Fuera de este slice
 
-Links externos, snippets Rust compilables, `--help` completo, hardware GPU.
+Links externos, snippets Rust compilables, hardware GPU.

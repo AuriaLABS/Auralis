@@ -69,6 +69,7 @@ cargo run --release -- chat auralis.bin
 `train-fresh` parte de cero.
 
 Cómo probar cada pieza: [docs/verify.md](docs/verify.md).
+Verbos CLI: [docs/cli.md](docs/cli.md).
 
 ## Dirección a largo plazo
 
@@ -83,6 +84,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [VISION.md](VISION.md) — misión, identidad y principios de largo plazo.
 - [ROADMAP.md](ROADMAP.md) — hitos técnicos y evolución del proyecto.
 - [docs/verify.md](docs/verify.md) — comandos de prueba sin red.
+- [docs/cli.md](docs/cli.md) — verbos y flags.
 - [docs/ci-pruebas.md](docs/ci-pruebas.md) — matriz CI.
 - [docs/sec-unsafe.md](docs/sec-unsafe.md) — unsafe y límites.
 - [docs/bench-registry.md](docs/bench-registry.md) — catálogo de benches.

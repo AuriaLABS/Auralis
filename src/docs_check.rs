@@ -67,6 +67,28 @@ mod tests {
         targets
     }
 
+    fn usage_block() -> String {
+        let src = fs::read_to_string(root().join("src/main.rs")).expect("src/main.rs");
+        let start = src.find("fn usage()").expect("fn usage() in main.rs");
+        src[start..].to_string()
+    }
+
+    const CLI_LINES: &[&str] = &[
+        "auralis train ",
+        "auralis train-fresh ",
+        "auralis config ",
+        "auralis inspect ",
+        "auralis release-check ",
+        "auralis release-manifest ",
+        "auralis sec-audit ",
+        "auralis bench list",
+        "auralis bench describe",
+        "auralis eval ",
+        "auralis chat ",
+        "auralis check",
+        "auralis bpe",
+    ];
+
     #[test]
     fn required_docs_exist() {
         for name in [
@@ -74,6 +96,7 @@ mod tests {
             "ci-pruebas.md",
             "sec-unsafe.md",
             "verify.md",
+            "cli.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
         ] {
@@ -109,6 +132,20 @@ mod tests {
     }
 
     #[test]
+    fn cli_doc_matches_usage_fn() {
+        let usage = usage_block();
+        let cli = docs("cli.md");
+        for line in CLI_LINES {
+            assert!(usage.contains(line), "fn usage() missing {line}");
+            assert!(cli.contains(line.trim()), "docs/cli.md missing {line}");
+        }
+        for flag in ["--config", "--json", "--csv", "--out", "--verify"] {
+            assert!(usage.contains(flag), "fn usage() missing {flag}");
+            assert!(cli.contains(flag), "docs/cli.md missing {flag}");
+        }
+    }
+
+    #[test]
     fn readme_documents_genesis_cycle() {
         let text = readme();
         for needle in [
@@ -120,6 +157,7 @@ mod tests {
             "VISION.md",
             "ROADMAP.md",
             "docs/verify.md",
+            "docs/cli.md",
         ] {
             assert!(text.contains(needle), "README.md missing {needle}");
         }
@@ -135,6 +173,7 @@ mod tests {
             "train-fresh",
             "bench list --json",
             "sec-audit",
+            "cli.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }
