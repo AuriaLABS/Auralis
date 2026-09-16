@@ -165,7 +165,7 @@ fn warm(mode: ProfileMode, cfg: TrainConfig, tokens: &[usize]) {
     let n = model.collect_params().len();
     let mut adam = Adam::new(n, 3e-3);
     let mut grads = vec![0.0; n];
-    let mut workspace = TrainWorkspace::new(n);
+    let mut workspace = TrainWorkspace::new(&model);
     execute_step(mode, &mut model, &mut adam, tokens, cfg, &mut grads, &mut workspace);
 }
 
@@ -174,7 +174,7 @@ fn measure(mode: ProfileMode, steps: usize, cfg: TrainConfig, tokens: &[usize]) 
     let params = model.collect_params().len();
     let mut adam = Adam::new(params, 3e-3);
     let mut grads = vec![0.0; params];
-    let mut workspace = TrainWorkspace::new(params);
+    let mut workspace = TrainWorkspace::new(&model);
 
     reset_counters();
     let started = Instant::now();
