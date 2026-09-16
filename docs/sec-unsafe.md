@@ -2,9 +2,18 @@
 
 ## Unsafe inventory
 
-Expected `unsafe` blocks in `src/`: **0**.
+Expected `unsafe` in library/engine `src/` (excluding `src/bin`): **0**.
 
-If a future kernel needs `unsafe`, it must:
+Allowed outside the library contract:
+
+- `src/bin/auralis_profile.rs`
+- `src/bin/auralis_eval_profile.rs`
+- `src/bin/auralis_train_profile.rs`
+
+Those binaries implement a counting `GlobalAlloc` over `std::alloc::System`
+so E1 allocation profiles can run. They are not on the train/eval/chat path.
+
+If a future kernel needs `unsafe` in the library:
 
 1. Raise `EXPECTED_UNSAFE_BLOCKS` in `src/sec.rs`.
 2. Document the invariant next to the block and in this file.
