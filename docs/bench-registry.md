@@ -7,6 +7,11 @@ auralis bench list
 auralis bench describe engine
 ```
 
+Machine-readable catalog (library API; CLI flags next slice):
+
+- `bench::list_json()` — `{"count":N,"benches":[...]}`
+- `bench::list_csv()` — header + one row per bench
+
 To add a benchmark:
 
 1. Keep the existing `src/bin/auralis_*_bench.rs` (or profile bin).

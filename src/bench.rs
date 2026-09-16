@@ -1,5 +1,5 @@
-//! Registry of Engine microbenchmarks. This slice only catalogs bins;
-//! running them stays on the existing `cargo run --bin` paths.
+//! Registry of Engine microbenchmarks. This slice catalogs bins and
+//! exports the catalog; running kernels stays on `cargo run --bin`.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BenchSpec {
@@ -94,6 +94,28 @@ pub const BENCHES: &[BenchSpec] = &[
     },
 ];
 
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 impl BenchSpec {
     pub fn line(&self) -> String {
         format!(
@@ -133,6 +155,30 @@ impl BenchSpec {
             self.default_args
         )
     }
+
+    pub fn json(&self) -> String {
+        format!(
+            "{{\"id\":\"{}\",\"bin\":\"{}\",\"kind\":\"{}\",\"summary\":\"{}\",\"default_args\":\"{}\",\"requires_alloc_profile\":{}}}",
+            json_escape(self.id),
+            json_escape(self.bin),
+            json_escape(self.kind),
+            json_escape(self.summary),
+            json_escape(self.default_args),
+            self.requires_alloc_profile
+        )
+    }
+
+    pub fn csv_row(&self) -> String {
+        format!(
+            "{},{},{},{},{},{}\n",
+            csv_escape(self.id),
+            csv_escape(self.bin),
+            csv_escape(self.kind),
+            csv_escape(self.summary),
+            csv_escape(self.default_args),
+            self.requires_alloc_profile
+        )
+    }
 }
 
 pub fn list() -> &'static [BenchSpec] {
@@ -148,6 +194,32 @@ pub fn list_report() -> String {
     for spec in BENCHES {
         out.push_str(&spec.line());
         out.push('\n');
+    }
+    out
+}
+
+pub fn list_json() -> String {
+    let mut out = String::from("{\"count\":");
+    out.push_str(&BENCHES.len().to_string());
+    out.push_str(",\"benches\":[");
+    for (i, spec) in BENCHES.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&spec.json());
+    }
+    out.push_str("]}\n");
+    out
+}
+
+pub fn csv_header() -> &'static str {
+    "id,bin,kind,summary,default_args,requires_alloc_profile\n"
+}
+
+pub fn list_csv() -> String {
+    let mut out = csv_header().to_string();
+    for spec in BENCHES {
+        out.push_str(&spec.csv_row());
     }
     out
 }
@@ -175,5 +247,24 @@ mod tests {
         let b = find("auralis_engine_bench").unwrap();
         assert_eq!(a, b);
         assert!(find("does-not-exist").is_none());
+    }
+
+    #[test]
+    fn json_export_contains_every_id() {
+        let blob = list_json();
+        assert!(blob.starts_with("{\"count\":"));
+        for spec in BENCHES {
+            assert!(blob.contains(&format!("\"id\":\"{}\"", spec.id)));
+        }
+        assert_eq!(blob.matches("\"id\":").count(), BENCHES.len());
+    }
+
+    #[test]
+    fn csv_export_has_header_and_one_row_per_bench() {
+        let blob = list_csv();
+        let lines: Vec<&str> = blob.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines[0], "id,bin,kind,summary,default_args,requires_alloc_profile");
+        assert_eq!(lines.len(), BENCHES.len() + 1);
+        assert!(lines.iter().any(|l| l.starts_with("engine,")));
     }
 }
