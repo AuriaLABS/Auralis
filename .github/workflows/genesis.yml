@@ -49,11 +49,13 @@ jobs:
 
           test -s /tmp/auralis-foundation.bin
           test -s /tmp/auralis-foundation.bin.manifest
-          grep -q 'auralis_manifest=3' /tmp/auralis-foundation.bin.manifest
+          grep -q 'auralis_manifest=4' /tmp/auralis-foundation.bin.manifest
           grep -q "code_revision=${AURALIS_COMMIT_SHA}" /tmp/auralis-foundation.bin.manifest
           grep -q 'seed=659918' /tmp/auralis-foundation.bin.manifest
           grep -q 'batch_size=2' /tmp/auralis-foundation.bin.manifest
           grep -q 'gradient_accumulation_steps=2' /tmp/auralis-foundation.bin.manifest
+          grep -q 'run_config_schema=1' /tmp/auralis-foundation.bin.manifest
+          grep -q 'run_config_fingerprint=' /tmp/auralis-foundation.bin.manifest
 
           before="$(sha256sum /tmp/auralis-foundation.bin | cut -d' ' -f1)"
           if cargo run --release -- train 1 /tmp/auralis-foundation.bin 123 2 2; then

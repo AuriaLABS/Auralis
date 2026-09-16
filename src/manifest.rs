@@ -6,12 +6,12 @@
 //! fails closed instead of silently becoming a different experiment.
 
 use crate::model::Gpt;
-use crate::run_config::RunConfig;
+use crate::run_config::{RunConfig, RUN_CONFIG_SCHEMA_VERSION};
 use crate::tokenizer::AnyTok;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const MANIFEST_VERSION: u32 = 3;
+pub const MANIFEST_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExperimentManifest {
@@ -26,6 +26,8 @@ pub struct ExperimentManifest {
     pub train_fraction: f32,
     pub validation_fraction: f32,
     pub bpe_merges: usize,
+    pub run_config_schema: u32,
+    pub run_config_fingerprint: u64,
     pub global_step: u64,
     pub tokenizer_kind: String,
     pub vocab: usize,
@@ -59,6 +61,8 @@ impl ExperimentManifest {
             train_fraction: run.train_fraction,
             validation_fraction: run.validation_fraction,
             bpe_merges: run.bpe_merges,
+            run_config_schema: RUN_CONFIG_SCHEMA_VERSION,
+            run_config_fingerprint: run.fingerprint(),
             global_step,
             tokenizer_kind: tok.kind().to_string(),
             vocab: gpt.cfg.vocab,
@@ -81,7 +85,7 @@ impl ExperimentManifest {
     ) -> Result<(), String> {
         if self.version != MANIFEST_VERSION {
             return Err(format!(
-                "manifest version {} is unsupported (expected {})",
+                "manifest version {} is unsupported (expected {}); explicit migration required",
                 self.version, MANIFEST_VERSION
             ));
         }
@@ -107,6 +111,16 @@ impl ExperimentManifest {
             run.validation_fraction,
         )?;
         check("bpe_merges", self.bpe_merges, run.bpe_merges)?;
+        check(
+            "run_config_schema",
+            self.run_config_schema,
+            RUN_CONFIG_SCHEMA_VERSION,
+        )?;
+        check(
+            "run_config_fingerprint",
+            self.run_config_fingerprint,
+            run.fingerprint(),
+        )?;
         check("tokenizer_kind", self.tokenizer_kind.as_str(), tok.kind())?;
         check("vocab", self.vocab, gpt.cfg.vocab)?;
         check("n_embd", self.n_embd, gpt.cfg.n_embd)?;
@@ -139,6 +153,8 @@ impl ExperimentManifest {
                 "train_fraction={}\n",
                 "validation_fraction={}\n",
                 "bpe_merges={}\n",
+                "run_config_schema={}\n",
+                "run_config_fingerprint={:016x}\n",
                 "global_step={}\n",
                 "tokenizer_kind={}\n",
                 "vocab={}\n",
@@ -161,6 +177,8 @@ impl ExperimentManifest {
             self.train_fraction,
             self.validation_fraction,
             self.bpe_merges,
+            self.run_config_schema,
+            self.run_config_fingerprint,
             self.global_step,
             self.tokenizer_kind,
             self.vocab,
@@ -190,8 +208,15 @@ impl ExperimentManifest {
                 .map_err(|_| format!("invalid manifest value for {key}"))
         }
 
+        let version: u32 = number(text, "auralis_manifest")?;
+        if version != MANIFEST_VERSION {
+            return Err(format!(
+                "manifest version {version} is unsupported (expected {MANIFEST_VERSION}); explicit migration required"
+            ));
+        }
+
         Ok(Self {
-            version: number(text, "auralis_manifest")?,
+            version,
             code_revision: value(text, "code_revision")?.to_string(),
             seed: number(text, "seed")?,
             dataset_fingerprint: hex_u64(text, "dataset_fingerprint")?,
@@ -202,6 +227,8 @@ impl ExperimentManifest {
             train_fraction: number(text, "train_fraction")?,
             validation_fraction: number(text, "validation_fraction")?,
             bpe_merges: number(text, "bpe_merges")?,
+            run_config_schema: number(text, "run_config_schema")?,
+            run_config_fingerprint: hex_u64(text, "run_config_fingerprint")?,
             global_step: number(text, "global_step")?,
             tokenizer_kind: value(text, "tokenizer_kind")?.to_string(),
             vocab: number(text, "vocab")?,
@@ -305,6 +332,8 @@ mod tests {
         let a = ExperimentManifest::capture(&gpt, &tok, &run, 0xdeadbeef, 13);
         let b = ExperimentManifest::decode(&a.encode()).unwrap();
         assert_eq!(a, b);
+        assert_eq!(a.run_config_schema, RUN_CONFIG_SCHEMA_VERSION);
+        assert_eq!(a.run_config_fingerprint, run.fingerprint());
     }
 
     #[test]
@@ -345,5 +374,11 @@ mod tests {
         params[0] += 1e-3;
         changed.write_params(&params);
         assert!(manifest.validate_resume(&changed, &tok, &run, 77).is_err());
+    }
+
+    #[test]
+    fn legacy_manifest_v3_is_rejected() {
+        let err = ExperimentManifest::decode("auralis_manifest=3\n").unwrap_err();
+        assert!(err.contains("explicit migration required"));
     }
 }

@@ -24,7 +24,7 @@ fn tmp(name: &str) -> PathBuf {
 
 fn seed_manifest() -> String {
     ExperimentManifest {
-        version: 3,
+        version: 4,
         code_revision: "unknown".into(),
         seed: 1,
         dataset_fingerprint: 0xabc,
@@ -35,6 +35,8 @@ fn seed_manifest() -> String {
         train_fraction: 0.9,
         validation_fraction: 0.05,
         bpe_merges: 8,
+        run_config_schema: 1,
+        run_config_fingerprint: 0x11,
         global_step: 0,
         tokenizer_kind: "char".into(),
         vocab: 5,
