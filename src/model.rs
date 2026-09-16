@@ -228,6 +228,33 @@ impl Gpt {
         debug_assert_eq!(p, params.len());
     }
 
+    /// Mean next-token cross-entropy without constructing or propagating
+    /// parameter gradients. This is the canonical evaluation path.
+    pub fn loss(&self, x: &[usize], y: &[usize]) -> f32 {
+        assert_eq!(x.len(), y.len());
+        assert!(!x.is_empty() && x.len() <= self.cfg.block);
+        assert!(x.iter().all(|&t| t < self.cfg.vocab));
+        assert!(y.iter().all(|&t| t < self.cfg.vocab));
+
+        let (logits, _) = self.forward_internal(x);
+        let t = x.len();
+        let v = self.cfg.vocab;
+        let mut loss = 0.0f32;
+
+        for i in 0..t {
+            let row = &logits[i * v..(i + 1) * v];
+            let maxv = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum = 0.0f32;
+            for &logit in row {
+                sum += (logit - maxv).exp();
+            }
+            let p = ((row[y[i]] - maxv).exp() / sum.max(1e-20)).max(1e-20);
+            loss -= p.ln();
+        }
+
+        loss / t as f32
+    }
+
     pub fn backward_into(&self, x: &[usize], y: &[usize], grads: &mut [f32]) -> f32 {
         assert_eq!(x.len(), y.len());
         assert!(!x.is_empty() && x.len() <= self.cfg.block);
@@ -847,6 +874,26 @@ mod tests {
         assert!(loss.is_finite() && loss > 0.0);
         assert!(grads.iter().all(|x| x.is_finite()));
         assert!(grads.iter().any(|x| x.abs() > 0.0));
+    }
+
+    #[test]
+    fn forward_loss_matches_backward_loss() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = rand::thread_rng();
+        let gpt = Gpt::new(cfg, &mut rng);
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        let forward_loss = gpt.loss(&x, &y);
+        let mut grads = vec![0.0; gpt.collect_params().len()];
+        let backward_loss = gpt.backward_into(&x, &y, &mut grads);
+        assert!((forward_loss - backward_loss).abs() < 1e-6);
     }
 
     #[test]
