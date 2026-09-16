@@ -5,7 +5,7 @@
 //! without changing the training contract.
 
 use crate::experiment::deterministic_index;
-use crate::model::Gpt;
+use crate::model::{BackwardWorkspace, Gpt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequenceBatch {
@@ -110,8 +110,9 @@ pub fn backward_batch_into(
 }
 
 /// Engine E1 path: compute exactly the same deterministic minibatch gradient
-/// without materializing `SequenceBatch` or allocating a per-call scratch
-/// gradient. The caller owns both reusable gradient buffers.
+/// without materializing `SequenceBatch` or allocating per-call gradient
+/// storage. The caller owns flat buffers plus the model's opaque backward
+/// workspace and reuses all three across samples.
 pub(crate) fn backward_deterministic_batch_from_stream_into(
     gpt: &Gpt,
     tokens: &[usize],
@@ -122,6 +123,7 @@ pub(crate) fn backward_deterministic_batch_from_stream_into(
     stream_offset: u64,
     grads: &mut [f32],
     scratch: &mut [f32],
+    backward_workspace: &mut BackwardWorkspace,
 ) -> Result<f32, &'static str> {
     if block == 0 || batch_size == 0 {
         return Err("block and batch_size must be positive");
@@ -134,6 +136,9 @@ pub(crate) fn backward_deterministic_batch_from_stream_into(
     }
     if grads.len() != scratch.len() {
         return Err("gradient scratch buffer has wrong size");
+    }
+    if !backward_workspace.matches(gpt) {
+        return Err("backward workspace does not match model config");
     }
 
     grads.fill(0.0);
@@ -149,7 +154,7 @@ pub(crate) fn backward_deterministic_batch_from_stream_into(
         let y = &tokens[start + 1..start + block + 1];
 
         scratch.fill(0.0);
-        loss_sum += gpt.backward_into(x, y, scratch);
+        loss_sum += gpt.backward_into_reuse(x, y, scratch, backward_workspace);
         for (dst, src) in grads.iter_mut().zip(scratch.iter()) {
             *dst += *src;
         }
@@ -249,6 +254,7 @@ mod tests {
         let mut reference = vec![0.0; n];
         let mut candidate = vec![0.0; n];
         let mut scratch = vec![0.0; n];
+        let mut backward_workspace = BackwardWorkspace::new(&gpt);
 
         let reference_loss = backward_batch_into(&gpt, &batch, &mut reference).unwrap();
         let candidate_loss = backward_deterministic_batch_from_stream_into(
@@ -261,6 +267,7 @@ mod tests {
             4,
             &mut candidate,
             &mut scratch,
+            &mut backward_workspace,
         )
         .unwrap();
 
