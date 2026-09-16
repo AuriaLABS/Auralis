@@ -9,6 +9,7 @@ pub mod kernels;
 pub mod manifest;
 pub mod metrics;
 pub mod model;
+pub mod numeric;
 pub mod optim;
 pub mod run_config;
 pub mod sampling;
