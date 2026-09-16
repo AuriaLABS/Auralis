@@ -18,6 +18,7 @@ pub mod optim;
 pub mod release;
 pub mod run_config;
 pub mod sampling;
+pub mod sec;
 pub mod tensor;
 pub mod tokenizer;
 pub mod training;
