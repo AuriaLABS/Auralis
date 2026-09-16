@@ -8,6 +8,7 @@ pub mod equivalence;
 pub mod eval;
 pub mod experiment;
 pub mod gradcheck;
+pub mod inspect;
 pub mod kernels;
 pub mod manifest;
 pub mod metrics;

@@ -4,6 +4,7 @@ use auralis::checkpoint;
 use auralis::eval::{evaluate_tokens_reference, EvalMetrics};
 use auralis::experiment::{fingerprint_bytes, split_text, ExperimentIdentity, TokenSplit};
 use auralis::gradcheck;
+use auralis::inspect::inspect_checkpoint;
 use auralis::manifest::{self, ExperimentManifest};
 use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
@@ -413,6 +414,37 @@ fn print_config(path: Option<&Path>) {
     print!("{}", run.effective_report());
 }
 
+fn run_inspect(args: &[String]) {
+    let mut json = false;
+    let mut path = PathBuf::from("auralis.bin");
+    let mut i = 2;
+    while i < args.len() {
+        if args[i] == "--json" {
+            json = true;
+            i += 1;
+            continue;
+        }
+        path = PathBuf::from(&args[i]);
+        i += 1;
+    }
+    match inspect_checkpoint(&path) {
+        Ok(report) => {
+            if json {
+                println!("{}", report.json());
+            } else {
+                print!("{}", report.human());
+            }
+            if report.manifest_present && !report.manifest_ok {
+                std::process::exit(2);
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
     let mut config_path: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -459,7 +491,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -482,6 +514,7 @@ fn main() {
             }
         },
         Some("config") => print_config(args.get(2).map(Path::new)),
+        Some("inspect") => run_inspect(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
