@@ -23,4 +23,21 @@ mod tests {
             assert!(text.contains(needle), "docs/bench-registry.md missing {needle}");
         }
     }
+
+    #[test]
+    fn sec_docs_name_current_limits() {
+        let text = docs("sec-unsafe.md");
+        for needle in [
+            "EXPECTED_UNSAFE_BLOCKS",
+            "MAX_CHECKPOINT_STRING",
+            "MAX_BPE_TABLE",
+            "sec_path::confine",
+            "sec_overflow",
+        ] {
+            assert!(text.contains(needle), "docs/sec-unsafe.md missing {needle}");
+        }
+        assert_eq!(crate::sec::EXPECTED_UNSAFE_BLOCKS, 0);
+        assert_eq!(crate::sec::MAX_CHECKPOINT_STRING, 1_048_576);
+        assert_eq!(crate::sec::MAX_BPE_TABLE, 65_536);
+    }
 }
