@@ -155,3 +155,14 @@ jobs:
           grep -q 'calls_per_iteration=2' <<< "$summary"
           grep -q 'exact_output=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
+
+      - name: E2 attention backward benchmark
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_attention_backward_bench -- 5 80 5 2>&1)"
+          printf '%s\n' "$output"
+          test "$(grep -c '^attention_backward_bench_run |' <<< "$output")" -eq 5
+          summary="$(grep '^attention_backward_bench_summary |' <<< "$output")"
+          grep -q 'calls_per_iteration=2' <<< "$summary"
+          grep -q 'exact_output=true' <<< "$summary"
+          grep -q 'repeats=5' <<< "$summary"
