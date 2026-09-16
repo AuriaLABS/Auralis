@@ -91,7 +91,6 @@ struct LayerCache {
 }
 
 struct ForwardCache {
-    tokens: Vec<usize>,
     layers: Vec<LayerCache>,
     ln_f: LnCache,
     h_final: Vec<f32>,
@@ -330,28 +329,33 @@ impl Gpt {
         assert!(y.iter().all(|&t| t < self.cfg.vocab));
         assert!(workspace.matches(self), "backward workspace config mismatch");
 
-        let (logits, cache) = self.forward_internal(x);
+        let (mut dlogits, cache) = self.forward_internal(x);
         let t = x.len();
         let v = self.cfg.vocab;
-        let mut dlogits = vec![0.0; t * v];
         let mut loss = 0.0f32;
 
         for i in 0..t {
-            let row = &logits[i * v..(i + 1) * v];
-            let maxv = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let start = i * v;
+            let end = start + v;
+            let maxv = dlogits[start..end]
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
             let mut sum = 0.0f32;
             for j in 0..v {
-                let e = (row[j] - maxv).exp();
-                dlogits[i * v + j] = e;
+                let idx = start + j;
+                let e = (dlogits[idx] - maxv).exp();
+                dlogits[idx] = e;
                 sum += e;
             }
             let inv = 1.0 / sum.max(1e-20);
             for j in 0..v {
-                dlogits[i * v + j] *= inv;
+                dlogits[start + j] *= inv;
             }
-            let p = dlogits[i * v + y[i]].max(1e-20);
+            let target = start + y[i];
+            let p = dlogits[target].max(1e-20);
             loss -= p.ln();
-            dlogits[i * v + y[i]] -= 1.0;
+            dlogits[target] -= 1.0;
         }
         let inv_t = 1.0 / t as f32;
         loss *= inv_t;
@@ -430,7 +434,7 @@ impl Gpt {
         }
 
         for i in 0..t {
-            let tok = cache.tokens[i];
+            let tok = x[i];
             for j in 0..d {
                 let g = dx[i * d + j];
                 gg.tok_emb[tok * d + j] += g;
@@ -482,7 +486,7 @@ impl Gpt {
             let k = matmul(&h1, t, d, &b.wk, d);
             let v = matmul(&h1, t, d, &b.wv, d);
             let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
-            let proj = matmul(&att, t, d, &b.wo, d);
+            let mut proj = matmul(&att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
@@ -490,10 +494,10 @@ impl Gpt {
             let mut ff_pre = matmul(&h2, t, d, &b.w1, self.cfg.n_ff);
             add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
             let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
-            let mut ff_out = matmul(&ff_act, t, self.cfg.n_ff, &b.w2, d);
-            add_bias_inplace(&mut ff_out, t, d, &b.b2);
+            matmul_into(&ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
+            add_bias_inplace(&mut proj, t, d, &b.b2);
             let mut out = r1;
-            add_inplace(&mut out, &ff_out);
+            add_inplace(&mut out, &proj);
 
             layer_caches.push(LayerCache {
                 ln1,
@@ -518,7 +522,6 @@ impl Gpt {
         (
             logits,
             ForwardCache {
-                tokens: tokens.to_vec(),
                 layers: layer_caches,
                 ln_f,
                 h_final,
@@ -625,6 +628,22 @@ fn matmul(a: &[f32], rows: usize, inner: usize, b: &[f32], cols: usize) -> Vec<f
     assert_eq!(a.len(), rows * inner);
     assert_eq!(b.len(), inner * cols);
     let mut out = vec![0.0; rows * cols];
+    matmul_into(a, rows, inner, b, cols, &mut out);
+    out
+}
+
+fn matmul_into(
+    a: &[f32],
+    rows: usize,
+    inner: usize,
+    b: &[f32],
+    cols: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(a.len(), rows * inner);
+    assert_eq!(b.len(), inner * cols);
+    assert_eq!(out.len(), rows * cols);
+    out.fill(0.0);
     for i in 0..rows {
         for k in 0..inner {
             let av = a[i * inner + k];
@@ -633,7 +652,6 @@ fn matmul(a: &[f32], rows: usize, inner: usize, b: &[f32], cols: usize) -> Vec<f
             }
         }
     }
-    out
 }
 
 fn matmul_grad_b(
