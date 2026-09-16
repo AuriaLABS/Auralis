@@ -5,6 +5,7 @@ pub mod checkpoint;
 pub mod eval;
 pub mod experiment;
 pub mod gradcheck;
+pub mod kernels;
 pub mod manifest;
 pub mod metrics;
 pub mod model;
