@@ -95,6 +95,9 @@ jobs:
         run: |
           output="$(cargo run --release --features alloc-profile --bin auralis-profile -- 2 2>&1)"
           printf '%s\n' "$output"
-          grep -q '^engine_profile |' <<< "$output"
-          grep -q 'alloc_calls=' <<< "$output"
-          grep -q 'alloc_bytes_per_token=' <<< "$output"
+          grep -q '^engine_profile | mode=reference ' <<< "$output"
+          grep -q '^engine_profile | mode=reuse ' <<< "$output"
+          delta="$(grep '^engine_profile_delta |' <<< "$output")"
+          grep -q 'exact_state=true' <<< "$delta"
+          reduction="$(awk '{ for (i = 1; i <= NF; i++) { split($i, a, "="); if (a[1] == "alloc_bytes_reduction_pct") { print a[2]; exit } } }' <<< "$delta")"
+          awk -v reduction="$reduction" 'BEGIN { exit !(reduction > 0.0) }'
