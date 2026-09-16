@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: genesis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   genesis:
     runs-on: ubuntu-latest
