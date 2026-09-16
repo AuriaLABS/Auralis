@@ -10,7 +10,7 @@ use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
 use auralis::run_config::RunConfig;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
-use auralis::training::train_step;
+use auralis::training::{train_step_reuse, TrainWorkspace};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -198,6 +198,7 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     train_cfg
         .validate()
         .map_err(|e| format!("configuración de step inválida: {e}"))?;
+    let mut workspace = TrainWorkspace::new(&gpt);
 
     println!("params={} adam.t={}", n_params, adam.t);
     let t0 = Instant::now();
@@ -205,13 +206,14 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
 
     for local_step in 1..=steps {
         let global_step = adam.t.max(0) as u64;
-        let metrics = train_step(
+        let metrics = train_step_reuse(
             &mut gpt,
             &mut adam,
             &split.train,
             train_cfg,
             global_step,
             &mut grads,
+            &mut workspace,
         )
         .map_err(|e| format!("entrenamiento abortado en step {global_step}: {e}"))?;
         processed_tokens += metrics.tokens as u64;
