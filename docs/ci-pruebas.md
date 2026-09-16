@@ -3,16 +3,21 @@
 El gate histórico sigue en `.github/workflows/genesis.yml` (job `core`).
 Las familias nuevas viven en `.github/workflows/pruebas.yml`.
 
+Catálogo machine-readable: `ci_matrix::list_json()` / `ci_matrix::JOBS`.
+
 ## Jobs
 
-| Job | Qué corre | Cuándo |
-| --- | --- | --- |
-| `unit` | `cargo test --lib` | PR + main + manual |
-| `integration` | genesis, properties, equivalence | PR + main + manual |
-| `fuzz` | `fuzz_parsers` | PR + main + manual |
-| `cli` | `check`, `bpe`, `train-fresh` corto | PR + main + manual |
-| `profile` | `auralis_eval_profile` | PR + main + manual |
-| `benches` | matmul/engine bench corto | **solo main o Run workflow** |
+| Job | Qué corre | Cuándo | Bloquea merge |
+| --- | --- | --- | --- |
+| `core` | genesis.yml gate | PR + main | sí |
+| `unit` | `cargo test --lib` | PR + main + manual | sí |
+| `integration` | genesis, properties, equivalence | PR + main + manual | sí |
+| `fuzz` | `fuzz_parsers` | PR + main + manual | sí |
+| `cli` | `check`, `bpe`, `train-fresh` corto | PR + main + manual | sí |
+| `profile` | `auralis_eval_profile` | PR + main + manual | sí |
+| `benches` | matmul/engine bench corto | **solo main o Run workflow** | no |
+
+Pendiente #136: fixtures de compatibilidad, artifact checksum job, flaky tracker, hardware opcional.
 
 ## Manual
 

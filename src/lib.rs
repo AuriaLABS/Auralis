@@ -5,6 +5,7 @@ pub mod bench;
 pub mod bench_format;
 pub mod bpe;
 pub mod checkpoint;
+pub mod ci_matrix;
 pub mod cpu_matmul;
 pub mod equivalence;
 pub mod eval;
