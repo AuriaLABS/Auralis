@@ -6,8 +6,17 @@ authors = ["Auralis — diseñado por IA"]
 description = "Motor cognitivo mínimo: transformer decoder-only desde cero en Rust"
 license = "MIT"
 
+[features]
+default = []
+alloc-profile = []
+
 [dependencies]
 rand = "0.8"
+
+[[bin]]
+name = "auralis-profile"
+path = "src/bin/auralis_profile.rs"
+required-features = ["alloc-profile"]
 
 [profile.release]
 opt-level = 3
