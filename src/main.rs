@@ -11,6 +11,7 @@ use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
 use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
+use auralis::sec::scan_tree;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use auralis::training::{train_step_reuse, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -540,6 +541,25 @@ fn run_release_manifest(args: &[String]) {
     }
 }
 
+fn run_sec_audit(args: &[String]) {
+    let root = args
+        .get(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("src"));
+    match scan_tree(&root) {
+        Ok(report) => {
+            print!("{}", report.human());
+            if !report.ok() {
+                std::process::exit(2);
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
     let mut config_path: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -586,7 +606,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -612,6 +632,7 @@ fn main() {
         Some("inspect") => run_inspect(&args),
         Some("release-check") => run_release_check(&args),
         Some("release-manifest") => run_release_manifest(&args),
+        Some("sec-audit") => run_sec_audit(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
