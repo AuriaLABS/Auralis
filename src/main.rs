@@ -9,6 +9,7 @@ use auralis::manifest::{self, ExperimentManifest};
 use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
 use auralis::optim::Adam;
+use auralis::release::{check_release, default_root};
 use auralis::run_config::RunConfig;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use auralis::training::{train_step_reuse, TrainWorkspace};
@@ -445,6 +446,30 @@ fn run_inspect(args: &[String]) {
     }
 }
 
+fn run_release_check(args: &[String]) {
+    let mut json = false;
+    let mut root = default_root();
+    let mut i = 2;
+    while i < args.len() {
+        if args[i] == "--json" {
+            json = true;
+            i += 1;
+            continue;
+        }
+        root = PathBuf::from(&args[i]);
+        i += 1;
+    }
+    let report = check_release(&root);
+    if json {
+        println!("{}", report.json());
+    } else {
+        print!("{}", report.human());
+    }
+    if !report.automated_pass {
+        std::process::exit(2);
+    }
+}
+
 fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
     let mut config_path: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -491,7 +516,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -515,6 +540,7 @@ fn main() {
         },
         Some("config") => print_config(args.get(2).map(Path::new)),
         Some("inspect") => run_inspect(&args),
+        Some("release-check") => run_release_check(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),

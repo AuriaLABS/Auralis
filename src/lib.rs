@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod model;
 pub mod numeric;
 pub mod optim;
+pub mod release;
 pub mod run_config;
 pub mod sampling;
 pub mod tensor;
