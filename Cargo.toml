@@ -1,0 +1,14 @@
+[package]
+name = "auralis"
+version = "0.1.0"
+edition = "2021"
+authors = ["Auralis — diseñado por IA"]
+description = "Motor cognitivo mínimo: transformer decoder-only desde cero en Rust"
+license = "MIT"
+
+[dependencies]
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = false
