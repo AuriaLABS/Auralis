@@ -3,6 +3,7 @@ pub mod arena;
 pub mod batch;
 pub mod bpe;
 pub mod checkpoint;
+pub mod equivalence;
 pub mod eval;
 pub mod experiment;
 pub mod gradcheck;
