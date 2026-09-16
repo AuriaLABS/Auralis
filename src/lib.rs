@@ -2,6 +2,7 @@ pub mod agent;
 pub mod batch;
 pub mod bpe;
 pub mod checkpoint;
+pub mod cpu_matmul;
 pub mod eval;
 pub mod experiment;
 pub mod gradcheck;
