@@ -1,9 +1,12 @@
 //! Reproducible reference training loop primitives.
 //!
-//! This is intentionally small and deterministic. It is not the high-performance
-//! trainer; it is the contract that future optimized trainers must preserve.
+//! Foundation keeps the simple allocation-heavy path as the semantic reference.
+//! Engine adds explicitly reusable workspaces and must remain equivalent to it.
 
-use crate::batch::{backward_batch_into, deterministic_batch_from_stream};
+use crate::batch::{
+    backward_batch_into, backward_deterministic_batch_from_stream_into,
+    deterministic_batch_from_stream,
+};
 use crate::model::Gpt;
 use crate::optim::Adam;
 
@@ -58,17 +61,46 @@ pub struct StepMetrics {
     pub effective_batch_size: usize,
 }
 
+/// Reusable Engine buffers that sit outside the optimizer-step hot path.
+///
+/// They correspond to the per-microbatch accumulator and per-sample scratch
+/// gradient that Foundation used to allocate repeatedly.
+#[derive(Debug)]
+pub struct TrainWorkspace {
+    micro_grads: Vec<f32>,
+    sample_grads: Vec<f32>,
+}
+
+impl TrainWorkspace {
+    pub fn new(param_count: usize) -> Self {
+        Self {
+            micro_grads: vec![0.0; param_count],
+            sample_grads: vec![0.0; param_count],
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.micro_grads.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.micro_grads.is_empty()
+    }
+
+    fn matches(&self, param_count: usize) -> bool {
+        self.micro_grads.len() == param_count && self.sample_grads.len() == param_count
+    }
+}
+
 pub fn global_l2_norm(values: &[f32]) -> f32 {
     values.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32
 }
 
 /// Execute one optimizer step using deterministic microbatch accumulation.
 ///
-/// The samples for an optimizer step are indexed by `(seed, global_step,
-/// stream)`. Consecutive microbatches consume consecutive stream ranges, so
-/// `(batch=B, accumulation=A)` is data-selection equivalent to one reference
-/// batch of size `B*A`. Adam is stepped exactly once after the mean gradient is
-/// formed and clipped.
+/// This is the Foundation reference path. It intentionally materializes
+/// batches and allocates scratch buffers so future Engine paths can be checked
+/// against a simple implementation.
 pub fn train_step(
     gpt: &mut Gpt,
     adam: &mut Adam,
@@ -107,6 +139,81 @@ pub fn train_step(
         }
     }
 
+    finish_step(
+        gpt,
+        adam,
+        cfg,
+        global_step,
+        effective_batch_size,
+        grads,
+        loss_sum,
+    )
+}
+
+/// Engine E1 optimizer step.
+///
+/// Data selection, example order, gradient accumulation order, clipping and
+/// Adam updates are identical to `train_step`. The only difference is memory
+/// behavior: deterministic windows are borrowed directly from the token stream
+/// and full-size micro/sample gradient buffers are reused across steps.
+pub fn train_step_reuse(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    train_tokens: &[usize],
+    cfg: TrainConfig,
+    global_step: u64,
+    grads: &mut [f32],
+    workspace: &mut TrainWorkspace,
+) -> Result<StepMetrics, &'static str> {
+    cfg.validate()?;
+    let effective_batch_size = cfg.effective_batch_size()?;
+    if !workspace.matches(grads.len()) {
+        return Err("training workspace has wrong size");
+    }
+
+    grads.fill(0.0);
+    let mut loss_sum = 0.0f32;
+
+    for micro in 0..cfg.gradient_accumulation_steps {
+        let stream_offset = (micro as u64)
+            .checked_mul(cfg.batch_size as u64)
+            .ok_or("batch stream overflow")?;
+        loss_sum += backward_deterministic_batch_from_stream_into(
+            gpt,
+            train_tokens,
+            gpt.cfg.block,
+            cfg.batch_size,
+            cfg.seed,
+            global_step,
+            stream_offset,
+            &mut workspace.micro_grads,
+            &mut workspace.sample_grads,
+        )?;
+        for (dst, src) in grads.iter_mut().zip(&workspace.micro_grads) {
+            *dst += *src;
+        }
+    }
+
+    finish_step(
+        gpt,
+        adam,
+        cfg,
+        global_step,
+        effective_batch_size,
+        grads,
+        loss_sum,
+    )
+}
+
+fn finish_step(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    cfg: TrainConfig,
+    global_step: u64,
+    effective_batch_size: usize,
+    grads: &mut [f32],
+    loss_sum: f32,
+) -> Result<StepMetrics, &'static str> {
     let inv_accum = 1.0 / cfg.gradient_accumulation_steps as f32;
     for g in grads.iter_mut() {
         *g *= inv_accum;
@@ -267,6 +374,54 @@ mod tests {
         }
         assert_eq!(adam_acc.t, 1);
         assert_eq!(adam_ref.t, 1);
+    }
+
+    #[test]
+    fn reuse_workspace_matches_reference_step_exactly() {
+        let mut reference = model(101);
+        let mut candidate = reference.clone();
+        let tokens: Vec<usize> = (0..128).map(|i| (i * 5 + 2) % 7).collect();
+        let cfg = TrainConfig {
+            seed: 4242,
+            batch_size: 3,
+            gradient_accumulation_steps: 2,
+            grad_clip_norm: 1.0,
+        };
+        let n = reference.collect_params().len();
+        let mut reference_adam = Adam::new(n, 2e-3);
+        let mut candidate_adam = Adam::new(n, 2e-3);
+        let mut reference_grads = vec![0.0; n];
+        let mut candidate_grads = vec![0.0; n];
+        let mut workspace = TrainWorkspace::new(n);
+
+        let a = train_step(
+            &mut reference,
+            &mut reference_adam,
+            &tokens,
+            cfg,
+            6,
+            &mut reference_grads,
+        )
+        .unwrap();
+        let b = train_step_reuse(
+            &mut candidate,
+            &mut candidate_adam,
+            &tokens,
+            cfg,
+            6,
+            &mut candidate_grads,
+            &mut workspace,
+        )
+        .unwrap();
+
+        assert_eq!(b, a);
+        assert_eq!(candidate_grads, reference_grads);
+        assert_eq!(candidate.collect_params(), reference.collect_params());
+        let (_, at, am, av) = reference_adam.export();
+        let (_, bt, bm, bv) = candidate_adam.export();
+        assert_eq!(bt, at);
+        assert_eq!(bm, am);
+        assert_eq!(bv, av);
     }
 
     #[test]
