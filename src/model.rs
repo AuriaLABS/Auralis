@@ -664,15 +664,7 @@ fn matmul_b_t(
     assert_eq!(dy.len(), rows * out_cols);
     assert_eq!(b.len(), result_cols * out_cols);
     let mut out = vec![0.0; rows * result_cols];
-    for i in 0..rows {
-        for k in 0..result_cols {
-            let mut s = 0.0;
-            for j in 0..out_cols {
-                s += dy[i * out_cols + j] * b[k * out_cols + j];
-            }
-            out[i * result_cols + k] = s;
-        }
-    }
+    crate::kernels::matmul_b_t_row_slices_into(dy, rows, out_cols, b, result_cols, &mut out);
     out
 }
 
@@ -684,18 +676,7 @@ fn matmul_b_t_add_into(
     result_cols: usize,
     out: &mut [f32],
 ) {
-    assert_eq!(dy.len(), rows * out_cols);
-    assert_eq!(b.len(), result_cols * out_cols);
-    assert_eq!(out.len(), rows * result_cols);
-    for i in 0..rows {
-        for k in 0..result_cols {
-            let mut s = 0.0;
-            for j in 0..out_cols {
-                s += dy[i * out_cols + j] * b[k * out_cols + j];
-            }
-            out[i * result_cols + k] += s;
-        }
-    }
+    crate::kernels::matmul_b_t_row_slices_add_into(dy, rows, out_cols, b, result_cols, out);
 }
 
 fn layernorm_forward(
