@@ -1,7 +1,7 @@
 use auralis::agent::Agent;
 use auralis::bpe::BpeTokenizer;
 use auralis::checkpoint;
-use auralis::eval::evaluate_tokens_reference;
+use auralis::eval::{evaluate_tokens_reference, EvalMetrics};
 use auralis::experiment::{fingerprint_bytes, split_text, ExperimentIdentity, TokenSplit};
 use auralis::gradcheck;
 use auralis::manifest::{self, ExperimentManifest};
@@ -71,14 +71,14 @@ fn encode_split(tok: &AnyTok, raw: &auralis::experiment::TextSplit) -> TokenSpli
     }
 }
 
-fn report_holdout(name: &str, gpt: &Gpt, tokens: &[usize]) {
-    match evaluate_tokens_reference(gpt, tokens) {
-        Ok(m) => println!(
-            "{name} | loss={:.4} ppl={:.3} predictions={} windows={}",
-            m.mean_loss, m.perplexity, m.predicted_tokens, m.windows
-        ),
-        Err(e) => eprintln!("{name} no evaluable: {e}"),
-    }
+fn evaluate_holdout(name: &str, gpt: &Gpt, tokens: &[usize]) -> Result<EvalMetrics, String> {
+    let m = evaluate_tokens_reference(gpt, tokens)
+        .map_err(|e| format!("{name} no evaluable: {e}"))?;
+    println!(
+        "{name} | loss={:.4} ppl={:.3} predictions={} windows={}",
+        m.mean_loss, m.perplexity, m.predicted_tokens, m.windows
+    );
+    Ok(m)
 }
 
 fn validate_resume_manifest(
@@ -120,6 +120,9 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
 
+    let effective_batch = run
+        .effective_batch_size()
+        .map_err(|e| format!("configuración inválida: {e}"))?;
     let text = load_corpus();
     let dataset_fingerprint = fingerprint_bytes(text.as_bytes());
     let raw_split = split_text(&text, run.split_config())
@@ -143,13 +146,15 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     let total_tokens = split.total_len();
 
     println!(
-        "Auralis train | tok={} vocab={} tokens={} chars={} steps={} batch={} seed={} lr={} clip={} split={:.3}/{:.3}/{:.3} bpe_merges={}",
+        "Auralis train | tok={} vocab={} tokens={} chars={} steps={} batch={} accum={} effective_batch={} seed={} lr={} clip={} split={:.3}/{:.3}/{:.3} bpe_merges={}",
         tok.kind(),
         tok.vocab_size(),
         total_tokens,
         text.chars().count(),
         steps,
         run.batch_size,
+        run.gradient_accumulation_steps,
+        effective_batch,
         run.seed,
         run.learning_rate,
         run.grad_clip_norm,
@@ -217,12 +222,14 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
             );
             let sample = sample_prompt(&gpt, &tok, "Auralis es", 24, 0.2, &mut eval_rng);
             println!(
-                "step {:4} global={} loss {:.4} grad {:.4} clip {:.3} sample={}",
+                "step {:4} global={} loss {:.4} grad {:.4} clip {:.3} microbatches={} effective_batch={} sample={}",
                 local_step,
                 metrics.global_step,
                 metrics.loss,
                 metrics.grad_norm_before_clip,
                 metrics.grad_scale,
+                metrics.microbatches,
+                metrics.effective_batch_size,
                 sample
             );
         }
@@ -237,8 +244,8 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
         adam.t
     );
 
-    report_holdout("validation", &gpt, &split.validation);
-    report_holdout("test", &gpt, &split.test);
+    let validation = evaluate_holdout("validation", &gpt, &split.validation)?;
+    let test = evaluate_holdout("test", &gpt, &split.test)?;
 
     checkpoint::save_full(ckpt, &gpt, &tok, Some(&adam))
         .map_err(|e| format!("no se pudo guardar {ckpt:?}: {e}"))?;
@@ -252,10 +259,34 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     );
     let manifest_path = manifest::save_manifest(ckpt, &manifest)
         .map_err(|e| format!("checkpoint guardado pero falló el manifiesto: {e}"))?;
+    let checkpoint_bytes = fs::metadata(ckpt)
+        .map_err(|e| format!("no se pudo medir checkpoint {}: {e}", ckpt.display()))?
+        .len();
+    let manifest_bytes = fs::metadata(&manifest_path)
+        .map_err(|e| format!("no se pudo medir manifiesto {}: {e}", manifest_path.display()))?
+        .len();
+
     println!(
         "checkpoint → {} | manifest → {}",
         ckpt.display(),
         manifest_path.display()
+    );
+    println!(
+        "run_summary | params={} optimizer_steps={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
+        n_params,
+        adam.t,
+        run.batch_size,
+        run.gradient_accumulation_steps,
+        effective_batch,
+        throughput.tokens,
+        throughput.elapsed_seconds,
+        throughput.tokens_per_second,
+        validation.mean_loss,
+        validation.perplexity,
+        test.mean_loss,
+        test.perplexity,
+        checkpoint_bytes,
+        manifest_bytes,
     );
     Ok(())
 }
@@ -376,12 +407,20 @@ fn parse_train_args(args: &[String]) -> (usize, &Path, RunConfig) {
         .get(5)
         .and_then(|s| s.parse().ok())
         .unwrap_or(defaults.batch_size);
-    (steps, ckpt, defaults.with_cli_overrides(seed, batch))
+    let accum = args
+        .get(6)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(defaults.gradient_accumulation_steps);
+    (
+        steps,
+        ckpt,
+        defaults.with_cli_overrides(seed, batch, accum),
+    )
 }
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
