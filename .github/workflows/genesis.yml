@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - 'auralis/**'
   pull_request:
 
 permissions:
