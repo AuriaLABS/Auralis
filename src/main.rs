@@ -1,4 +1,5 @@
 use auralis::agent::Agent;
+use auralis::bench;
 use auralis::bpe::BpeTokenizer;
 use auralis::checkpoint;
 use auralis::eval::{evaluate_tokens_reference, EvalMetrics};
@@ -560,6 +561,29 @@ fn run_sec_audit(args: &[String]) {
     }
 }
 
+fn run_bench(args: &[String]) {
+    match args.get(2).map(|s| s.as_str()) {
+        Some("list") | None => print!("{}", bench::list_report()),
+        Some("describe") => {
+            let Some(id) = args.get(3) else {
+                eprintln!("error: bench describe requires an id");
+                std::process::exit(2);
+            };
+            match bench::find(id) {
+                Some(spec) => print!("{}", spec.describe()),
+                None => {
+                    eprintln!("error: unknown bench {id}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some(other) => {
+            eprintln!("error: unknown bench subcommand {other}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
     let mut config_path: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -606,7 +630,7 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list\n  auralis bench describe ID\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -633,6 +657,7 @@ fn main() {
         Some("release-check") => run_release_check(&args),
         Some("release-manifest") => run_release_manifest(&args),
         Some("sec-audit") => run_sec_audit(&args),
+        Some("bench") => run_bench(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
