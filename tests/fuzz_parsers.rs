@@ -5,6 +5,7 @@
 
 use auralis::checkpoint;
 use auralis::manifest::ExperimentManifest;
+use auralis::run_config::RunConfig;
 use auralis::model::{Config, Gpt};
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use rand::rngs::StdRng;
@@ -193,4 +194,31 @@ fn garbage_magic_is_invalid_data() {
     };
     let _ = fs::remove_file(&path);
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn mutated_run_configs_do_not_panic() {
+    let seed = RunConfig::default().encode().into_bytes();
+    let mut rng = StdRng::seed_from_u64(SEED ^ 2);
+    for case in 0..TRIALS {
+        let mutant = mutate(&seed, &mut rng);
+        let text = String::from_utf8_lossy(&mutant);
+        let result = catch_unwind(AssertUnwindSafe(|| RunConfig::decode(&text)));
+        assert!(
+            result.is_ok(),
+            "run config decoder panicked case={case} bytes={}",
+            mutant.len()
+        );
+    }
+}
+
+#[test]
+fn truncated_run_config_is_an_error() {
+    assert!(RunConfig::decode("").is_err());
+    assert!(RunConfig::decode("auralis_run_config=1\n").is_err());
+    let mut extra = RunConfig::default().encode();
+    extra.push_str("not_a_field=1\n");
+    assert!(RunConfig::decode(&extra)
+        .unwrap_err()
+        .contains("unknown run config field"));
 }
