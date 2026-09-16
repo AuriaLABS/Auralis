@@ -1,0 +1,117 @@
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Familia a ejecutar
+        type: choice
+        default: all
+        options:
+          - all
+          - unit
+          - integration
+          - fuzz
+          - cli
+          - profile
+          - benches
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruebas-${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.suite || 'all' }}
+  cancel-in-progress: true
+
+env:
+  AURALIS_COMMIT_SHA: ${{ github.sha }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'unit'
+    name: unit (lib)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test --lib
+        run: cargo test --lib
+
+  integration:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'integration'
+    name: integration (genesis/properties/equivalence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: integration suites
+        run: |
+          cargo test --test genesis --test properties --test engine_equivalence --test engine_state_equivalence
+
+  fuzz:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'fuzz'
+    name: fuzz parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test --test fuzz_parsers
+        run: cargo test --test fuzz_parsers
+
+  cli:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'cli'
+    name: cli smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: check + bpe + train-fresh
+        shell: bash
+        run: |
+          output="$(cargo run --release -- check 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'ok=true' <<< "$output"
+          cargo run --release -- bpe
+          output="$(cargo run --release -- train-fresh 2 /tmp/auralis-pruebas.bin 659918 2 1 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'run_summary |' <<< "$output"
+          test -s /tmp/auralis-pruebas.bin
+          test -s /tmp/auralis-pruebas.bin.manifest
+
+  profile:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'all' || github.event.inputs.suite == 'profile'
+    name: eval profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: auralis_eval_profile
+        shell: bash
+        run: |
+          output="$(cargo run --release --bin auralis_eval_profile -- 4 2>&1)"
+          printf '%s\n' "$output"
+          grep -q 'eval_profile | mode=loss' <<< "$output"
+          grep -q 'eval_profile | mode=generate_one' <<< "$output"
+
+  benches:
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'all' || github.event.inputs.suite == 'benches') || github.event_name == 'push'
+    name: benches (main / manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: matmul + engine benches (corto)
+        shell: bash
+        run: |
+          cargo run --release --bin auralis_matmul_bench -- 2 10 3
+          cargo run --release --bin auralis_engine_bench -- 2 8 3
