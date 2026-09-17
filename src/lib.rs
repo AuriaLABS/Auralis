@@ -15,6 +15,7 @@ pub mod gradcheck;
 pub mod inspect;
 pub mod kernels;
 pub mod manifest;
+pub mod matmul_dispatch;
 pub mod metrics;
 pub mod model;
 pub mod numeric;
