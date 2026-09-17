@@ -181,6 +181,56 @@ pub fn report_first_corrupt(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CliOut {
+    pub text: String,
+    pub finite: bool,
+}
+
+/// CLI body for `auralis numeric`. Does not touch the engine.
+pub fn cli(rest: &[String]) -> Result<CliOut, String> {
+    if rest.first().map(|s| s.as_str()) == Some("--fixture") {
+        let name = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+        return fixture_cli(name);
+    }
+    if rest.is_empty() {
+        return fixture_cli("nan-logits");
+    }
+    let joined = rest.join(" ");
+    let values = parse_tokens(&joined)?;
+    let scan = scan_f32(&values);
+    Ok(CliOut {
+        text: format!("numeric | {}\n", explain(Stage::Logits, "input", &scan)),
+        finite: scan.is_finite(),
+    })
+}
+
+fn fixture_cli(name: &str) -> Result<CliOut, String> {
+    let report = match name {
+        "nan-logits" => {
+            let (acts, logits, grads) = nan_at_logits_fixture();
+            report_first_corrupt(&[
+                (Stage::Activation, "h", acts.as_slice()),
+                (Stage::Logits, "logits", logits.as_slice()),
+                (Stage::Gradient, "dW", grads.as_slice()),
+            ])?
+        }
+        "neg-inf-grad" => {
+            let (acts, logits, grads) = neg_inf_at_gradient_fixture();
+            report_first_corrupt(&[
+                (Stage::Activation, "h", acts.as_slice()),
+                (Stage::Logits, "logits", logits.as_slice()),
+                (Stage::Gradient, "dW", grads.as_slice()),
+            ])?
+        }
+        other => return Err(format!("unknown numeric fixture {other}")),
+    };
+    Ok(CliOut {
+        text: format!("numeric | fixture={name} {report}\n"),
+        finite: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +329,28 @@ mod tests {
         .unwrap();
         assert!(report.contains("logits"));
         assert!(report.contains("NaN"));
+    }
+
+    #[test]
+    fn cli_default_runs_nan_logits_fixture() {
+        let out = cli(&[]).unwrap();
+        assert!(!out.finite);
+        assert!(out.text.contains("logits"));
+        assert!(out.text.contains("NaN"));
+    }
+
+    #[test]
+    fn cli_parses_tokens_and_reports_finite() {
+        let args = ["1.0".into(), "2.0".into()];
+        let out = cli(&args).unwrap();
+        assert!(out.finite);
+        assert!(out.text.contains("input"));
+    }
+
+    #[test]
+    fn cli_unknown_fixture_errors() {
+        let args = ["--fixture".into(), "nope".into()];
+        assert!(cli(&args).is_err());
     }
 
     #[test]
