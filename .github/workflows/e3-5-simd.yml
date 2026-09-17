@@ -1,0 +1,40 @@
+name: E3.5 SIMD
+
+on:
+  pull_request:
+    paths:
+      - 'src/simd.rs'
+      - 'src/bin/auralis_simd_bench.rs'
+      - '.github/workflows/e3-5-simd.yml'
+      - 'src/lib.rs'
+
+permissions:
+  contents: read
+
+jobs:
+  simd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SIMD equivalence tests
+        run: cargo test --lib simd::tests -- --nocapture
+      - name: SIMD benchmark
+        run: |
+          set -euo pipefail
+          output="$(cargo run --release --bin auralis_simd_bench -- 5 100 7 2>&1)"
+          printf '%s\n' "$output" | tee /tmp/e3-5-simd.txt
+          test "$(grep -c '^simd_result |' /tmp/e3-5-simd.txt)" -eq 5
+          grep -q '^simd_bench | arch=' /tmp/e3-5-simd.txt
+      - name: Publish SIMD summary
+        run: |
+          {
+            echo '## E3.5 SIMD prototype'
+            echo
+            echo 'Portable fallback is mandatory. No speedup threshold is enforced at prototype stage.'
+            echo
+            echo '```text'
+            grep '^simd_' /tmp/e3-5-simd.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
