@@ -21,6 +21,8 @@ auralis check
 auralis bpe
 ```
 
+Binario auxiliar (no está en `fn usage()`): `cargo run --release --bin auralis_numeric`.
+
 ## Flags reconocidos
 
 `--config`, `--json`, `--csv`, `--out`, `--verify`, `--help`/`-h`/`help`.

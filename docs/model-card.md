@@ -79,6 +79,7 @@ Experimental = existe como dirección o prototipo; no es contrato de release.
 
 - GPU / SIMD / matmul candidato como hot path (#30)
 - `forward_eval` sin `ForwardCache` (#27)
+- `cargo run --bin auralis_numeric` (fixtures NaN/Inf; no cableado al engine)
 - agente con herramientas / memoria larga
 - multimodal, Scientist, self-improvement
 - tag `v1.0.0` y model card con métricas RC
