@@ -89,6 +89,15 @@ mod tests {
         out
     }
 
+    fn section_after<'a>(text: &'a str, heading: &str) -> &'a str {
+        let start = text.find(heading).unwrap_or(0);
+        let rest = &text[start..];
+        match rest.find("\n## ") {
+            Some(end) if end > 0 => &rest[..end],
+            _ => rest,
+        }
+    }
+
     const CLI_LINES: &[&str] = &[
         "auralis train ",
         "auralis train-fresh ",
@@ -172,7 +181,10 @@ mod tests {
         let report = crate::release::check_release(root());
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, crate::release::GateStatus::Pending);
-        assert!(report.gates.iter().any(|g| g.id == "model_card" && g.status == crate::release::GateStatus::Pass));
+        assert!(report
+            .gates
+            .iter()
+            .any(|g| g.id == "model_card" && g.status == crate::release::GateStatus::Pass));
     }
 
     #[test]
@@ -188,9 +200,30 @@ mod tests {
             "## Limitations",
             "## Ethics / risks",
             "## Versioning",
+            "## Supported vs experimental",
             "no inventa baselines",
         ] {
             assert!(text.contains(needle), "docs/model-card.md missing {needle}");
+        }
+    }
+
+    #[test]
+    fn model_card_supported_lists_every_cli_verb() {
+        let card = docs("model-card.md");
+        let supported = section_after(&card, "### Supported");
+        for line in CLI_LINES {
+            let verb = line.trim();
+            assert!(
+                supported.contains(verb),
+                "Supported matrix missing {verb}"
+            );
+        }
+        let experimental = section_after(&card, "### Experimental");
+        for needle in ["GPU", "#27", "v1.0.0", "multimodal"] {
+            assert!(
+                experimental.contains(needle),
+                "Experimental matrix missing {needle}"
+            );
         }
     }
 
