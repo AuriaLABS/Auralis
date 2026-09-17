@@ -49,11 +49,11 @@ pub fn resolve_backend(
     match backend {
         SimdBackend::Portable => Ok(ResolvedSimdBackend::Portable),
         SimdBackend::Auto => {
-            let measured_win = matches!(
-                (rows, inner, cols),
-                (32, 32, 32) | (32, 32, 96) | (32, 96, 32)
-            );
-            if avx2_supported() && measured_win {
+            // Only shapes with repeatable material wins in E3.5 runs are
+            // promoted. 32x32x96 stayed positive but dropped to ~4.7% on the
+            // second runner, so it remains portable in Auto until more evidence.
+            let measured_material_win = matches!((rows, inner, cols), (32, 32, 32) | (32, 96, 32));
+            if avx2_supported() && measured_material_win {
                 Ok(ResolvedSimdBackend::Avx2)
             } else {
                 Ok(ResolvedSimdBackend::Portable)
@@ -177,19 +177,25 @@ mod tests {
     }
 
     #[test]
-    fn auto_selects_avx2_only_for_measured_wins() {
+    fn auto_selects_avx2_only_for_repeatable_material_wins() {
         let selected = if avx2_supported() {
             ResolvedSimdBackend::Avx2
         } else {
             ResolvedSimdBackend::Portable
         };
-        for shape in [(32, 32, 32), (32, 32, 96), (32, 96, 32)] {
+        for shape in [(32, 32, 32), (32, 96, 32)] {
             assert_eq!(
                 resolve_backend(SimdBackend::Auto, shape.0, shape.1, shape.2).unwrap(),
                 selected
             );
         }
-        for shape in [(32, 32, 100), (128, 128, 128), (7, 8, 3), (16, 24, 71)] {
+        for shape in [
+            (32, 32, 96),
+            (32, 32, 100),
+            (128, 128, 128),
+            (7, 8, 3),
+            (16, 24, 71),
+        ] {
             assert_eq!(
                 resolve_backend(SimdBackend::Auto, shape.0, shape.1, shape.2).unwrap(),
                 ResolvedSimdBackend::Portable
