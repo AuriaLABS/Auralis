@@ -1,0 +1,57 @@
+name: E3 Worker Pool
+
+on:
+  pull_request:
+    paths:
+      - 'src/worker_pool.rs'
+      - 'src/bin/auralis_worker_pool_bench.rs'
+      - '.github/workflows/e3-worker-pool.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/worker_pool.rs'
+      - 'src/bin/auralis_worker_pool_bench.rs'
+      - '.github/workflows/e3-worker-pool.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determinism tests
+        run: cargo test --lib worker_pool::tests -- --nocapture
+
+      - name: Scaling benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(cargo run --release --bin auralis_worker_pool_bench -- 3 20 5 2>&1)"
+          printf '%s\n' "$output" | tee /tmp/e3-worker-pool.txt
+          test "$(grep -c '^worker_pool_result |' /tmp/e3-worker-pool.txt)" -eq 4
+          grep -q '^worker_pool_result | threads=1 ' /tmp/e3-worker-pool.txt
+          grep -q '^worker_pool_result | threads=2 ' /tmp/e3-worker-pool.txt
+          grep -q '^worker_pool_result | threads=4 ' /tmp/e3-worker-pool.txt
+          grep -q '^worker_pool_result | threads=8 ' /tmp/e3-worker-pool.txt
+
+      - name: Publish scaling summary
+        shell: bash
+        run: |
+          {
+            echo '## E3 worker pool scaling'
+            echo
+            echo 'Prototype only: no speedup threshold is enforced yet.'
+            echo
+            echo '```text'
+            grep '^worker_pool_' /tmp/e3-worker-pool.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
