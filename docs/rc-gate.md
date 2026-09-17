@@ -17,12 +17,13 @@ Esta herramienta **nunca crea tags** ni registra `human_approval`.
 - `.github/workflows/pruebas.yml`
 - `docs/ci-pruebas.md`
 
+También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no RC).
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — identidad git/RC
 - `live_ci` — check-runs de GitHub
 - `artifacts_checksums` — usar `release-manifest`
-- `model_card` — `docs/model-card.md` aún no obligatorio
 - `human_approval` — revisión humana (#84)
 
 Cómo lanzarlo: [verify.md](verify.md).
