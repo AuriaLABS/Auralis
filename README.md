@@ -85,6 +85,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [ROADMAP.md](ROADMAP.md) — hitos técnicos y evolución del proyecto.
 - [docs/verify.md](docs/verify.md) — comandos de prueba sin red.
 - [docs/cli.md](docs/cli.md) — verbos y flags.
+- [docs/versions.md](docs/versions.md) — crate y schemas vigentes.
 - [docs/ci-pruebas.md](docs/ci-pruebas.md) — matriz CI.
 - [docs/sec-unsafe.md](docs/sec-unsafe.md) — unsafe y límites.
 - [docs/bench-registry.md](docs/bench-registry.md) — catálogo de benches.

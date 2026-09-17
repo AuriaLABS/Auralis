@@ -1,0 +1,13 @@
+# Versiones vigentes
+
+Si este archivo miente, `docs_check` falla.
+Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
+
+| Contrato | Valor ahora |
+| --- | --- |
+| crate (`Cargo.toml`) | `0.1.0` |
+| Rust edition | `2021` |
+| run config schema | `RUN_CONFIG_SCHEMA_VERSION = 1` |
+| experiment manifest | `MANIFEST_VERSION = 4` |
+
+Un manifiesto v3 o un `auralis_run_config` distinto de 1 se rechaza (fail-closed).

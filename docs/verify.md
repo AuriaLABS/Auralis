@@ -17,6 +17,7 @@ Los comandos de abajo no usan red.
 `benches` no bloquea PRs. Ver `docs/ci-pruebas.md` y `ci_matrix::JOBS`.
 
 Verbos y flags: [cli.md](cli.md).
+Versiones: [versions.md](versions.md).
 
 ## Ciclo Genesis (README)
 
@@ -51,10 +52,11 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/bench-registry.md` | verbos `bench list/describe` y flags |
 | `docs/sec-unsafe.md` | límites y `EXPECTED_UNSAFE_BLOCKS == 0` |
 | `docs/cli.md` | verbos presentes en `fn usage()` |
+| `docs/versions.md` | crate 0.1.0, schema 1, manifiesto 4 |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
 | esta página | gates, snippet Rust y comandos |
 
 ## Fuera de este slice
 
-Links externos, hardware GPU.
+Links externos, hardware GPU, tag RC.
