@@ -28,3 +28,4 @@ pub mod sec_path;
 pub mod tensor;
 pub mod tokenizer;
 pub mod training;
+pub mod worker_pool;
