@@ -31,26 +31,10 @@ fn bench_one(
     let a = data(rows * inner, 3);
     let b = data(inner * cols, 11);
     let mut out = vec![0.0; rows * cols];
-    let mut resolved = matmul_dispatch_into(
-        backend,
-        &a,
-        rows,
-        inner,
-        &b,
-        cols,
-        &mut out,
-    );
+    let mut resolved = matmul_dispatch_into(backend, &a, rows, inner, &b, cols, &mut out);
 
     for _ in 0..warmup {
-        resolved = matmul_dispatch_into(
-            backend,
-            &a,
-            rows,
-            inner,
-            &b,
-            cols,
-            &mut out,
-        );
+        resolved = matmul_dispatch_into(backend, &a, rows, inner, &b, cols, &mut out);
         black_box(&out);
     }
 
@@ -58,21 +42,97 @@ fn bench_one(
     for _ in 0..repeats {
         let start = Instant::now();
         for _ in 0..iters {
-            resolved = matmul_dispatch_into(
-                backend,
-                &a,
-                rows,
-                inner,
-                &b,
-                cols,
-                &mut out,
-            );
+            resolved = matmul_dispatch_into(backend, &a, rows, inner, &b, cols, &mut out);
             black_box(&out);
         }
         samples.push(start.elapsed().as_secs_f64() * 1e6 / iters as f64);
     }
 
     (median_us(samples), resolved)
+}
+
+fn run_mix(backend: MatmulBackend) {
+    // Approximate the dominant dense matmul mix of Config::tiny(vocab=100),
+    // n_layer=2 and context length 32: Q/K/V/O per layer, FF up/down per
+    // layer, then final projection to vocab.
+    for layer in 0..2usize {
+        for op in 0..4usize {
+            run_shape_once(32, 32, 32, backend, 100 + layer * 10 + op);
+        }
+        run_shape_once(32, 32, 96, backend, 200 + layer * 10);
+        run_shape_once(32, 96, 32, backend, 201 + layer * 10);
+    }
+    run_shape_once(32, 32, 100, backend, 300);
+}
+
+fn run_shape_once(rows: usize, inner: usize, cols: usize, backend: MatmulBackend, salt: usize) {
+    let a = data(rows * inner, salt);
+    let b = data(inner * cols, salt + 7);
+    let mut out = vec![0.0; rows * cols];
+    black_box(matmul_dispatch_into(
+        backend,
+        black_box(&a),
+        rows,
+        inner,
+        black_box(&b),
+        cols,
+        &mut out,
+    ));
+    black_box(out);
+}
+
+fn bench_mix(
+    backend: MatmulBackend,
+    warmup: usize,
+    iters: usize,
+    repeats: usize,
+) -> f64 {
+    for _ in 0..warmup {
+        run_mix(backend);
+    }
+
+    let mut samples = Vec::with_capacity(repeats);
+    for _ in 0..repeats {
+        let start = Instant::now();
+        for _ in 0..iters {
+            run_mix(backend);
+        }
+        samples.push(start.elapsed().as_secs_f64() * 1e6 / iters as f64);
+    }
+    median_us(samples)
+}
+
+fn assert_mix_exact() {
+    for (rows, inner, cols, salt) in [
+        (32usize, 32usize, 32usize, 101usize),
+        (32, 32, 96, 201),
+        (32, 96, 32, 202),
+        (32, 32, 100, 301),
+    ] {
+        let a = data(rows * inner, salt);
+        let b = data(inner * cols, salt + 7);
+        let mut reference = vec![0.0; rows * cols];
+        let mut auto = vec![0.0; rows * cols];
+        matmul_dispatch_into(
+            MatmulBackend::Reference,
+            &a,
+            rows,
+            inner,
+            &b,
+            cols,
+            &mut reference,
+        );
+        matmul_dispatch_into(
+            MatmulBackend::Auto,
+            &a,
+            rows,
+            inner,
+            &b,
+            cols,
+            &mut auto,
+        );
+        assert_eq!(auto, reference, "mix shape={rows}x{inner}x{cols}");
+    }
 }
 
 fn main() {
@@ -139,4 +199,16 @@ fn main() {
             auto_us / reference_us
         );
     }
+
+    assert_mix_exact();
+    let mix_iters = iters.min(20).max(1);
+    let reference_mix_us = bench_mix(MatmulBackend::Reference, warmup, mix_iters, repeats);
+    let auto_mix_us = bench_mix(MatmulBackend::Auto, warmup, mix_iters, repeats);
+    println!(
+        "dispatch_mix_result | profile=tiny_v100_l2_ctx32 reference_us={:.3} auto_us={:.3} auto_over_reference={:.4} speedup={:.4}",
+        reference_mix_us,
+        auto_mix_us,
+        auto_mix_us / reference_mix_us,
+        reference_mix_us / auto_mix_us
+    );
 }
