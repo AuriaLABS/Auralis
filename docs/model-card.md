@@ -73,6 +73,7 @@ Experimental = existe como dirección o prototipo; no es contrato de release.
 - `auralis chat`
 - `auralis check`
 - `auralis bpe`
+- `auralis numeric`
 - CPU tiny decoder-only + BPE + Adam + checkpoint/manifiesto v4
 
 ### Experimental

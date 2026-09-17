@@ -19,6 +19,7 @@ auralis eval [checkpoint]
 auralis chat [checkpoint]
 auralis check
 auralis bpe
+auralis numeric [--fixture NAME | TOKENS...]
 ```
 
 ## Flags reconocidos
