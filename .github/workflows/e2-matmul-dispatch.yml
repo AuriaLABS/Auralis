@@ -24,7 +24,9 @@ jobs:
           output="$(cargo run --release --bin auralis_matmul_dispatch_bench -- 5 80 7 2>&1)"
           printf '%s\n' "$output" | tee /tmp/e2-matmul-dispatch.txt
           test "$(grep -c '^dispatch_result |' /tmp/e2-matmul-dispatch.txt)" -eq 4
+          test "$(grep -c '^dispatch_mix_result |' /tmp/e2-matmul-dispatch.txt)" -eq 1
           grep -q 'shape=32x32x100 resolved=Reference' /tmp/e2-matmul-dispatch.txt
+          grep -q 'profile=tiny_v100_l2_ctx32' /tmp/e2-matmul-dispatch.txt
       - name: Publish dispatch summary
         run: |
           {
@@ -34,5 +36,6 @@ jobs:
             echo
             echo '```text'
             grep '^dispatch_result |' /tmp/e2-matmul-dispatch.txt || true
+            grep '^dispatch_mix_result |' /tmp/e2-matmul-dispatch.txt || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
