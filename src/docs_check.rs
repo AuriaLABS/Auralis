@@ -121,6 +121,7 @@ mod tests {
             "cli.md",
             "versions.md",
             "rc-gate.md",
+            "model-card.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
         ] {
@@ -171,6 +172,26 @@ mod tests {
         let report = crate::release::check_release(root());
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, crate::release::GateStatus::Pending);
+        assert!(report.gates.iter().any(|g| g.id == "model_card" && g.status == crate::release::GateStatus::Pass));
+    }
+
+    #[test]
+    fn model_card_has_required_sections() {
+        let text = docs("model-card.md");
+        for needle in [
+            "## Intended use",
+            "## Out of scope",
+            "## Architecture",
+            "## Training data",
+            "## Evaluation",
+            "## Metrics",
+            "## Limitations",
+            "## Ethics / risks",
+            "## Versioning",
+            "no inventa baselines",
+        ] {
+            assert!(text.contains(needle), "docs/model-card.md missing {needle}");
+        }
     }
 
     #[test]
@@ -268,6 +289,7 @@ mod tests {
             "versions.md",
             "rc-gate.md",
             "release-check",
+            "model-card.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }
