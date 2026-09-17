@@ -25,6 +25,7 @@ pub mod sampling;
 pub mod sec;
 pub mod sec_overflow;
 pub mod sec_path;
+pub mod simd;
 pub mod tensor;
 pub mod tokenizer;
 pub mod training;
