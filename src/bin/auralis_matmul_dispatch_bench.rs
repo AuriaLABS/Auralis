@@ -1,5 +1,7 @@
 use auralis::kernels::matmul_reference_into;
-use auralis::matmul_dispatch::{matmul_dispatch_into, MatmulBackend};
+use auralis::matmul_dispatch::{
+    matmul_dispatch_into, MatmulBackend, ResolvedMatmulBackend,
+};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -25,14 +27,30 @@ fn bench_one(
     warmup: usize,
     iters: usize,
     repeats: usize,
-) -> (f64, MatmulBackend) {
+) -> (f64, ResolvedMatmulBackend) {
     let a = data(rows * inner, 3);
     let b = data(inner * cols, 11);
     let mut out = vec![0.0; rows * cols];
-    let mut resolved = backend;
+    let mut resolved = matmul_dispatch_into(
+        backend,
+        &a,
+        rows,
+        inner,
+        &b,
+        cols,
+        &mut out,
+    );
 
     for _ in 0..warmup {
-        resolved = matmul_dispatch_into(&a, rows, inner, &b, cols, &mut out, backend);
+        resolved = matmul_dispatch_into(
+            backend,
+            &a,
+            rows,
+            inner,
+            &b,
+            cols,
+            &mut out,
+        );
         black_box(&out);
     }
 
@@ -40,7 +58,15 @@ fn bench_one(
     for _ in 0..repeats {
         let start = Instant::now();
         for _ in 0..iters {
-            resolved = matmul_dispatch_into(&a, rows, inner, &b, cols, &mut out, backend);
+            resolved = matmul_dispatch_into(
+                backend,
+                &a,
+                rows,
+                inner,
+                &b,
+                cols,
+                &mut out,
+            );
             black_box(&out);
         }
         samples.push(start.elapsed().as_secs_f64() * 1e6 / iters as f64);
@@ -72,13 +98,13 @@ fn main() {
         let mut auto_out = vec![0.0; rows * cols];
         matmul_reference_into(&a, rows, inner, &b, cols, &mut reference_out);
         let resolved = matmul_dispatch_into(
+            MatmulBackend::Auto,
             &a,
             rows,
             inner,
             &b,
             cols,
             &mut auto_out,
-            MatmulBackend::Auto,
         );
         assert_eq!(auto_out, reference_out, "dispatch output must stay exact");
 
