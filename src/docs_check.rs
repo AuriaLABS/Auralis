@@ -120,6 +120,7 @@ mod tests {
             "verify.md",
             "cli.md",
             "versions.md",
+            "rc-gate.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
         ] {
@@ -139,15 +140,37 @@ mod tests {
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::manifest::MANIFEST_VERSION, 4);
+        assert_eq!(crate::release::RELEASE_MANIFEST_VERSION, 1);
         let versions = docs("versions.md");
         for needle in [
             "`0.1.0`",
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 1",
             "MANIFEST_VERSION = 4",
+            "RELEASE_MANIFEST_VERSION = 1",
         ] {
             assert!(versions.contains(needle), "docs/versions.md missing {needle}");
         }
+    }
+
+    #[test]
+    fn rc_gate_doc_lists_default_artifacts() {
+        let text = docs("rc-gate.md");
+        assert_eq!(crate::release::RELEASE_MANIFEST_VERSION, 1);
+        for art in crate::release::DEFAULT_RELEASE_ARTIFACTS {
+            assert!(text.contains(art), "docs/rc-gate.md missing {art}");
+        }
+        for needle in [
+            "nunca crea tags",
+            "human_approval",
+            "DEFAULT_RELEASE_ARTIFACTS",
+            "release-check",
+        ] {
+            assert!(text.contains(needle), "docs/rc-gate.md missing {needle}");
+        }
+        let report = crate::release::check_release(root());
+        assert!(report.automated_pass);
+        assert_eq!(report.human_approval, crate::release::GateStatus::Pending);
     }
 
     #[test]
@@ -243,6 +266,8 @@ mod tests {
             "cli.md",
             "examples/tiny.cfg",
             "versions.md",
+            "rc-gate.md",
+            "release-check",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }
