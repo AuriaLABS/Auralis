@@ -137,6 +137,50 @@ where
     None
 }
 
+/// Parse a whitespace list. Tokens: number, `nan`, `inf`, `+inf`, `-inf`.
+pub fn parse_tokens(text: &str) -> Result<Vec<f32>, String> {
+    let mut out = Vec::new();
+    for (i, raw) in text.split_whitespace().enumerate() {
+        let tok = raw.trim();
+        let value = match tok.to_ascii_lowercase().as_str() {
+            "nan" => f32::NAN,
+            "inf" | "+inf" | "infinity" | "+infinity" => f32::INFINITY,
+            "-inf" | "-infinity" => f32::NEG_INFINITY,
+            other => other
+                .parse::<f32>()
+                .map_err(|_| format!("invalid f32 token {i}: {tok}"))?,
+        };
+        out.push(value);
+    }
+    if out.is_empty() {
+        return Err("no f32 tokens".into());
+    }
+    Ok(out)
+}
+
+/// Fixture: activations clean, logits contain a NaN, grads clean.
+pub fn nan_at_logits_fixture() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    (
+        vec![0.1, 0.2],
+        vec![0.0, f32::NAN],
+        vec![1.0, 1.0],
+    )
+}
+
+/// Fixture: first fault is -Inf on a gradient slice.
+pub fn neg_inf_at_gradient_fixture() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    (vec![0.5], vec![0.25], vec![f32::NEG_INFINITY, 0.0])
+}
+
+pub fn report_first_corrupt(
+    stages: &[(Stage, &str, &[f32])],
+) -> Result<String, String> {
+    match first_corrupt_stage(stages.iter().copied()) {
+        Some((stage, name, scan)) => Ok(explain(stage, name, &scan)),
+        None => Err("pipeline is finite".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +251,46 @@ mod tests {
         let dirty = [1.0f32, f32::NAN];
         let scan = Diagnostics::on().scan(&dirty).expect("enabled");
         assert_eq!(scan.first, Some(Fault::NaN { index: 1 }));
+    }
+
+    #[test]
+    fn parse_tokens_accepts_sentinels() {
+        let vals = parse_tokens("1.0 nan inf -inf").unwrap();
+        assert_eq!(vals.len(), 4);
+        assert!(vals[1].is_nan());
+        assert!(vals[2].is_infinite() && vals[2].is_sign_positive());
+        assert!(vals[3].is_infinite() && vals[3].is_sign_negative());
+    }
+
+    #[test]
+    fn parse_tokens_rejects_junk() {
+        assert!(parse_tokens("1.0 nope").is_err());
+        assert!(parse_tokens("   ").is_err());
+    }
+
+    #[test]
+    fn named_nan_fixture_trips_logits() {
+        let (acts, logits, grads) = nan_at_logits_fixture();
+        let report = report_first_corrupt(&[
+            (Stage::Activation, "h", acts.as_slice()),
+            (Stage::Logits, "logits", logits.as_slice()),
+            (Stage::Gradient, "dW", grads.as_slice()),
+        ])
+        .unwrap();
+        assert!(report.contains("logits"));
+        assert!(report.contains("NaN"));
+    }
+
+    #[test]
+    fn named_neg_inf_fixture_trips_gradient() {
+        let (acts, logits, grads) = neg_inf_at_gradient_fixture();
+        let report = report_first_corrupt(&[
+            (Stage::Activation, "h", acts.as_slice()),
+            (Stage::Logits, "logits", logits.as_slice()),
+            (Stage::Gradient, "dW", grads.as_slice()),
+        ])
+        .unwrap();
+        assert!(report.contains("dW"));
+        assert!(report.contains("-Inf"));
     }
 }
