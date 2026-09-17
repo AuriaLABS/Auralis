@@ -52,3 +52,34 @@ No hay filtro de contenido en el sampling.
 
 [versions.md](versions.md). Crate `0.1.0`. Manifest experiment `4`. Run-config schema `1`.
 Tag `v1.0.0` solo con gate [rc-gate.md](rc-gate.md) y aprobación humana (#84).
+
+## Supported vs experimental
+
+Soportado = verbo en `fn usage()` y ejecutable hoy con [cli.md](cli.md).
+Experimental = existe como dirección o prototipo; no es contrato de release.
+
+### Supported
+
+- `auralis train`
+- `auralis train-fresh`
+- `auralis config`
+- `auralis inspect`
+- `auralis release-check`
+- `auralis release-manifest`
+- `auralis sec-audit`
+- `auralis bench list`
+- `auralis bench describe`
+- `auralis eval`
+- `auralis chat`
+- `auralis check`
+- `auralis bpe`
+- CPU tiny decoder-only + BPE + Adam + checkpoint/manifiesto v4
+
+### Experimental
+
+- GPU / SIMD / matmul candidato como hot path (#30)
+- `forward_eval` sin `ForwardCache` (#27)
+- agente con herramientas / memoria larga
+- multimodal, Scientist, self-improvement
+- tag `v1.0.0` y model card con métricas RC
+- asistente de producción
