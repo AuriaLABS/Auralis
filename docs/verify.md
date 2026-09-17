@@ -20,6 +20,7 @@ Verbos y flags: [cli.md](cli.md).
 Versiones: [versions.md](versions.md).
 RC local: [rc-gate.md](rc-gate.md).
 Model card: [model-card.md](model-card.md).
+Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
 
@@ -59,6 +60,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/versions.md` | crate 0.1.0, schema 1, manifiesto 4 |
 | `docs/rc-gate.md` | `DEFAULT_RELEASE_ARTIFACTS` |
 | `docs/model-card.md` | secciones obligatorias |
+| `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
 | esta página | gates, snippet Rust y comandos |
