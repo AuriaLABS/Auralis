@@ -114,6 +114,17 @@ mod tests {
         "auralis bpe",
     ];
 
+    const CLEAN_ENV: &[&str] = &[
+        "cargo run --release -- check",
+        "cargo run --release -- bpe",
+        "cargo run --release -- train-fresh 2 /tmp/auralis-pruebas.bin 659918 2 1",
+        "ok=true",
+        "run_summary |",
+        "cargo run --release --bin auralis_eval_profile -- 4",
+        "eval_profile | mode=loss",
+        "eval_profile | mode=generate_one",
+    ];
+
     const VERIFY_SNIPPET: &str = concat!(
         "assert!(!auralis::ci_matrix::required_pr_jobs().is_empty());\n",
         "assert_eq!(auralis::sec::EXPECTED_UNSAFE_BLOCKS, 0);\n",
@@ -131,6 +142,7 @@ mod tests {
             "versions.md",
             "rc-gate.md",
             "model-card.md",
+            "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
         ] {
@@ -213,10 +225,7 @@ mod tests {
         let supported = section_after(&card, "### Supported");
         for line in CLI_LINES {
             let verb = line.trim();
-            assert!(
-                supported.contains(verb),
-                "Supported matrix missing {verb}"
-            );
+            assert!(supported.contains(verb), "Supported matrix missing {verb}");
         }
         let experimental = section_after(&card, "### Experimental");
         for needle in ["GPU", "#27", "v1.0.0", "multimodal"] {
@@ -225,6 +234,19 @@ mod tests {
                 "Experimental matrix missing {needle}"
             );
         }
+    }
+
+    #[test]
+    fn clean_env_doc_matches_pruebas_workflow() {
+        let doc = docs("clean-env.md");
+        let wf = fs::read_to_string(root().join(".github/workflows/pruebas.yml"))
+            .expect("pruebas.yml");
+        for needle in CLEAN_ENV {
+            assert!(doc.contains(needle), "docs/clean-env.md missing {needle}");
+            assert!(wf.contains(needle), "pruebas.yml missing {needle}");
+        }
+        assert!(doc.contains("cli smoke"));
+        assert!(wf.contains("name: cli smoke"));
     }
 
     #[test]
@@ -323,6 +345,7 @@ mod tests {
             "rc-gate.md",
             "release-check",
             "model-card.md",
+            "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }
