@@ -19,8 +19,9 @@ auralis eval [checkpoint]
 auralis chat [checkpoint]
 auralis check
 auralis bpe
-auralis numeric [--fixture NAME | TOKENS...]
 ```
+
+Binario auxiliar (no está en `fn usage()`): `cargo run --release --bin auralis_numeric`.
 
 ## Flags reconocidos
 
