@@ -127,6 +127,21 @@ mod tests {
         }
         assert!(root().join("VISION.md").is_file());
         assert!(root().join("ROADMAP.md").is_file());
+        assert!(root().join("examples/tiny.cfg").is_file());
+    }
+
+    #[test]
+    fn example_config_loads_and_matches_schema() {
+        let cfg = crate::run_config::RunConfig::load(root().join("examples/tiny.cfg"))
+            .expect("examples/tiny.cfg");
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(cfg.seed, 659_918);
+        assert_eq!(cfg.batch_size, 4);
+        assert_eq!(cfg.gradient_accumulation_steps, 1);
+        assert_eq!(cfg.bpe_merges, 64);
+        cfg.validate().unwrap();
+        assert!(docs("verify.md").contains("examples/tiny.cfg"));
+        assert!(docs("cli.md").contains("examples/tiny.cfg"));
     }
 
     #[test]
@@ -205,6 +220,7 @@ mod tests {
             "bench list --json",
             "sec-audit",
             "cli.md",
+            "examples/tiny.cfg",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }

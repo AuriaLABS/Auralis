@@ -23,6 +23,7 @@ Verbos y flags: [cli.md](cli.md).
 ```bash
 cargo test
 cargo run --release -- check
+cargo run --release -- config examples/tiny.cfg
 cargo run --release -- train-fresh 2 /tmp/auralis-verify.bin 659918 2 1
 cargo run --release -- inspect /tmp/auralis-verify.bin
 cargo run --release -- bench list --json
@@ -50,6 +51,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/bench-registry.md` | verbos `bench list/describe` y flags |
 | `docs/sec-unsafe.md` | límites y `EXPECTED_UNSAFE_BLOCKS == 0` |
 | `docs/cli.md` | verbos presentes en `fn usage()` |
+| `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
 | esta página | gates, snippet Rust y comandos |
 

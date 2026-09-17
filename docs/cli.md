@@ -27,4 +27,6 @@ auralis bpe
 
 `--json` y `--csv` son exclusivos en `bench`.
 
+Config de ejemplo (schema 1): [`examples/tiny.cfg`](../examples/tiny.cfg).
+
 Cómo ejecutarlos: [verify.md](verify.md).
