@@ -119,6 +119,7 @@ mod tests {
             "sec-unsafe.md",
             "verify.md",
             "cli.md",
+            "versions.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
         ] {
@@ -128,6 +129,25 @@ mod tests {
         assert!(root().join("VISION.md").is_file());
         assert!(root().join("ROADMAP.md").is_file());
         assert!(root().join("examples/tiny.cfg").is_file());
+    }
+
+    #[test]
+    fn documented_versions_match_code() {
+        let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("version = \"0.1.0\""));
+        assert!(cargo.contains("edition = \"2021\""));
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::manifest::MANIFEST_VERSION, 4);
+        let versions = docs("versions.md");
+        for needle in [
+            "`0.1.0`",
+            "`2021`",
+            "RUN_CONFIG_SCHEMA_VERSION = 1",
+            "MANIFEST_VERSION = 4",
+        ] {
+            assert!(versions.contains(needle), "docs/versions.md missing {needle}");
+        }
     }
 
     #[test]
@@ -204,6 +224,7 @@ mod tests {
             "ROADMAP.md",
             "docs/verify.md",
             "docs/cli.md",
+            "docs/versions.md",
         ] {
             assert!(text.contains(needle), "README.md missing {needle}");
         }
@@ -221,6 +242,7 @@ mod tests {
             "sec-audit",
             "cli.md",
             "examples/tiny.cfg",
+            "versions.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
         }
