@@ -1,9 +1,9 @@
 //! Experimental SIMD dispatch for Engine E3.5.
 //!
 //! SIMD is never required to execute Auralis. `Portable` always remains
-//! available and `Auto` only selects AVX2 after runtime feature detection.
-//! This module is deliberately isolated from the production model path until
-//! equivalence and benchmarks justify promotion.
+//! available and `Auto` only selects AVX2 after runtime feature detection and
+//! for shapes with measured material wins. This module stays isolated from the
+//! production model path until equivalence and benchmarks justify promotion.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SimdBackend {
@@ -40,11 +40,20 @@ pub fn avx2_supported() -> bool {
     }
 }
 
-pub fn resolve_backend(backend: SimdBackend) -> Result<ResolvedSimdBackend, &'static str> {
+pub fn resolve_backend(
+    backend: SimdBackend,
+    rows: usize,
+    inner: usize,
+    cols: usize,
+) -> Result<ResolvedSimdBackend, &'static str> {
     match backend {
         SimdBackend::Portable => Ok(ResolvedSimdBackend::Portable),
         SimdBackend::Auto => {
-            if avx2_supported() {
+            let measured_win = matches!(
+                (rows, inner, cols),
+                (32, 32, 32) | (32, 32, 96) | (32, 96, 32)
+            );
+            if avx2_supported() && measured_win {
                 Ok(ResolvedSimdBackend::Avx2)
             } else {
                 Ok(ResolvedSimdBackend::Portable)
@@ -73,7 +82,7 @@ pub fn matmul_simd_into(
     assert_eq!(b.len(), inner * cols);
     assert_eq!(out.len(), rows * cols);
 
-    let resolved = resolve_backend(backend)?;
+    let resolved = resolve_backend(backend, rows, inner, cols)?;
     match resolved {
         ResolvedSimdBackend::Portable => {
             crate::kernels::matmul_reference_into(a, rows, inner, b, cols, out);
@@ -168,14 +177,37 @@ mod tests {
     }
 
     #[test]
-    fn auto_has_safe_fallback_and_exact_output() {
-        let expected = if avx2_supported() {
+    fn auto_selects_avx2_only_for_measured_wins() {
+        let selected = if avx2_supported() {
             ResolvedSimdBackend::Avx2
         } else {
             ResolvedSimdBackend::Portable
         };
-        assert_eq!(resolve_backend(SimdBackend::Auto).unwrap(), expected);
-        for shape in [(7, 8, 3), (16, 24, 71), (32, 32, 32), (32, 96, 32)] {
+        for shape in [(32, 32, 32), (32, 32, 96), (32, 96, 32)] {
+            assert_eq!(
+                resolve_backend(SimdBackend::Auto, shape.0, shape.1, shape.2).unwrap(),
+                selected
+            );
+        }
+        for shape in [(32, 32, 100), (128, 128, 128), (7, 8, 3), (16, 24, 71)] {
+            assert_eq!(
+                resolve_backend(SimdBackend::Auto, shape.0, shape.1, shape.2).unwrap(),
+                ResolvedSimdBackend::Portable
+            );
+        }
+    }
+
+    #[test]
+    fn auto_has_safe_fallback_and_exact_output() {
+        for shape in [
+            (7, 8, 3),
+            (16, 24, 71),
+            (32, 32, 32),
+            (32, 32, 96),
+            (32, 96, 32),
+            (32, 32, 100),
+            (128, 128, 128),
+        ] {
             assert_exact(SimdBackend::Auto, shape.0, shape.1, shape.2);
         }
     }
@@ -187,7 +219,7 @@ mod tests {
                 assert_exact(SimdBackend::Avx2, shape.0, shape.1, shape.2);
             }
         } else {
-            assert!(resolve_backend(SimdBackend::Avx2).is_err());
+            assert!(resolve_backend(SimdBackend::Avx2, 8, 8, 8).is_err());
         }
     }
 }
