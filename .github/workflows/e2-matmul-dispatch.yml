@@ -1,0 +1,38 @@
+name: E2 Matmul Dispatch
+
+on:
+  pull_request:
+    paths:
+      - 'src/matmul_dispatch.rs'
+      - 'src/bin/auralis_matmul_dispatch_bench.rs'
+      - '.github/workflows/e2-matmul-dispatch.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Dispatch tests
+        run: cargo test --lib matmul_dispatch::tests -- --nocapture
+      - name: Dispatch benchmark
+        run: |
+          set -euo pipefail
+          output="$(cargo run --release --bin auralis_matmul_dispatch_bench -- 5 80 7 2>&1)"
+          printf '%s\n' "$output" | tee /tmp/e2-matmul-dispatch.txt
+          test "$(grep -c '^dispatch_result |' /tmp/e2-matmul-dispatch.txt)" -eq 4
+          grep -q 'shape=32x32x100 resolved=Reference' /tmp/e2-matmul-dispatch.txt
+      - name: Publish dispatch summary
+        run: |
+          {
+            echo '## E2 selective matmul dispatch'
+            echo
+            echo 'Lower `auto_over_reference` is better; Auto must keep 32x32x100 on Reference.'
+            echo
+            echo '```text'
+            grep '^dispatch_result |' /tmp/e2-matmul-dispatch.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
