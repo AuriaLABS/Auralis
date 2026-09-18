@@ -115,3 +115,16 @@ jobs:
         run: |
           cargo run --release --bin auralis_matmul_bench -- 2 10 3
           cargo run --release --bin auralis_engine_bench -- 2 8 3
+
+  worker_pool_v2:
+    if: github.event_name == 'pull_request'
+    name: E3 worker pool v2 evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: exactness
+        run: cargo test --lib worker_pool::
+      - name: benchmark
+        run: cargo run --release --bin auralis_worker_pool_v2_bench -- 3 20 5
