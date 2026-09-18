@@ -1065,26 +1065,68 @@ mod tests {
 
     #[test]
     fn eval_forward_matches_training_forward_logits_exactly() {
-        let cfg = Config {
-            vocab: 11,
-            n_embd: 8,
-            n_head: 2,
-            n_layer: 2,
-            block: 4,
-            n_ff: 16,
-        };
-        let mut rng = StdRng::seed_from_u64(0xA11CE_2703);
-        let gpt = Gpt::new(cfg, &mut rng);
-        let tokens = [0usize, 1, 2, 3];
+        let cases = [
+            (
+                Config {
+                    vocab: 7,
+                    n_embd: 4,
+                    n_head: 1,
+                    n_layer: 1,
+                    block: 3,
+                    n_ff: 8,
+                },
+                0xA11CE_2701,
+            ),
+            (
+                Config {
+                    vocab: 11,
+                    n_embd: 8,
+                    n_head: 2,
+                    n_layer: 2,
+                    block: 4,
+                    n_ff: 16,
+                },
+                0xA11CE_2702,
+            ),
+            (
+                Config {
+                    vocab: 13,
+                    n_embd: 12,
+                    n_head: 3,
+                    n_layer: 3,
+                    block: 5,
+                    n_ff: 24,
+                },
+                0xA11CE_2703,
+            ),
+            (
+                Config {
+                    vocab: 17,
+                    n_embd: 16,
+                    n_head: 4,
+                    n_layer: 2,
+                    block: 6,
+                    n_ff: 32,
+                },
+                0xA11CE_2704,
+            ),
+        ];
 
-        for len in 1..=cfg.block {
-            let input = &tokens[..len];
-            let eval_logits = gpt.forward_eval(input);
-            let (training_logits, _) = gpt.forward_internal(input);
-            assert_eq!(
-                eval_logits, training_logits,
-                "eval/training logits diverged at context length {len}"
-            );
+        for (cfg, seed) in cases {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let gpt = Gpt::new(cfg, &mut rng);
+            let tokens: Vec<usize> = (0..cfg.block).map(|i| (i * 3 + 1) % cfg.vocab).collect();
+
+            for len in 1..=cfg.block {
+                let input = &tokens[..len];
+                let eval_logits = gpt.forward_eval(input);
+                let (training_logits, _) = gpt.forward_internal(input);
+                assert_eq!(
+                    eval_logits, training_logits,
+                    "eval/training logits diverged for seed={seed:#x}, heads={}, layers={}, context={len}",
+                    cfg.n_head, cfg.n_layer
+                );
+            }
         }
     }
 
