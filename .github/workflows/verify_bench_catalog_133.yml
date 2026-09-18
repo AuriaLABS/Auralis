@@ -1,0 +1,66 @@
+name: Verify Grok Bench Catalog
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify_bench_catalog_133.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Library tests
+        run: cargo test --lib bench bench_format
+      - name: CLI text/json/csv behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet -- bench list > /tmp/list.txt
+          cargo run --quiet -- bench list --json > /tmp/list.json
+          cargo run --quiet -- bench list --csv > /tmp/list.csv
+          cargo run --quiet -- bench describe engine > /tmp/describe.txt
+          cargo run --quiet -- bench describe engine --json > /tmp/describe.json
+          cargo run --quiet -- bench describe engine --csv > /tmp/describe.csv
+
+          set +e
+          cargo run --quiet -- bench list --json --csv >/tmp/both.out 2>/tmp/both.err
+          both_rc=$?
+          cargo run --quiet -- bench describe does-not-exist >/tmp/unknown.out 2>/tmp/unknown.err
+          unknown_rc=$?
+          set -e
+
+          test "$both_rc" -eq 2
+          test "$unknown_rc" -eq 2
+          grep -q '^bench-list | count=' /tmp/list.txt
+          grep -q '^id=engine$' /tmp/describe.txt
+
+          python3 - <<'PY'
+          import csv, json
+          from pathlib import Path
+
+          data = json.loads(Path("/tmp/list.json").read_text())
+          assert data["count"] == len(data["benches"]) >= 8
+          ids = [b["id"] for b in data["benches"]]
+          assert len(ids) == len(set(ids))
+          assert "engine" in ids
+
+          desc = json.loads(Path("/tmp/describe.json").read_text())
+          assert desc["id"] == "engine"
+          assert desc["bin"] == "auralis_engine_bench"
+
+          with open("/tmp/list.csv", newline="") as f:
+              rows = list(csv.DictReader(f))
+          assert len(rows) == data["count"]
+          assert any(r["id"] == "engine" for r in rows)
+
+          with open("/tmp/describe.csv", newline="") as f:
+              drows = list(csv.DictReader(f))
+          assert len(drows) == 1 and drows[0]["id"] == "engine"
+          print("bench_catalog_verify | text=ok json=ok csv=ok exit_codes=ok unique_ids=ok")
+          PY
