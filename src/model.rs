@@ -972,6 +972,8 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 #[cfg(test)]
 mod tests {
     use super::{BackwardWorkspace, Config, Gpt};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn params_roundtrip() {
@@ -1071,12 +1073,18 @@ mod tests {
             block: 4,
             n_ff: 16,
         };
-        let mut rng = rand::thread_rng();
+        let mut rng = StdRng::seed_from_u64(0xA11CE_2703);
         let gpt = Gpt::new(cfg, &mut rng);
-        for tokens in [&[0usize][..], &[0usize, 1, 2, 3][..]] {
-            let eval_logits = gpt.forward_eval(tokens);
-            let (training_logits, _) = gpt.forward_internal(tokens);
-            assert_eq!(eval_logits, training_logits);
+        let tokens = [0usize, 1, 2, 3];
+
+        for len in 1..=cfg.block {
+            let input = &tokens[..len];
+            let eval_logits = gpt.forward_eval(input);
+            let (training_logits, _) = gpt.forward_internal(input);
+            assert_eq!(
+                eval_logits, training_logits,
+                "eval/training logits diverged at context length {len}"
+            );
         }
     }
 
