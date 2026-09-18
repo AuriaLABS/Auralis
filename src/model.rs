@@ -283,6 +283,12 @@ impl Gpt {
         debug_assert_eq!(p, params.len());
     }
 
+    /// Compute vocabulary logits for every input position without constructing
+    /// backward-only caches. The returned tensor is row-major `[tokens, vocab]`.
+    pub fn logits(&self, tokens: &[usize]) -> Vec<f32> {
+        self.forward_eval(tokens)
+    }
+
     /// Mean next-token cross-entropy without constructing or propagating
     /// parameter gradients. This is the canonical evaluation path.
     pub fn loss(&self, x: &[usize], y: &[usize]) -> f32 {
@@ -291,7 +297,7 @@ impl Gpt {
         assert!(x.iter().all(|&t| t < self.cfg.vocab));
         assert!(y.iter().all(|&t| t < self.cfg.vocab));
 
-        let logits = self.forward_eval(x);
+        let logits = self.logits(x);
         let t = x.len();
         let v = self.cfg.vocab;
         let mut loss = 0.0f32;
@@ -459,7 +465,7 @@ impl Gpt {
         for _ in 0..n_tokens {
             let start = ids.len().saturating_sub(self.cfg.block);
             let ctx = &ids[start..];
-            let logits = self.forward_eval(ctx);
+            let logits = self.logits(ctx);
             let row = &logits[(ctx.len() - 1) * self.cfg.vocab..ctx.len() * self.cfg.vocab];
             let next = sample_logits(row, temperature, rng);
             ids.push(next);
@@ -1119,7 +1125,7 @@ mod tests {
 
             for len in 1..=cfg.block {
                 let input = &tokens[..len];
-                let eval_logits = gpt.forward_eval(input);
+                let eval_logits = gpt.logits(input);
                 let (training_logits, _) = gpt.forward_internal(input);
                 assert_eq!(
                     eval_logits, training_logits,
