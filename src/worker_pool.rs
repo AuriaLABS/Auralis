@@ -340,8 +340,9 @@ fn run_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::PersistentMatmulPool;
+    use super::{Completion, InputSource, MatmulJob, Message, PersistentMatmulPool};
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn data(n: usize, salt: usize) -> Vec<f32> {
         (0..n)
@@ -445,6 +446,30 @@ mod tests {
                 assert_eq!(out, expected);
             }
         }
+    }
+
+    #[test]
+    fn worker_panic_is_reported_instead_of_hanging_completion_wait() {
+        let pool = PersistentMatmulPool::new_for_test(2, 2);
+        pool.workers[0]
+            .tx
+            .send(Message::Matmul(MatmulJob {
+                row_start: 2,
+                row_end: 1,
+                inner: 1,
+                cols: 1,
+                input: InputSource::Buffered,
+            }))
+            .expect("worker command should be accepted");
+
+        let completion = pool
+            .completion_rx
+            .lock()
+            .expect("completion lock")
+            .recv_timeout(Duration::from_secs(1))
+            .expect("panicked worker must still report completion");
+
+        assert!(matches!(completion, Completion::Panicked(0)));
     }
 
     #[test]
