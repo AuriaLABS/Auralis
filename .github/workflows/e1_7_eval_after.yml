@@ -1,0 +1,17 @@
+name: E1.7 Eval Profile AFTER
+
+on:
+  pull_request:
+    paths:
+      - "src/model.rs"
+      - "src/bin/auralis_eval_profile.rs"
+      - ".github/workflows/e1_7_eval_after.yml"
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Eval allocation AFTER
+        run: cargo run --release --bin auralis_eval_profile -- 20
