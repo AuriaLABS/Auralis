@@ -291,7 +291,7 @@ impl Gpt {
         assert!(x.iter().all(|&t| t < self.cfg.vocab));
         assert!(y.iter().all(|&t| t < self.cfg.vocab));
 
-        let (logits, _) = self.forward_internal(x);
+        let logits = self.forward_eval(x);
         let t = x.len();
         let v = self.cfg.vocab;
         let mut loss = 0.0f32;
@@ -459,11 +459,53 @@ impl Gpt {
         for _ in 0..n_tokens {
             let start = ids.len().saturating_sub(self.cfg.block);
             let ctx = &ids[start..];
-            let (logits, _) = self.forward_internal(ctx);
+            let logits = self.forward_eval(ctx);
             let row = &logits[(ctx.len() - 1) * self.cfg.vocab..ctx.len() * self.cfg.vocab];
             let next = sample_logits(row, temperature, rng);
             ids.push(next);
         }
+    }
+
+    /// Forward path for evaluation/inference. It preserves the training-forward
+    /// arithmetic order but does not materialize caches used only by backward.
+    fn forward_eval(&self, tokens: &[usize]) -> Vec<f32> {
+        assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
+        let t = tokens.len();
+        let d = self.cfg.n_embd;
+        let mut x = vec![0.0; t * d];
+        for i in 0..t {
+            let tok = tokens[i];
+            assert!(tok < self.cfg.vocab);
+            for j in 0..d {
+                x[i * d + j] = self.tok_emb[tok * d + j] + self.pos_emb[i * d + j];
+            }
+        }
+
+        for b in &self.blocks {
+            let h1 = layernorm_eval(&x, t, d, &b.ln1_g, &b.ln1_b);
+            let q = matmul(&h1, t, d, &b.wq, d);
+            let k = matmul(&h1, t, d, &b.wk, d);
+            let v = matmul(&h1, t, d, &b.wv, d);
+            let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head);
+            let mut proj = matmul(&att, t, d, &b.wo, d);
+            let mut r1 = x;
+            add_inplace(&mut r1, &proj);
+
+            let h2 = layernorm_eval(&r1, t, d, &b.ln2_g, &b.ln2_b);
+            let mut ff_pre = matmul(&h2, t, d, &b.w1, self.cfg.n_ff);
+            add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
+            let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
+            matmul_into(&ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
+            add_bias_inplace(&mut proj, t, d, &b.b2);
+            let mut out = r1;
+            add_inplace(&mut out, &proj);
+            x = out;
+        }
+
+        let h_final = layernorm_eval(&x, t, d, &self.ln_f_g, &self.ln_f_b);
+        let mut logits = matmul(&h_final, t, d, &self.w_out, self.cfg.vocab);
+        add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
+        logits
     }
 
     fn forward_internal(&self, tokens: &[usize]) -> (Vec<f32>, ForwardCache) {
@@ -679,6 +721,35 @@ fn matmul_b_t_add_into(
     crate::kernels::matmul_b_t_row_slices_add_into(dy, rows, out_cols, b, result_cols, out);
 }
 
+fn layernorm_eval(
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    gamma: &[f32],
+    beta: &[f32],
+) -> Vec<f32> {
+    const EPS: f32 = 1e-5;
+    let mut y = vec![0.0; x.len()];
+    for i in 0..rows {
+        let row = &x[i * cols..(i + 1) * cols];
+        let mean = row.iter().sum::<f32>() / cols as f32;
+        let var = row
+            .iter()
+            .map(|v| {
+                let z = *v - mean;
+                z * z
+            })
+            .sum::<f32>()
+            / cols as f32;
+        let inv = 1.0 / (var + EPS).sqrt();
+        for j in 0..cols {
+            let h = (x[i * cols + j] - mean) * inv;
+            y[i * cols + j] = h * gamma[j] + beta[j];
+        }
+    }
+    y
+}
+
 fn layernorm_forward(
     x: &[f32],
     rows: usize,
@@ -750,6 +821,61 @@ fn layernorm_backward(
         }
     }
     (dx, dgamma, dbeta)
+}
+
+fn attention_eval(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+) -> Vec<f32> {
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert!(n_head > 0 && d % n_head == 0);
+
+    let mut out = vec![0.0; t * d];
+    let mut scores = vec![0.0; t];
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+
+    for h in 0..n_head {
+        let hoff = h * hd;
+        for i in 0..t {
+            let q_head = &q[i * d + hoff..i * d + hoff + hd];
+            let mut max_score = f32::NEG_INFINITY;
+            for j in 0..=i {
+                let k_head = &k[j * d + hoff..j * d + hoff + hd];
+                let mut s = 0.0f32;
+                for (&qv, &kv) in q_head.iter().zip(k_head) {
+                    s += qv * kv;
+                }
+                s *= scale;
+                scores[j] = s;
+                max_score = max_score.max(s);
+            }
+
+            let mut sum = 0.0f32;
+            for score in &mut scores[..=i] {
+                let e = (*score - max_score).exp();
+                *score = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            let out_head = &mut out[i * d + hoff..i * d + hoff + hd];
+            for j in 0..=i {
+                scores[j] *= inv;
+                let p = scores[j];
+                let v_head = &v[j * d + hoff..j * d + hoff + hd];
+                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                    *dst += p * vv;
+                }
+            }
+        }
+    }
+    out
 }
 
 fn attention_forward(
@@ -932,6 +1058,25 @@ mod tests {
             let reused_loss = gpt.backward_into_reuse(&x, &y, &mut reused, &mut workspace);
             assert_eq!(reused_loss, reference_loss);
             assert_eq!(reused, reference);
+        }
+    }
+
+    #[test]
+    fn eval_forward_matches_training_forward_logits_exactly() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = rand::thread_rng();
+        let gpt = Gpt::new(cfg, &mut rng);
+        for tokens in [&[0usize][..], &[0usize, 1, 2, 3][..]] {
+            let eval_logits = gpt.forward_eval(tokens);
+            let (training_logits, _) = gpt.forward_internal(tokens);
+            assert_eq!(eval_logits, training_logits);
         }
     }
 
