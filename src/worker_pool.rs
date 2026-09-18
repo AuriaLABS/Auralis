@@ -36,6 +36,11 @@ enum Message {
     Shutdown,
 }
 
+enum Completion {
+    Ok(usize),
+    Panicked(usize),
+}
+
 struct Worker {
     tx: mpsc::SyncSender<Message>,
     scratch: Arc<Mutex<Vec<f32>>>,
@@ -74,7 +79,8 @@ impl PersistentMatmulPool {
 
         let effective_threads = requested_threads.min(available_threads).min(8).max(1);
         let inputs = Arc::new(RwLock::new(InputBuffers::default()));
-        let (completion_tx, completion_rx) = mpsc::sync_channel::<usize>(effective_threads);
+        let (completion_tx, completion_rx) =
+            mpsc::sync_channel::<Completion>(effective_threads);
         let mut workers = Vec::with_capacity(effective_threads);
 
         for worker_id in 0..effective_threads {
@@ -88,8 +94,17 @@ impl PersistentMatmulPool {
                 while let Ok(message) = rx.recv() {
                     match message {
                         Message::Matmul(job) => {
-                            run_job(job, &worker_inputs, &worker_scratch);
-                            if done.send(worker_id).is_err() {
+                            let outcome = std::panic::catch_unwind(
+                                std::panic::AssertUnwindSafe(|| {
+                                    run_job(job, &worker_inputs, &worker_scratch)
+                                }),
+                            );
+                            let completion = if outcome.is_ok() {
+                                Completion::Ok(worker_id)
+                            } else {
+                                Completion::Panicked(worker_id)
+                            };
+                            if done.send(completion).is_err() || outcome.is_err() {
                                 break;
                             }
                         }
@@ -228,9 +243,15 @@ impl PersistentMatmulPool {
             .lock()
             .expect("worker completion mutex poisoned");
         for _ in 0..chunk_count {
-            let worker_id = completion_rx
+            let worker_id = match completion_rx
                 .recv()
-                .expect("worker failed before reporting completion");
+                .expect("worker failed before reporting completion")
+            {
+                Completion::Ok(worker_id) => worker_id,
+                Completion::Panicked(worker_id) => {
+                    panic!("worker {worker_id} panicked while executing matmul")
+                }
+            };
             let row_start = worker_id * rows / chunk_count;
             let row_end = (worker_id + 1) * rows / chunk_count;
             let scratch = self.workers[worker_id]
