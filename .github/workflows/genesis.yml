@@ -168,3 +168,9 @@ jobs:
           grep -q 'calls_per_iteration=2' <<< "$summary"
           grep -q 'exact_output=true' <<< "$summary"
           grep -q 'repeats=5' <<< "$summary"
+
+      - name: E3 worker pool v2 evidence (temporary)
+        shell: bash
+        run: |
+          cargo test --lib worker_pool::
+          cargo run --release --bin auralis_worker_pool_v2_bench -- 3 20 5
