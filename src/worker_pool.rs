@@ -261,32 +261,56 @@ fn run_job(
     buffered_inputs: &Arc<RwLock<InputBuffers>>,
     scratch: &Arc<Mutex<Vec<f32>>>,
 ) {
-    match job.input {
+    let MatmulJob {
+        row_start,
+        row_end,
+        inner,
+        cols,
+        input,
+    } = job;
+
+    match input {
         InputSource::Shared { a, b } => {
-            run_rows(&a, &b, &job, scratch);
+            run_rows(&a, &b, row_start, row_end, inner, cols, scratch);
         }
         InputSource::Buffered => {
             let inputs = buffered_inputs.read().expect("worker input lock poisoned");
-            run_rows(&inputs.a, &inputs.b, &job, scratch);
+            run_rows(
+                &inputs.a,
+                &inputs.b,
+                row_start,
+                row_end,
+                inner,
+                cols,
+                scratch,
+            );
         }
     }
 }
 
-fn run_rows(a: &[f32], b: &[f32], job: &MatmulJob, scratch: &Arc<Mutex<Vec<f32>>>) {
-    let rows = job.row_end - job.row_start;
-    let needed = rows * job.cols;
+fn run_rows(
+    a: &[f32],
+    b: &[f32],
+    row_start: usize,
+    row_end: usize,
+    inner: usize,
+    cols: usize,
+    scratch: &Arc<Mutex<Vec<f32>>>,
+) {
+    let rows = row_end - row_start;
+    let needed = rows * cols;
     let mut out = scratch.lock().expect("worker scratch mutex poisoned");
     out.resize(needed, 0.0);
     out[..needed].fill(0.0);
 
     for local_row in 0..rows {
-        let global_row = job.row_start + local_row;
-        let a_row = &a[global_row * job.inner..(global_row + 1) * job.inner];
-        let out_row = &mut out[local_row * job.cols..(local_row + 1) * job.cols];
-        for k in 0..job.inner {
+        let global_row = row_start + local_row;
+        let a_row = &a[global_row * inner..(global_row + 1) * inner];
+        let out_row = &mut out[local_row * cols..(local_row + 1) * cols];
+        for k in 0..inner {
             let av = a_row[k];
-            let b_row = &b[k * job.cols..(k + 1) * job.cols];
-            for j in 0..job.cols {
+            let b_row = &b[k * cols..(k + 1) * cols];
+            for j in 0..cols {
                 out_row[j] += av * b_row[j];
             }
         }
