@@ -1,0 +1,24 @@
+name: E3 Worker Pool v2
+
+on:
+  pull_request:
+    paths:
+      - "src/worker_pool.rs"
+      - "src/bin/auralis_worker_pool_v2_bench.rs"
+      - "src/lib.rs"
+      - ".github/workflows/e3-worker-pool-v2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Worker pool exactness tests
+        run: cargo test --lib worker_pool::
+      - name: Worker pool release benchmark
+        run: cargo run --release --bin auralis_worker_pool_v2_bench -- 3 20 5
