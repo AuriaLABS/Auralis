@@ -59,7 +59,7 @@ pub struct PersistentMatmulPool {
     workers: Vec<Worker>,
     inputs: Arc<RwLock<InputBuffers>>,
     call_lock: Mutex<()>,
-    completion_rx: Mutex<mpsc::Receiver<usize>>,
+    completion_rx: Mutex<mpsc::Receiver<Completion>>,
 }
 
 impl PersistentMatmulPool {
