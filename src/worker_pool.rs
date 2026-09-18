@@ -205,11 +205,11 @@ impl PersistentMatmulPool {
     ) {
         out.fill(0.0);
         let chunk_count = self.effective_threads.min(rows);
-        let chunk_rows = rows.div_ceil(chunk_count);
 
         for worker_id in 0..chunk_count {
-            let row_start = worker_id * chunk_rows;
-            let row_end = (row_start + chunk_rows).min(rows);
+            let row_start = worker_id * rows / chunk_count;
+            let row_end = (worker_id + 1) * rows / chunk_count;
+            debug_assert!(row_start < row_end);
             let job = MatmulJob {
                 row_start,
                 row_end,
@@ -231,8 +231,8 @@ impl PersistentMatmulPool {
             let worker_id = completion_rx
                 .recv()
                 .expect("worker failed before reporting completion");
-            let row_start = worker_id * chunk_rows;
-            let row_end = (row_start + chunk_rows).min(rows);
+            let row_start = worker_id * rows / chunk_count;
+            let row_end = (worker_id + 1) * rows / chunk_count;
             let scratch = self.workers[worker_id]
                 .scratch
                 .lock()
@@ -394,6 +394,20 @@ mod tests {
                 assert_eq!(shared, expected);
             }
         }
+    }
+
+    #[test]
+    fn uneven_rows_are_partitioned_without_empty_or_reversed_chunks() {
+        let (rows, inner, cols) = (33, 17, 19);
+        let a = data(rows * inner, 23);
+        let b = data(inner * cols, 29);
+        let expected = reference(&a, rows, inner, &b, cols);
+        let pool = PersistentMatmulPool::new_for_test(8, 8);
+        let mut out = vec![f32::NAN; rows * cols];
+
+        pool.matmul_slices_into(&a, rows, inner, &b, cols, &mut out);
+
+        assert_eq!(out, expected);
     }
 
     #[test]
