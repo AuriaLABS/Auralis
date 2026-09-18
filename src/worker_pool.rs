@@ -37,7 +37,7 @@ enum Message {
 }
 
 struct Worker {
-    tx: mpsc::Sender<Message>,
+    tx: mpsc::SyncSender<Message>,
     scratch: Arc<Mutex<Vec<f32>>>,
     join: Option<JoinHandle<()>>,
 }
@@ -74,11 +74,11 @@ impl PersistentMatmulPool {
 
         let effective_threads = requested_threads.min(available_threads).min(8).max(1);
         let inputs = Arc::new(RwLock::new(InputBuffers::default()));
-        let (completion_tx, completion_rx) = mpsc::channel::<usize>();
+        let (completion_tx, completion_rx) = mpsc::sync_channel::<usize>(effective_threads);
         let mut workers = Vec::with_capacity(effective_threads);
 
         for worker_id in 0..effective_threads {
-            let (tx, rx) = mpsc::channel::<Message>();
+            let (tx, rx) = mpsc::sync_channel::<Message>(1);
             let scratch = Arc::new(Mutex::new(Vec::<f32>::new()));
             let worker_scratch = Arc::clone(&scratch);
             let worker_inputs = Arc::clone(&inputs);
