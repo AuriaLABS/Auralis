@@ -778,41 +778,24 @@ fn attention_backward(
     d: usize,
     n_head: usize,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let hd = d / n_head;
-    let scale = 1.0 / (hd as f32).sqrt();
     let mut dq = vec![0.0; t * d];
     let mut dk = vec![0.0; t * d];
     let mut dv = vec![0.0; t * d];
     let mut dp = vec![0.0; t];
-
-    for h in 0..n_head {
-        let hoff = h * hd;
-        for i in 0..t {
-            dp[..=i].fill(0.0);
-            for j in 0..=i {
-                let p = probs[(h * t + i) * t + j];
-                for z in 0..hd {
-                    let go = dout[i * d + hoff + z];
-                    dp[j] += go * v[j * d + hoff + z];
-                    dv[j * d + hoff + z] += p * go;
-                }
-            }
-            let mut dot = 0.0;
-            for j in 0..=i {
-                dot += dp[j] * probs[(h * t + i) * t + j];
-            }
-            for j in 0..=i {
-                let p = probs[(h * t + i) * t + j];
-                let ds = p * (dp[j] - dot) * scale;
-                for z in 0..hd {
-                    let qi = q[i * d + hoff + z];
-                    let kj = k[j * d + hoff + z];
-                    dq[i * d + hoff + z] += ds * kj;
-                    dk[j * d + hoff + z] += ds * qi;
-                }
-            }
-        }
-    }
+    crate::kernels::attention_backward_row_slices_into(
+        dout,
+        q,
+        k,
+        v,
+        probs,
+        t,
+        d,
+        n_head,
+        &mut dq,
+        &mut dk,
+        &mut dv,
+        &mut dp,
+    );
     (dq, dk, dv)
 }
 
