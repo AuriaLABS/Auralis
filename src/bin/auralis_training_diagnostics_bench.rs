@@ -119,7 +119,7 @@ fn time_baseline(tokens: &[usize], steps: usize, repeats: usize) -> f64 {
 fn time_diagnostics(tokens: &[usize], steps: usize, repeats: usize) -> f64 {
     let mut samples = Vec::with_capacity(repeats);
     for repeat in 0..repeats {
-        let mut gpt = model(0xA11CE_9200 + repeat as u64);
+        let mut gpt = model(0xA11CE_9100 + repeat as u64);
         let n = gpt.collect_params().len();
         let mut adam = Adam::new(n, 3e-3);
         let mut grads = vec![0.0; n];
