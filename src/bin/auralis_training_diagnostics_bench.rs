@@ -116,6 +116,34 @@ fn time_baseline(tokens: &[usize], steps: usize, repeats: usize) -> f64 {
     median(samples)
 }
 
+fn time_diagnostics_off(tokens: &[usize], steps: usize, repeats: usize) -> f64 {
+    let mut samples = Vec::with_capacity(repeats);
+    for repeat in 0..repeats {
+        let mut gpt = model(0xA11CE_9100 + repeat as u64);
+        let n = gpt.collect_params().len();
+        let mut adam = Adam::new(n, 3e-3);
+        let mut grads = vec![0.0; n];
+        let mut workspace = TrainWorkspace::new(&gpt);
+        let start = Instant::now();
+        for step in 0..steps {
+            let (_, report) = train_step_reuse_diagnostics(
+                &mut gpt,
+                &mut adam,
+                tokens,
+                train_config(),
+                step as u64,
+                &mut grads,
+                &mut workspace,
+                Diagnostics::off(),
+            )
+            .expect("diagnostics-off wrapper step");
+            assert!(report.is_none());
+        }
+        samples.push(start.elapsed().as_secs_f64() * 1e9 / steps as f64);
+    }
+    median(samples)
+}
+
 fn time_diagnostics(tokens: &[usize], steps: usize, repeats: usize) -> f64 {
     let mut samples = Vec::with_capacity(repeats);
     for repeat in 0..repeats {
@@ -153,12 +181,15 @@ fn main() {
     assert_clean_equivalence(&tokens);
 
     let baseline = time_baseline(&tokens, steps, repeats);
+    let diagnostics_off = time_diagnostics_off(&tokens, steps, repeats);
     let diagnostics = time_diagnostics(&tokens, steps, repeats);
     println!(
-        "training_diagnostics_bench | steps={} repeats={} baseline_ns_per_step={:.3} diagnostics_ns_per_step={:.3} diagnostics_over_baseline={:.4}",
+        "training_diagnostics_bench | steps={} repeats={} baseline_ns_per_step={:.3} off_wrapper_ns_per_step={:.3} off_over_baseline={:.4} diagnostics_ns_per_step={:.3} diagnostics_over_baseline={:.4}",
         steps,
         repeats,
         baseline,
+        diagnostics_off,
+        diagnostics_off / baseline,
         diagnostics,
         diagnostics / baseline
     );
