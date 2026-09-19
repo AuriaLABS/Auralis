@@ -107,6 +107,12 @@ jobs:
           candidate_reallocs = stable_counter(candidate, 3, "candidate realloc_calls")
           base_realloc_bytes = stable_counter(base, 4, "base realloc_new_bytes")
           candidate_realloc_bytes = stable_counter(candidate, 4, "candidate realloc_new_bytes")
+          base_work_tokens = stable_counter(base, 7, "base work_tokens")
+          candidate_work_tokens = stable_counter(candidate, 7, "candidate work_tokens")
+          if base_work_tokens != candidate_work_tokens:
+              raise SystemExit(
+                  f"base/candidate workload mismatch: {base_work_tokens} vs {candidate_work_tokens}"
+              )
 
           base_s = statistics.median(row[0] for row in base)
           candidate_s = statistics.median(row[0] for row in candidate)
@@ -130,6 +136,7 @@ jobs:
               f"base_reallocs={base_reallocs} candidate_reallocs={candidate_reallocs} "
               f"base_realloc_bytes={base_realloc_bytes} "
               f"candidate_realloc_bytes={candidate_realloc_bytes} "
+              f"work_tokens={base_work_tokens} "
               f"base_median_s={base_s:.9f} candidate_median_s={candidate_s:.9f} "
               f"speed_ratio={speed_ratio:.4f} "
               f"base_tok_per_s={base_tps:.3f} candidate_tok_per_s={candidate_tps:.3f} "
