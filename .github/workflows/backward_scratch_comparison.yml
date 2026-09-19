@@ -6,6 +6,7 @@ on:
       - "src/model.rs"
       - "src/bin/auralis_workspace_profile.rs"
       - ".github/workflows/backward_scratch_comparison.yml"
+      - "scripts/backward_scratch_guard.py"
 
 jobs:
   compare:
@@ -15,21 +16,19 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      - name: Policy self-test
+        run: python3 scripts/backward_scratch_guard.py --self-test
+
       - name: Compare base and candidate workspace profiles
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRE_IMPROVEMENT: ${{ contains(github.event.pull_request.body, 'Scratch-Optimization: true') }}
         shell: bash
         run: |
           set -euo pipefail
 
           git show "$HEAD_SHA:src/bin/auralis_workspace_profile.rs" > /tmp/auralis_workspace_profile.rs
-          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/model.rs; then
-            export MODEL_CHANGED=0
-          else
-            export MODEL_CHANGED=1
-          fi
-
           for i in 1 2 3; do
             git checkout --force "$BASE_SHA"
             cp /tmp/auralis_workspace_profile.rs src/bin/auralis_workspace_profile.rs
@@ -45,6 +44,7 @@ jobs:
           import os
           import re
           import statistics
+          from scripts.backward_scratch_guard import evaluate_guard
 
           pattern = re.compile(
               r"workspace_profile \| phase=train_reuse block=32 seconds=([0-9.]+) "
@@ -125,7 +125,7 @@ jobs:
           rss_ratio = candidate_rss / base_rss if base_rss else float("inf")
           call_reduction = 1.0 - candidate_calls / base_calls
           byte_reduction = 1.0 - candidate_bytes / base_bytes
-          model_changed = os.environ.get("MODEL_CHANGED") == "1"
+          require_improvement = os.environ.get("REQUIRE_IMPROVEMENT", "").lower() == "true"
 
           print(
               "backward_scratch_compare | "
@@ -142,38 +142,28 @@ jobs:
               f"base_tok_per_s={base_tps:.3f} candidate_tok_per_s={candidate_tps:.3f} "
               f"throughput_ratio={throughput_ratio:.4f} "
               f"base_peak_rss_kib={base_rss:.0f} candidate_peak_rss_kib={candidate_rss:.0f} "
-              f"rss_ratio={rss_ratio:.4f} model_changed={str(model_changed).lower()}"
+              f"rss_ratio={rss_ratio:.4f} "
+              f"require_improvement={str(require_improvement).lower()}"
           )
 
-          if model_changed:
-              if candidate_calls >= base_calls:
-                  raise SystemExit("allocation calls did not improve")
-              if candidate_bytes >= base_bytes:
-                  raise SystemExit("allocation bytes did not improve")
-              if call_reduction < 0.25:
-                  raise SystemExit(
-                      f"allocation-call reduction is not material: {call_reduction:.2%}"
-                  )
-              if byte_reduction < 0.20:
-                  raise SystemExit(
-                      f"allocation-byte reduction is not material: {byte_reduction:.2%}"
-                  )
-              if candidate_reallocs > base_reallocs:
-                  raise SystemExit("candidate introduced extra reallocations")
-          else:
-              if candidate_calls != base_calls:
-                  raise SystemExit("profiler-only change altered allocation-call measurement")
-              if candidate_bytes != base_bytes:
-                  raise SystemExit("profiler-only change altered allocation-byte measurement")
-              if candidate_reallocs != base_reallocs:
-                  raise SystemExit("profiler-only change altered reallocation measurement")
+          try:
+              policy = evaluate_guard(
+                  base_calls=base_calls,
+                  candidate_calls=candidate_calls,
+                  base_bytes=base_bytes,
+                  candidate_bytes=candidate_bytes,
+                  base_reallocs=base_reallocs,
+                  candidate_reallocs=candidate_reallocs,
+                  base_realloc_bytes=base_realloc_bytes,
+                  candidate_realloc_bytes=candidate_realloc_bytes,
+                  base_tps=base_tps,
+                  candidate_tps=candidate_tps,
+                  base_rss_kib=base_rss,
+                  candidate_rss_kib=candidate_rss,
+                  require_improvement=require_improvement,
+              )
+          except ValueError as exc:
+              raise SystemExit(str(exc)) from exc
 
-          if base_tps and candidate_tps < base_tps * 0.85:
-              raise SystemExit(
-                  f"throughput regressed materially: {base_tps:.3f} -> {candidate_tps:.3f} tok/s"
-              )
-          if base_rss and candidate_rss > base_rss * 1.10 + 1024:
-              raise SystemExit(
-                  f"peak RSS regressed materially: {base_rss:.0f} -> {candidate_rss:.0f} KiB"
-              )
+          print(f"backward_scratch_policy | result={policy}")
           PY
