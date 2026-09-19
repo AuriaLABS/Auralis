@@ -8,6 +8,8 @@ use crate::batch::{
     deterministic_batch_from_stream,
 };
 use crate::model::{BackwardWorkspace, Gpt};
+use crate::numeric::{explain, Diagnostics, Scan, Stage};
+use crate::numeric_state::{fault_context, summarize_training_state, TrainingStateSummary};
 use crate::optim::Adam;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -59,6 +61,13 @@ pub struct StepMetrics {
     pub tokens: usize,
     pub microbatches: usize,
     pub effective_batch_size: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrainingDiagnosticsReport {
+    pub loss: Scan,
+    pub pre_optimizer: TrainingStateSummary,
+    pub post_optimizer: TrainingStateSummary,
 }
 
 /// Reusable Engine buffers that sit outside the optimizer-step hot path.
@@ -222,6 +231,130 @@ pub fn train_step_reuse(
     )
 }
 
+/// Opt-in Engine training step with numerical diagnostics.
+///
+/// The existing `train_step_reuse` remains the production diagnostics-off path
+/// unchanged. Passing `Diagnostics::off()` here delegates directly to that
+/// path. Enabled mode checks loss first, then gradients/parameters/Adam state
+/// before and after the optimizer update, and returns contextual first-fault
+/// errors without changing arithmetic on clean runs.
+pub fn train_step_reuse_diagnostics(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    train_tokens: &[usize],
+    cfg: TrainConfig,
+    global_step: u64,
+    grads: &mut [f32],
+    workspace: &mut TrainWorkspace,
+    diagnostics: Diagnostics,
+) -> Result<(StepMetrics, Option<TrainingDiagnosticsReport>), String> {
+    if !diagnostics.enabled {
+        let metrics = train_step_reuse(
+            gpt,
+            adam,
+            train_tokens,
+            cfg,
+            global_step,
+            grads,
+            workspace,
+        )
+        .map_err(str::to_string)?;
+        return Ok((metrics, None));
+    }
+
+    cfg.validate().map_err(str::to_string)?;
+    let effective_batch_size = cfg.effective_batch_size().map_err(str::to_string)?;
+    if !workspace.matches(gpt, grads.len()) {
+        return Err("training workspace has wrong size or model config".into());
+    }
+
+    grads.fill(0.0);
+    let mut loss_sum = 0.0f32;
+    for micro in 0..cfg.gradient_accumulation_steps {
+        let stream_offset = (micro as u64)
+            .checked_mul(cfg.batch_size as u64)
+            .ok_or_else(|| "batch stream overflow".to_string())?;
+        loss_sum += backward_deterministic_batch_from_stream_into(
+            gpt,
+            train_tokens,
+            gpt.cfg.block,
+            cfg.batch_size,
+            cfg.seed,
+            global_step,
+            stream_offset,
+            &mut workspace.micro_grads,
+            &mut workspace.sample_grads,
+            &mut workspace.backward,
+        )
+        .map_err(str::to_string)?;
+        for (dst, src) in grads.iter_mut().zip(&workspace.micro_grads) {
+            *dst += *src;
+        }
+    }
+
+    let inv_accum = 1.0 / cfg.gradient_accumulation_steps as f32;
+    let raw_loss = loss_sum * inv_accum;
+    let loss_values = [raw_loss];
+    let loss_scan = diagnostics
+        .scan(&loss_values)
+        .expect("enabled diagnostics must return a scan");
+    if !loss_scan.is_finite() {
+        return Err(explain(Stage::Loss, "loss", &loss_scan));
+    }
+
+    let (_, _, adam_m_before, adam_v_before) = adam.export();
+    let pre_optimizer = summarize_training_state(
+        diagnostics,
+        grads,
+        &workspace.params,
+        adam_m_before,
+        adam_v_before,
+    )
+    .expect("enabled diagnostics must summarize state");
+    if let Some(context) = fault_context(&pre_optimizer) {
+        return Err(context);
+    }
+
+    let (loss, grad_norm, grad_scale) =
+        prepare_grads(cfg, grads, loss_sum).map_err(str::to_string)?;
+
+    adam.step(&mut workspace.params, grads);
+
+    let (_, _, adam_m_after, adam_v_after) = adam.export();
+    let post_optimizer = summarize_training_state(
+        diagnostics,
+        grads,
+        &workspace.params,
+        adam_m_after,
+        adam_v_after,
+    )
+    .expect("enabled diagnostics must summarize state");
+    if let Some(context) = fault_context(&post_optimizer) {
+        return Err(context);
+    }
+
+    gpt.write_params(&workspace.params);
+    let metrics = make_metrics(
+        gpt,
+        cfg,
+        global_step,
+        effective_batch_size,
+        loss,
+        grad_norm,
+        grad_scale,
+    )
+    .map_err(str::to_string)?;
+
+    Ok((
+        metrics,
+        Some(TrainingDiagnosticsReport {
+            loss: loss_scan,
+            pre_optimizer,
+            post_optimizer,
+        }),
+    ))
+}
+
 fn prepare_grads(
     cfg: TrainConfig,
     grads: &mut [f32],
@@ -360,6 +493,128 @@ mod tests {
             gradient_accumulation_steps: 1,
             grad_clip_norm: 1.0,
         }
+    }
+
+    #[test]
+    fn diagnostics_off_delegates_to_exact_reuse_path() {
+        let mut reference = model(123);
+        let mut observed = reference.clone();
+        let tokens: Vec<usize> = (0..96).map(|i| (i * 3 + 1) % 7).collect();
+        let cfg = cfg(456, 2);
+        let n = reference.collect_params().len();
+        let mut adam_reference = Adam::new(n, 1e-3);
+        let mut adam_observed = Adam::new(n, 1e-3);
+        let mut grads_reference = vec![0.0; n];
+        let mut grads_observed = vec![0.0; n];
+        let mut workspace_reference = TrainWorkspace::new(&reference);
+        let mut workspace_observed = TrainWorkspace::new(&observed);
+
+        let metrics_reference = train_step_reuse(
+            &mut reference,
+            &mut adam_reference,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_reference,
+            &mut workspace_reference,
+        )
+        .unwrap();
+        let (metrics_observed, report) = train_step_reuse_diagnostics(
+            &mut observed,
+            &mut adam_observed,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_observed,
+            &mut workspace_observed,
+            Diagnostics::off(),
+        )
+        .unwrap();
+
+        assert!(report.is_none());
+        assert_eq!(metrics_observed, metrics_reference);
+        assert_eq!(grads_observed, grads_reference);
+        assert_eq!(observed.collect_params(), reference.collect_params());
+        assert_eq!(adam_observed.export().1, adam_reference.export().1);
+        assert_eq!(adam_observed.export().2, adam_reference.export().2);
+        assert_eq!(adam_observed.export().3, adam_reference.export().3);
+    }
+
+    #[test]
+    fn diagnostics_on_preserves_clean_training_state_exactly() {
+        let mut reference = model(321);
+        let mut observed = reference.clone();
+        let tokens: Vec<usize> = (0..96).map(|i| (i * 5 + 2) % 7).collect();
+        let cfg = cfg(654, 2);
+        let n = reference.collect_params().len();
+        let mut adam_reference = Adam::new(n, 1e-3);
+        let mut adam_observed = Adam::new(n, 1e-3);
+        let mut grads_reference = vec![0.0; n];
+        let mut grads_observed = vec![0.0; n];
+        let mut workspace_reference = TrainWorkspace::new(&reference);
+        let mut workspace_observed = TrainWorkspace::new(&observed);
+
+        let metrics_reference = train_step_reuse(
+            &mut reference,
+            &mut adam_reference,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_reference,
+            &mut workspace_reference,
+        )
+        .unwrap();
+        let (metrics_observed, report) = train_step_reuse_diagnostics(
+            &mut observed,
+            &mut adam_observed,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_observed,
+            &mut workspace_observed,
+            Diagnostics::on(),
+        )
+        .unwrap();
+
+        let report = report.expect("diagnostics enabled");
+        assert!(report.loss.is_finite());
+        assert!(report.pre_optimizer.first_fault().is_none());
+        assert!(report.post_optimizer.first_fault().is_none());
+        assert_eq!(metrics_observed, metrics_reference);
+        assert_eq!(grads_observed, grads_reference);
+        assert_eq!(observed.collect_params(), reference.collect_params());
+        assert_eq!(adam_observed.export().1, adam_reference.export().1);
+        assert_eq!(adam_observed.export().2, adam_reference.export().2);
+        assert_eq!(adam_observed.export().3, adam_reference.export().3);
+    }
+
+    #[test]
+    fn diagnostics_reject_corrupt_adam_state_before_optimizer() {
+        let mut gpt = model(777);
+        let tokens: Vec<usize> = (0..96).map(|i| (i * 2 + 3) % 7).collect();
+        let cfg = cfg(999, 2);
+        let n = gpt.collect_params().len();
+        let mut m = vec![0.0; n];
+        m[3] = f32::NAN;
+        let mut adam = Adam::from_state(1e-3, 0, m, vec![0.0; n]);
+        let mut grads = vec![0.0; n];
+        let mut workspace = TrainWorkspace::new(&gpt);
+
+        let error = train_step_reuse_diagnostics(
+            &mut gpt,
+            &mut adam,
+            &tokens,
+            cfg,
+            0,
+            &mut grads,
+            &mut workspace,
+            Diagnostics::on(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("adam_m"));
+        assert!(error.contains("NaN"));
+        assert_eq!(adam.t, 0, "pre-optimizer fault must stop before Adam step");
     }
 
     #[test]
