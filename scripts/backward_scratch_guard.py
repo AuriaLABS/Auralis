@@ -2,8 +2,9 @@
 """Policy for Backward Scratch Comparison.
 
 Automatic PR runs are a no-regression guard. A PR that intentionally claims a
-scratch optimization must put the exact marker "Scratch-Optimization: true" in
-its body; only then are the historical material-improvement thresholds applied.
+scratch optimization must put the exact commit trailer
+"Auralis-Scratch-Optimization: true" on its HEAD commit; only then are the
+historical material-improvement thresholds applied.
 """
 
 from __future__ import annotations
