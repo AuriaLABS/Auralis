@@ -4,6 +4,7 @@
 //! attention, layer normalization, GELU, cross-entropy and backward pass are
 //! implemented explicitly over `Vec<f32>`.
 
+use crate::arena::Arena;
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +128,9 @@ struct GptGrad {
 pub(crate) struct BackwardWorkspace {
     cfg: Config,
     grads: GptGrad,
+    scratch: Arena,
+    dx: Vec<f32>,
+    residual: Vec<f32>,
 }
 
 fn init_vec(rng: &mut impl Rng, n: usize, scale: f32) -> Vec<f32> {
@@ -184,9 +188,36 @@ impl GptGrad {
 
 impl BackwardWorkspace {
     pub(crate) fn new(gpt: &Gpt) -> Self {
+        let td = gpt
+            .cfg
+            .block
+            .checked_mul(gpt.cfg.n_embd)
+            .expect("backward workspace size overflow");
+        let attention_scratch = td
+            .checked_mul(3)
+            .and_then(|n| n.checked_add(gpt.cfg.block))
+            .expect("attention scratch size overflow");
+        let ffn_scratch = gpt
+            .cfg
+            .block
+            .checked_mul(gpt.cfg.n_ff)
+            .expect("ffn scratch size overflow");
+        let layernorm_scratch = td
+            .checked_add(
+                gpt.cfg
+                    .n_embd
+                    .checked_mul(2)
+                    .expect("layernorm scratch size overflow"),
+            )
+            .expect("layernorm scratch size overflow");
+        let scratch_capacity = attention_scratch.max(ffn_scratch).max(layernorm_scratch);
+
         Self {
             cfg: gpt.cfg,
             grads: gpt.zero_grads(),
+            scratch: Arena::with_capacity(scratch_capacity),
+            dx: vec![0.0; td],
+            residual: vec![0.0; td],
         }
     }
 
@@ -196,6 +227,7 @@ impl BackwardWorkspace {
 
     fn clear(&mut self) {
         self.grads.clear();
+        self.scratch.reset();
     }
 }
 
@@ -370,73 +402,120 @@ impl Gpt {
         }
 
         workspace.clear();
-        let gg = &mut workspace.grads;
+        let BackwardWorkspace {
+            grads: gg,
+            scratch,
+            dx,
+            residual,
+            ..
+        } = workspace;
         let d = self.cfg.n_embd;
+        let td = t * d;
+        let dx = &mut dx[..td];
+        let residual = &mut residual[..td];
 
         matmul_grad_b(&cache.h_final, t, d, &dlogits, v, &mut gg.w_out);
         sum_rows_into(&dlogits, t, v, &mut gg.b_out);
-        let mut dx = matmul_b_t(&dlogits, t, v, &self.w_out, d);
+        matmul_b_t_into(&dlogits, t, v, &self.w_out, d, dx);
 
-        let (dx_ln, dgamma, dbeta) = layernorm_backward(&dx, &cache.ln_f, &self.ln_f_g);
-        dx = dx_ln;
-        add_inplace(&mut gg.ln_f_g, &dgamma);
-        add_inplace(&mut gg.ln_f_b, &dbeta);
+        scratch.reset();
+        let dx_ln_slot = scratch.alloc(td);
+        let dgamma_slot = scratch.alloc(d);
+        let dbeta_slot = scratch.alloc(d);
+        {
+            let (dx_ln, dgamma, dbeta) =
+                scratch.get3_mut(dx_ln_slot, dgamma_slot, dbeta_slot);
+            layernorm_backward_into(dx, &cache.ln_f, &self.ln_f_g, dx_ln, dgamma, dbeta);
+            add_inplace(&mut gg.ln_f_g, dgamma);
+            add_inplace(&mut gg.ln_f_b, dbeta);
+            dx.copy_from_slice(dx_ln);
+        }
 
         for li in (0..self.blocks.len()).rev() {
             let b = &self.blocks[li];
             let c = &cache.layers[li];
             let bg = &mut gg.blocks[li];
 
-            let dff_out = dx.as_slice();
-
+            let dff_out = &dx[..];
             matmul_grad_b(&c.ff_act, t, self.cfg.n_ff, dff_out, d, &mut bg.w2);
             sum_rows_into(dff_out, t, d, &mut bg.b2);
-            let dff_act = matmul_b_t(dff_out, t, d, &b.w2, self.cfg.n_ff);
 
-            let mut dff_pre = dff_act;
-            for i in 0..dff_pre.len() {
-                dff_pre[i] *= gelu_deriv(c.ff_pre[i]);
+            scratch.reset();
+            let dff_pre_slot = scratch.alloc(t * self.cfg.n_ff);
+            {
+                let dff_pre = scratch.get_mut(dff_pre_slot);
+                matmul_b_t_into(dff_out, t, d, &b.w2, self.cfg.n_ff, dff_pre);
+                for i in 0..dff_pre.len() {
+                    dff_pre[i] *= gelu_deriv(c.ff_pre[i]);
+                }
+
+                matmul_grad_b(&c.h2, t, d, dff_pre, self.cfg.n_ff, &mut bg.w1);
+                sum_rows_into(dff_pre, t, self.cfg.n_ff, &mut bg.b1);
+                matmul_b_t_into(dff_pre, t, self.cfg.n_ff, &b.w1, d, residual);
             }
 
-            matmul_grad_b(&c.h2, t, d, &dff_pre, self.cfg.n_ff, &mut bg.w1);
-            sum_rows_into(&dff_pre, t, self.cfg.n_ff, &mut bg.b1);
-            let dh2 = matmul_b_t(&dff_pre, t, self.cfg.n_ff, &b.w1, d);
+            scratch.reset();
+            let dln2_slot = scratch.alloc(td);
+            let dg2_slot = scratch.alloc(d);
+            let db2_slot = scratch.alloc(d);
+            {
+                let (dln2, dg2, db2) = scratch.get3_mut(dln2_slot, dg2_slot, db2_slot);
+                layernorm_backward_into(residual, &c.ln2, &b.ln2_g, dln2, dg2, db2);
+                add_inplace(&mut bg.ln2_g, dg2);
+                add_inplace(&mut bg.ln2_b, db2);
+                for i in 0..td {
+                    residual[i] = dx[i] + dln2[i];
+                }
+            }
 
-            let (dln2, dg2, db2) = layernorm_backward(&dh2, &c.ln2, &b.ln2_g);
-            add_inplace(&mut bg.ln2_g, &dg2);
-            add_inplace(&mut bg.ln2_b, &db2);
-            let mut dr1 = dx;
-            add_inplace(&mut dr1, &dln2);
-
-            let dproj = dr1.as_slice();
+            let dproj = &residual[..];
             matmul_grad_b(&c.att, t, d, dproj, d, &mut bg.wo);
-            let datt = matmul_b_t(dproj, t, d, &b.wo, d);
+            matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
 
-            let (dq, dk, dv) = attention_backward(
-                &datt,
-                &c.q,
-                &c.k,
-                &c.v,
-                &c.probs,
-                t,
-                d,
-                self.cfg.n_head,
-            );
+            scratch.reset();
+            let dq_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(td);
+            let dv_slot = scratch.alloc(td);
+            let dp_slot = scratch.alloc(t);
+            {
+                let (dq, dk, dv, dp) = scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
+                attention_backward_into(
+                    dx,
+                    &c.q,
+                    &c.k,
+                    &c.v,
+                    &c.probs,
+                    t,
+                    d,
+                    self.cfg.n_head,
+                    dq,
+                    dk,
+                    dv,
+                    dp,
+                );
 
-            matmul_grad_b(&c.h1, t, d, &dq, d, &mut bg.wq);
-            matmul_grad_b(&c.h1, t, d, &dk, d, &mut bg.wk);
-            matmul_grad_b(&c.h1, t, d, &dv, d, &mut bg.wv);
+                matmul_grad_b(&c.h1, t, d, dq, d, &mut bg.wq);
+                matmul_grad_b(&c.h1, t, d, dk, d, &mut bg.wk);
+                matmul_grad_b(&c.h1, t, d, dv, d, &mut bg.wv);
 
-            let mut dh1 = matmul_b_t(&dq, t, d, &b.wq, d);
-            matmul_b_t_add_into(&dk, t, d, &b.wk, d, &mut dh1);
-            matmul_b_t_add_into(&dv, t, d, &b.wv, d, &mut dh1);
+                matmul_b_t_into(dq, t, d, &b.wq, d, dx);
+                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+            }
 
-            let (dln1, dg1, db1) = layernorm_backward(&dh1, &c.ln1, &b.ln1_g);
-            add_inplace(&mut bg.ln1_g, &dg1);
-            add_inplace(&mut bg.ln1_b, &db1);
-            let mut dx_in = dr1;
-            add_inplace(&mut dx_in, &dln1);
-            dx = dx_in;
+            scratch.reset();
+            let dln1_slot = scratch.alloc(td);
+            let dg1_slot = scratch.alloc(d);
+            let db1_slot = scratch.alloc(d);
+            {
+                let (dln1, dg1, db1) = scratch.get3_mut(dln1_slot, dg1_slot, db1_slot);
+                layernorm_backward_into(dx, &c.ln1, &b.ln1_g, dln1, dg1, db1);
+                add_inplace(&mut bg.ln1_g, dg1);
+                add_inplace(&mut bg.ln1_b, db1);
+                for i in 0..td {
+                    dx[i] = residual[i] + dln1[i];
+                }
+            }
         }
 
         for i in 0..t {
@@ -702,18 +781,18 @@ fn matmul_grad_b(
     crate::kernels::matmul_grad_b_rowwise_zeroed(a, rows, inner, dy, cols, db);
 }
 
-fn matmul_b_t(
+fn matmul_b_t_into(
     dy: &[f32],
     rows: usize,
     out_cols: usize,
     b: &[f32],
     result_cols: usize,
-) -> Vec<f32> {
+    out: &mut [f32],
+) {
     assert_eq!(dy.len(), rows * out_cols);
     assert_eq!(b.len(), result_cols * out_cols);
-    let mut out = vec![0.0; rows * result_cols];
-    crate::kernels::matmul_b_t_row_slices_into(dy, rows, out_cols, b, result_cols, &mut out);
-    out
+    assert_eq!(out.len(), rows * result_cols);
+    crate::kernels::matmul_b_t_row_slices_into(dy, rows, out_cols, b, result_cols, out);
 }
 
 fn matmul_b_t_add_into(
@@ -797,16 +876,23 @@ fn layernorm_forward(
     )
 }
 
-fn layernorm_backward(
+fn layernorm_backward_into(
     dy: &[f32],
     cache: &LnCache,
     gamma: &[f32],
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    dx: &mut [f32],
+    dgamma: &mut [f32],
+    dbeta: &mut [f32],
+) {
     let rows = cache.rows;
     let cols = cache.cols;
-    let mut dx = vec![0.0; dy.len()];
-    let mut dgamma = vec![0.0; cols];
-    let mut dbeta = vec![0.0; cols];
+    assert_eq!(dy.len(), rows * cols);
+    assert_eq!(gamma.len(), cols);
+    assert_eq!(dx.len(), dy.len());
+    assert_eq!(dgamma.len(), cols);
+    assert_eq!(dbeta.len(), cols);
+    dgamma.fill(0.0);
+    dbeta.fill(0.0);
 
     for i in 0..rows {
         let mut sum_g = 0.0;
@@ -826,7 +912,6 @@ fn layernorm_backward(
             dx[idx] = scale * (cols as f32 * z - sum_g - cache.xhat[idx] * sum_gxh);
         }
     }
-    (dx, dgamma, dbeta)
 }
 
 fn attention_eval(
@@ -900,7 +985,7 @@ fn attention_forward(
     (out, probs)
 }
 
-fn attention_backward(
+fn attention_backward_into(
     dout: &[f32],
     q: &[f32],
     k: &[f32],
@@ -909,26 +994,14 @@ fn attention_backward(
     t: usize,
     d: usize,
     n_head: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-    let mut dq = vec![0.0; t * d];
-    let mut dk = vec![0.0; t * d];
-    let mut dv = vec![0.0; t * d];
-    let mut dp = vec![0.0; t];
+    dq: &mut [f32],
+    dk: &mut [f32],
+    dv: &mut [f32],
+    dp: &mut [f32],
+) {
     crate::kernels::attention_backward_row_slices_into(
-        dout,
-        q,
-        k,
-        v,
-        probs,
-        t,
-        d,
-        n_head,
-        &mut dq,
-        &mut dk,
-        &mut dv,
-        &mut dp,
+        dout, q, k, v, probs, t, d, n_head, dq, dk, dv, dp,
     );
-    (dq, dk, dv)
 }
 
 fn gelu(x: f32) -> f32 {
@@ -1067,6 +1140,44 @@ mod tests {
             assert_eq!(reused_loss, reference_loss);
             assert_eq!(reused, reference);
         }
+    }
+
+    #[test]
+    fn reused_backward_workspace_survives_poison_and_variable_contexts() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_211B);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let n = gpt.collect_params().len();
+        let mut workspace = BackwardWorkspace::new(&gpt);
+        let scratch_capacity = workspace.scratch.capacity();
+        let mut reference = vec![0.0; n];
+        let mut reused = vec![0.0; n];
+
+        let cases: [(&[usize], &[usize]); 3] = [
+            (&[0, 1, 2, 3], &[1, 2, 3, 4]),
+            (&[3, 2], &[2, 1]),
+            (&[5, 4, 3], &[4, 3, 2]),
+        ];
+
+        for (x, y) in cases {
+            let reference_loss = gpt.backward_into(x, y, &mut reference);
+            workspace.scratch.reset_poison();
+            reused.fill(f32::NAN);
+            let reused_loss = gpt.backward_into_reuse(x, y, &mut reused, &mut workspace);
+            assert_eq!(reused_loss, reference_loss);
+            assert_eq!(reused, reference);
+        }
+
+        assert_eq!(workspace.scratch.capacity(), scratch_capacity);
+        assert_eq!(workspace.scratch.growths(), 0);
+        assert!(workspace.scratch.resets() > 0);
     }
 
     #[test]
