@@ -4,6 +4,7 @@ use auralis::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -108,12 +109,37 @@ fn tokens(len: usize) -> Vec<usize> {
     (0..len).map(|i| (i * 37 + i / 3 + 11) % 100).collect()
 }
 
+fn peak_rss_kib() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+            return 0;
+        };
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmHWM:") {
+                if let Some(value) = rest.split_whitespace().next() {
+                    if let Ok(kib) = value.parse() {
+                        return kib;
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
+    }
+}
+
 fn print_profile(phase: &str, block: usize, elapsed_s: f64, c: Counts) {
+    let peak_rss_kib = peak_rss_kib();
     println!(
         concat!(
             "workspace_profile | phase={} block={} seconds={:.9} ",
             "alloc_calls={} alloc_bytes={} realloc_calls={} realloc_new_bytes={} ",
-            "dealloc_calls={} dealloc_bytes={}"
+            "dealloc_calls={} dealloc_bytes={} peak_rss_kib={}"
         ),
         phase,
         block,
@@ -124,6 +150,7 @@ fn print_profile(phase: &str, block: usize, elapsed_s: f64, c: Counts) {
         c.realloc_new_bytes,
         c.dealloc_calls,
         c.dealloc_bytes,
+        peak_rss_kib,
     );
 }
 
@@ -214,10 +241,41 @@ fn profile_train_reuse(block: usize) {
     print_profile("train_reuse", block, elapsed, c);
 }
 
+fn run_one(phase: &str, block: usize) {
+    match phase {
+        "loss" => profile_loss(block),
+        "backward" => profile_backward(block),
+        "train_reuse" => profile_train_reuse(block),
+        other => panic!("unknown workspace profile phase: {other}"),
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--child") {
+        let phase = args.get(2).expect("missing child phase");
+        let block: usize = args
+            .get(3)
+            .expect("missing child block")
+            .parse()
+            .expect("invalid child block");
+        run_one(phase, block);
+        return;
+    }
+
+    let exe = std::env::current_exe().expect("resolve workspace profiler executable");
     for block in [4usize, 8, 16, 32] {
-        profile_loss(block);
-        profile_backward(block);
-        profile_train_reuse(block);
+        for phase in ["loss", "backward", "train_reuse"] {
+            let output = Command::new(&exe)
+                .args(["--child", phase, &block.to_string()])
+                .output()
+                .expect("spawn isolated workspace profiler child");
+            assert!(
+                output.status.success(),
+                "workspace profiler child failed for phase={phase} block={block}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
     }
 }
