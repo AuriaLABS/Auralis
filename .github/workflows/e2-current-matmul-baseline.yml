@@ -1,0 +1,69 @@
+
+name: E2 Current Matmul Baseline
+
+on:
+  pull_request:
+    paths:
+      - "src/bin/auralis_matmul_rowslices_vs_blocked_bench.rs"
+      - ".github/workflows/e2-current-matmul-baseline.yml"
+      - "src/cpu_matmul.rs"
+      - "src/kernels.rs"
+      - "src/bench_result.rs"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Exactness tests
+        run: cargo test --bin auralis_matmul_rowslices_vs_blocked_bench -- --nocapture
+
+      - name: Current production baseline comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_matmul_rowslices_vs_blocked_bench -- 5 80 7 | tee /tmp/matmul-current.txt
+
+          test "$(grep -c '^matmul_current_baseline |' /tmp/matmul-current.txt)" -eq 5
+          test "$(grep -c '^bench_record |' /tmp/matmul-current.txt)" -eq 10
+          test "$(grep -c '^bench_comparison |' /tmp/matmul-current.txt)" -eq 5
+          test "$(grep -c 'exact=true' /tmp/matmul-current.txt)" -eq 5
+
+          python3 - <<'PY'
+          import json
+          import re
+
+          lines = open("/tmp/matmul-current.txt", encoding="utf-8").read().splitlines()
+          records = [json.loads(line.split(" | ", 1)[1]) for line in lines if line.startswith("bench_record | ")]
+          comparisons = [json.loads(line.split(" | ", 1)[1]) for line in lines if line.startswith("bench_comparison | ")]
+          if len(records) != 10 or len(comparisons) != 5:
+              raise SystemExit("missing machine-readable benchmark records")
+
+          summaries = [line for line in lines if line.startswith("matmul_current_baseline | ")]
+          for line in summaries:
+              ratio = float(re.search(r"blocked_over_rowslices=([0-9.]+)", line).group(1))
+              wins, reps = map(int, re.search(r"blocked_wins=(\d+)/(\d+)", line).groups())
+              iqr_ok = re.search(r"iqr_ok=(true|false)", line)
+              if ratio <= 0 or wins < 0 or wins > reps or not iqr_ok:
+                  raise SystemExit(f"invalid comparison row: {line}")
+
+          irregular = next(line for line in summaries if "shape=9x13x37" in line)
+          if "eligible=false" not in irregular or "promote=false" not in irregular:
+              raise SystemExit("irregular fallback shape must never be promoted")
+          PY
+
+      - name: Publish comparison
+        shell: bash
+        run: |
+          {
+            echo "## E2 Blocked32 vs current RowSlices"
+            echo
+            echo "Promotion requires >=5% median win, Blocked32 faster in >=2/3 paired repetitions, and bounded candidate IQR."
+            echo
+            grep '^matmul_current_baseline |' /tmp/matmul-current.txt
+          } >> "$GITHUB_STEP_SUMMARY"
