@@ -5,6 +5,7 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
+use crate::numeric::{explain, scan_f32, Scan, Stage};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +96,34 @@ struct ForwardCache {
     layers: Vec<LayerCache>,
     ln_f: LnCache,
     h_final: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForwardTensorSummary {
+    pub layer: Option<usize>,
+    pub name: &'static str,
+    pub stage: Stage,
+    pub scan: Scan,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForwardDiagnosticsReport {
+    pub tensors: Vec<ForwardTensorSummary>,
+}
+
+impl ForwardDiagnosticsReport {
+    pub fn first_fault(&self) -> Option<&ForwardTensorSummary> {
+        self.tensors.iter().find(|summary| !summary.scan.is_finite())
+    }
+
+    pub fn first_fault_context(&self) -> Option<String> {
+        let summary = self.first_fault()?;
+        let scope = match summary.layer {
+            Some(layer) => format!("layer[{layer}].{}", summary.name),
+            None => summary.name.to_string(),
+        };
+        Some(explain(summary.stage, &scope, &summary.scan))
+    }
 }
 
 #[derive(Debug)]
@@ -319,6 +348,76 @@ impl Gpt {
     /// backward-only caches. The returned tensor is row-major `[tokens, vocab]`.
     pub fn logits(&self, tokens: &[usize]) -> Vec<f32> {
         self.forward_eval(tokens)
+    }
+
+    /// Debug-only forward pass with compact numerical summaries for cached
+    /// activations. The normal `logits()` / `forward_eval()` path remains
+    /// untouched and pays no diagnostics branch or scan cost.
+    pub fn forward_diagnostics(
+        &self,
+        tokens: &[usize],
+    ) -> Result<(Vec<f32>, ForwardDiagnosticsReport), String> {
+        let (logits, cache) = self.forward_internal(tokens);
+        let mut tensors = Vec::with_capacity(cache.layers.len() * 9 + 2);
+
+        fn push(
+            tensors: &mut Vec<ForwardTensorSummary>,
+            layer: Option<usize>,
+            name: &'static str,
+            stage: Stage,
+            values: &[f32],
+        ) {
+            tensors.push(ForwardTensorSummary {
+                layer,
+                name,
+                stage,
+                scan: scan_f32(values),
+            });
+        }
+
+        for (layer, cache) in cache.layers.iter().enumerate() {
+            push(&mut tensors, Some(layer), "h1", Stage::Activation, &cache.h1);
+            push(&mut tensors, Some(layer), "q", Stage::Activation, &cache.q);
+            push(&mut tensors, Some(layer), "k", Stage::Activation, &cache.k);
+            push(&mut tensors, Some(layer), "v", Stage::Activation, &cache.v);
+            push(
+                &mut tensors,
+                Some(layer),
+                "probs",
+                Stage::Activation,
+                &cache.probs,
+            );
+            push(&mut tensors, Some(layer), "att", Stage::Activation, &cache.att);
+            push(&mut tensors, Some(layer), "h2", Stage::Activation, &cache.h2);
+            push(
+                &mut tensors,
+                Some(layer),
+                "ff_pre",
+                Stage::Activation,
+                &cache.ff_pre,
+            );
+            push(
+                &mut tensors,
+                Some(layer),
+                "ff_act",
+                Stage::Activation,
+                &cache.ff_act,
+            );
+        }
+        push(
+            &mut tensors,
+            None,
+            "h_final",
+            Stage::Activation,
+            &cache.h_final,
+        );
+        push(&mut tensors, None, "logits", Stage::Logits, &logits);
+
+        let report = ForwardDiagnosticsReport { tensors };
+        if let Some(context) = report.first_fault_context() {
+            return Err(context);
+        }
+        Ok((logits, report))
     }
 
     /// Mean next-token cross-entropy without constructing or propagating
@@ -1091,6 +1190,99 @@ mod tests {
         assert!(loss.is_finite() && loss > 0.0);
         assert!(grads.iter().all(|x| x.is_finite()));
         assert!(grads.iter().any(|x| x.abs() > 0.0));
+    }
+
+    #[test]
+    fn forward_diagnostics_matches_eval_logits_and_orders_summaries() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(44);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let tokens = [0, 1, 2, 3];
+
+        let expected = gpt.logits(&tokens);
+        let (observed, report) = gpt.forward_diagnostics(&tokens).unwrap();
+
+        assert_eq!(observed, expected);
+        assert_eq!(report.tensors.len(), cfg.n_layer * 9 + 2);
+        assert!(report.first_fault().is_none());
+
+        let names: Vec<(Option<usize>, &'static str)> = report
+            .tensors
+            .iter()
+            .map(|summary| (summary.layer, summary.name))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (Some(0), "h1"),
+                (Some(0), "q"),
+                (Some(0), "k"),
+                (Some(0), "v"),
+                (Some(0), "probs"),
+                (Some(0), "att"),
+                (Some(0), "h2"),
+                (Some(0), "ff_pre"),
+                (Some(0), "ff_act"),
+                (Some(1), "h1"),
+                (Some(1), "q"),
+                (Some(1), "k"),
+                (Some(1), "v"),
+                (Some(1), "probs"),
+                (Some(1), "att"),
+                (Some(1), "h2"),
+                (Some(1), "ff_pre"),
+                (Some(1), "ff_act"),
+                (None, "h_final"),
+                (None, "logits"),
+            ]
+        );
+    }
+
+    #[test]
+    fn forward_diagnostics_reports_first_corrupt_layer_tensor() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(45);
+        let mut gpt = Gpt::new(cfg, &mut rng);
+        gpt.tok_emb[0] = f32::NAN;
+
+        let error = gpt.forward_diagnostics(&[0, 1, 2, 3]).unwrap_err();
+        assert!(error.contains("layer[0].h1"));
+        assert!(error.contains("NaN"));
+        assert!(error.contains("index"));
+    }
+
+    #[test]
+    fn forward_diagnostics_identifies_logits_when_activations_are_clean() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(46);
+        let mut gpt = Gpt::new(cfg, &mut rng);
+        gpt.b_out[0] = f32::NAN;
+
+        let error = gpt.forward_diagnostics(&[1, 2, 3, 4]).unwrap_err();
+        assert!(error.contains("logits"));
+        assert!(error.contains("Logits"));
+        assert!(error.contains("NaN"));
     }
 
     #[test]
