@@ -100,6 +100,83 @@ impl Arena {
     pub fn fill(&mut self, slot: Slot, value: f32) {
         self.get_mut(slot).fill(value);
     }
+
+    /// Borrow two ordered, non-overlapping slots mutably at the same time.
+    ///
+    /// The caller must pass slots in allocation order. This keeps the
+    /// implementation entirely safe: the backing slice is split at the start
+    /// of the second slot, so the returned regions cannot alias.
+    pub fn get2_mut(&mut self, a: Slot, b: Slot) -> (&mut [f32], &mut [f32]) {
+        assert_ordered_non_overlapping(a, b);
+        assert!(slot_end(b) <= self.buf.len(), "arena slot out of bounds");
+
+        let (before_b, from_b) = self.buf.split_at_mut(b.start);
+        let a_slice = &mut before_b[a.start..slot_end(a)];
+        let b_slice = &mut from_b[..b.len];
+        (a_slice, b_slice)
+    }
+
+    /// Borrow three ordered, non-overlapping slots mutably at the same time.
+    pub fn get3_mut(
+        &mut self,
+        a: Slot,
+        b: Slot,
+        c: Slot,
+    ) -> (&mut [f32], &mut [f32], &mut [f32]) {
+        assert_ordered_non_overlapping(a, b);
+        assert_ordered_non_overlapping(b, c);
+        assert!(slot_end(c) <= self.buf.len(), "arena slot out of bounds");
+
+        let (before_b, from_b) = self.buf.split_at_mut(b.start);
+        let a_slice = &mut before_b[a.start..slot_end(a)];
+
+        let c_from_b = c.start - b.start;
+        let (before_c, from_c) = from_b.split_at_mut(c_from_b);
+        let b_slice = &mut before_c[..b.len];
+        let c_slice = &mut from_c[..c.len];
+        (a_slice, b_slice, c_slice)
+    }
+
+    /// Borrow four ordered, non-overlapping slots mutably at the same time.
+    pub fn get4_mut(
+        &mut self,
+        a: Slot,
+        b: Slot,
+        c: Slot,
+        d: Slot,
+    ) -> (&mut [f32], &mut [f32], &mut [f32], &mut [f32]) {
+        assert_ordered_non_overlapping(a, b);
+        assert_ordered_non_overlapping(b, c);
+        assert_ordered_non_overlapping(c, d);
+        assert!(slot_end(d) <= self.buf.len(), "arena slot out of bounds");
+
+        let (before_b, from_b) = self.buf.split_at_mut(b.start);
+        let a_slice = &mut before_b[a.start..slot_end(a)];
+
+        let c_from_b = c.start - b.start;
+        let (before_c, from_c) = from_b.split_at_mut(c_from_b);
+        let b_slice = &mut before_c[..b.len];
+
+        let d_from_c = d.start - c.start;
+        let (before_d, from_d) = from_c.split_at_mut(d_from_c);
+        let c_slice = &mut before_d[..c.len];
+        let d_slice = &mut from_d[..d.len];
+
+        (a_slice, b_slice, c_slice, d_slice)
+    }
+}
+
+fn slot_end(slot: Slot) -> usize {
+    slot.start
+        .checked_add(slot.len)
+        .expect("arena slot end overflow")
+}
+
+fn assert_ordered_non_overlapping(left: Slot, right: Slot) {
+    assert!(
+        slot_end(left) <= right.start,
+        "arena slots must be ordered and non-overlapping"
+    );
 }
 
 impl Default for Arena {
@@ -156,6 +233,137 @@ mod tests {
         assert_eq!(arena.get(a), &[1.0, 1.0, 1.0]);
         assert_eq!(arena.get(b), &[2.0, 2.0, 2.0]);
         assert_eq!(a.start + a.len, b.start);
+    }
+
+    #[test]
+    fn multi_slot_mut_access_keeps_regions_disjoint() {
+        let mut arena = Arena::new();
+        let a = arena.alloc(2);
+        let b = arena.alloc(3);
+        let c = arena.alloc(1);
+        let d = arena.alloc(4);
+
+        {
+            let (aa, bb) = arena.get2_mut(a, b);
+            aa.fill(1.0);
+            bb.fill(2.0);
+        }
+        {
+            let (aa, bb, cc) = arena.get3_mut(a, b, c);
+            aa[0] = 3.0;
+            bb[0] = 4.0;
+            cc[0] = 5.0;
+        }
+        {
+            let (aa, bb, cc, dd) = arena.get4_mut(a, b, c, d);
+            aa[1] = 6.0;
+            bb[2] = 7.0;
+            cc[0] = 8.0;
+            dd.fill(9.0);
+        }
+
+        assert_eq!(arena.get(a), &[3.0, 6.0]);
+        assert_eq!(arena.get(b), &[4.0, 2.0, 7.0]);
+        assert_eq!(arena.get(c), &[8.0]);
+        assert_eq!(arena.get(d), &[9.0, 9.0, 9.0, 9.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "ordered and non-overlapping")]
+    fn multi_slot_mut_rejects_reversed_slots() {
+        let mut arena = Arena::new();
+        let a = arena.alloc(2);
+        let b = arena.alloc(2);
+        let _ = arena.get2_mut(b, a);
+    }
+
+    #[test]
+    #[should_panic(expected = "ordered and non-overlapping")]
+    fn multi_slot_mut_rejects_overlapping_slots() {
+        let mut arena = Arena::new();
+        let _ = arena.alloc(6);
+        let a = Slot { start: 1, len: 3 };
+        let b = Slot { start: 3, len: 2 };
+        let _ = arena.get2_mut(a, b);
+    }
+
+    #[test]
+    fn multi_slot_mut_supports_gaps_and_empty_slots() {
+        let mut arena = Arena::new();
+        let a = arena.alloc(2);
+        let _gap = arena.alloc(3);
+        let b = arena.alloc(0);
+        let c = arena.alloc(2);
+        let d = arena.alloc(1);
+
+        let (aa, bb, cc, dd) = arena.get4_mut(a, b, c, d);
+        aa.fill(1.0);
+        assert!(bb.is_empty());
+        cc.fill(2.0);
+        dd.fill(3.0);
+
+        assert_eq!(arena.get(a), &[1.0, 1.0]);
+        assert_eq!(arena.get(c), &[2.0, 2.0]);
+        assert_eq!(arena.get(d), &[3.0]);
+    }
+
+    #[test]
+    fn get4_mut_exhaustive_small_layouts_preserve_disjoint_regions() {
+        for a_len in 0..=3 {
+            for gap_ab in 0..=2 {
+                for b_len in 0..=3 {
+                    for gap_bc in 0..=2 {
+                        for c_len in 0..=3 {
+                            for gap_cd in 0..=2 {
+                                for d_len in 0..=3 {
+                                    let mut arena = Arena::new();
+                                    let a = arena.alloc(a_len);
+                                    let gap1 = arena.alloc(gap_ab);
+                                    let b = arena.alloc(b_len);
+                                    let gap2 = arena.alloc(gap_bc);
+                                    let c_slot = arena.alloc(c_len);
+                                    let gap3 = arena.alloc(gap_cd);
+                                    let d = arena.alloc(d_len);
+
+                                    arena.fill(gap1, -1.0);
+                                    arena.fill(gap2, -2.0);
+                                    arena.fill(gap3, -3.0);
+
+                                    {
+                                        let (aa, bb, cc, dd) =
+                                            arena.get4_mut(a, b, c_slot, d);
+                                        aa.fill(11.0);
+                                        bb.fill(22.0);
+                                        cc.fill(33.0);
+                                        dd.fill(44.0);
+                                    }
+
+                                    assert!(arena.get(a).iter().all(|&x| x == 11.0));
+                                    assert!(arena.get(b).iter().all(|&x| x == 22.0));
+                                    assert!(arena.get(c_slot).iter().all(|&x| x == 33.0));
+                                    assert!(arena.get(d).iter().all(|&x| x == 44.0));
+                                    assert!(arena.get(gap1).iter().all(|&x| x == -1.0));
+                                    assert!(arena.get(gap2).iter().all(|&x| x == -2.0));
+                                    assert!(arena.get(gap3).iter().all(|&x| x == -3.0));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "arena slot out of bounds")]
+    fn multi_slot_mut_rejects_out_of_bounds_last_slot() {
+        let mut arena = Arena::new();
+        let a = arena.alloc(2);
+        let b = arena.alloc(2);
+        let c_slot = arena.alloc(2);
+        let _ = arena.alloc(2);
+        let forged_d = Slot { start: 6, len: 3 };
+        let _ = arena.get4_mut(a, b, c_slot, forged_d);
     }
 
     #[test]
