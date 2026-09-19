@@ -133,13 +133,20 @@ fn peak_rss_kib() -> u64 {
     }
 }
 
-fn print_profile(phase: &str, block: usize, elapsed_s: f64, c: Counts) {
+fn print_profile(
+    phase: &str,
+    block: usize,
+    elapsed_s: f64,
+    c: Counts,
+    work_tokens: usize,
+) {
     let peak_rss_kib = peak_rss_kib();
+    let tok_per_s = work_tokens as f64 / elapsed_s.max(f64::MIN_POSITIVE);
     println!(
         concat!(
             "workspace_profile | phase={} block={} seconds={:.9} ",
             "alloc_calls={} alloc_bytes={} realloc_calls={} realloc_new_bytes={} ",
-            "dealloc_calls={} dealloc_bytes={} peak_rss_kib={}"
+            "dealloc_calls={} dealloc_bytes={} work_tokens={} tok_per_s={:.3} peak_rss_kib={}"
         ),
         phase,
         block,
@@ -150,6 +157,8 @@ fn print_profile(phase: &str, block: usize, elapsed_s: f64, c: Counts) {
         c.realloc_new_bytes,
         c.dealloc_calls,
         c.dealloc_bytes,
+        work_tokens,
+        tok_per_s,
         peak_rss_kib,
     );
 }
@@ -168,7 +177,7 @@ fn profile_loss(block: usize) {
     let elapsed = started.elapsed().as_secs_f64();
     let c = counts();
     assert!(loss.is_finite());
-    print_profile("loss", block, elapsed, c);
+    print_profile("loss", block, elapsed, c, block);
 }
 
 fn profile_backward(block: usize) {
@@ -189,7 +198,7 @@ fn profile_backward(block: usize) {
     let c = counts();
     assert!(loss.is_finite());
     assert!(grads.iter().all(|v| v.is_finite()));
-    print_profile("backward", block, elapsed, c);
+    print_profile("backward", block, elapsed, c, block);
 }
 
 fn profile_train_reuse(block: usize) {
@@ -238,7 +247,7 @@ fn profile_train_reuse(block: usize) {
     let elapsed = started.elapsed().as_secs_f64();
     let c = counts();
     assert!(metrics.loss.is_finite());
-    print_profile("train_reuse", block, elapsed, c);
+    print_profile("train_reuse", block, elapsed, c, metrics.tokens);
 }
 
 fn run_one(phase: &str, block: usize) {
