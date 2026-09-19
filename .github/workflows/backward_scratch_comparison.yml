@@ -23,12 +23,16 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REQUIRE_IMPROVEMENT: ${{ contains(github.event.pull_request.body, 'Scratch-Optimization: true') }}
         shell: bash
         run: |
           set -euo pipefail
 
           git show "$HEAD_SHA:src/bin/auralis_workspace_profile.rs" > /tmp/auralis_workspace_profile.rs
+          if git log -1 --format=%B "$HEAD_SHA" | grep -Fxq 'Auralis-Scratch-Optimization: true'; then
+            export REQUIRE_IMPROVEMENT=true
+          else
+            export REQUIRE_IMPROVEMENT=false
+          fi
           for i in 1 2 3; do
             git checkout --force "$BASE_SHA"
             cp /tmp/auralis_workspace_profile.rs src/bin/auralis_workspace_profile.rs
