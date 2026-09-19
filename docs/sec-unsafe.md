@@ -13,11 +13,15 @@ Allowed outside the library contract:
 Those binaries implement a counting `GlobalAlloc` over `std::alloc::System`
 so E1 allocation profiles can run. They are not on the train/eval/chat path.
 
-If a future kernel needs `unsafe` in the library:
+If a future kernel needs raw `unsafe` in the library:
 
-1. Raise `EXPECTED_UNSAFE_BLOCKS` in `src/sec.rs`.
-2. Document the invariant next to the block and in this file.
-3. Keep a safe reference path for equivalence tests.
+1. Keep `EXPECTED_UNSAFE_BLOCKS = 0` while the exception is only proposed.
+2. Open a separate security review naming the exact file/function/ISA and memory invariants.
+3. Keep a safe portable reference path and equivalence tests.
+4. Before merging any exception, replace the count-only contract with an exact fail-closed allowlist for the approved sites.
+5. Only then update the expected contract to match that reviewed allowlist.
+
+Merely increasing `EXPECTED_UNSAFE_BLOCKS` is not an approved exception path. See ADR 0001.
 
 Run `auralis sec-audit [SRC_ROOT]` before merging engine changes.
 

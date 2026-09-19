@@ -2,8 +2,9 @@
 //!
 //! Library/engine code admits zero raw unsafety. Profiler binaries wrap
 //! `System` in a counting `GlobalAlloc` and are excluded from the contract.
-//! New library blocks must update [`EXPECTED_UNSAFE_BLOCKS`] and
-//! `docs/sec-unsafe.md`.
+//! Any future library exception must follow the reviewed policy in
+//! `docs/adr/0001-unsafe-simd-policy.md` and move CI to an exact allowlist
+//! before changing [`EXPECTED_UNSAFE_BLOCKS`].
 
 use std::fs;
 use std::path::Path;
