@@ -1,0 +1,106 @@
+name: Backward Scratch Comparison
+
+on:
+  pull_request:
+    paths:
+      - "src/model.rs"
+      - "src/bin/auralis_workspace_profile.rs"
+      - ".github/workflows/backward_scratch_comparison.yml"
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compare base and candidate workspace profiles
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for i in 1 2 3; do
+            git checkout --force "$BASE_SHA"
+            cargo run --release --bin auralis_workspace_profile | tee "/tmp/base_${i}.txt"
+
+            git checkout --force "$HEAD_SHA"
+            cargo run --release --bin auralis_workspace_profile | tee "/tmp/candidate_${i}.txt"
+          done
+
+          python3 - <<'PY'
+          import glob
+          import re
+          import statistics
+
+          pattern = re.compile(
+              r"workspace_profile \| phase=train_reuse block=32 seconds=([0-9.]+) "
+              r"alloc_calls=(\d+) alloc_bytes=(\d+) realloc_calls=(\d+) realloc_new_bytes=(\d+)"
+          )
+
+          def read(prefix):
+              rows = []
+              for path in sorted(glob.glob(f"/tmp/{prefix}_*.txt")):
+                  text = open(path, encoding="utf-8").read()
+                  match = pattern.search(text)
+                  if not match:
+                      raise SystemExit(f"missing train_reuse block=32 row in {path}")
+                  seconds, calls, alloc_bytes, reallocs, realloc_bytes = match.groups()
+                  rows.append(
+                      (float(seconds), int(calls), int(alloc_bytes), int(reallocs), int(realloc_bytes))
+                  )
+              if len(rows) != 3:
+                  raise SystemExit(f"expected 3 rows for {prefix}, got {len(rows)}")
+              return rows
+
+          base = read("base")
+          candidate = read("candidate")
+
+          def stable_counter(rows, index, label):
+              values = {row[index] for row in rows}
+              if len(values) != 1:
+                  raise SystemExit(f"{label} changed across repetitions: {sorted(values)}")
+              return next(iter(values))
+
+          base_calls = stable_counter(base, 1, "base alloc_calls")
+          candidate_calls = stable_counter(candidate, 1, "candidate alloc_calls")
+          base_bytes = stable_counter(base, 2, "base alloc_bytes")
+          candidate_bytes = stable_counter(candidate, 2, "candidate alloc_bytes")
+          base_reallocs = stable_counter(base, 3, "base realloc_calls")
+          candidate_reallocs = stable_counter(candidate, 3, "candidate realloc_calls")
+          base_realloc_bytes = stable_counter(base, 4, "base realloc_new_bytes")
+          candidate_realloc_bytes = stable_counter(candidate, 4, "candidate realloc_new_bytes")
+
+          base_s = statistics.median(row[0] for row in base)
+          candidate_s = statistics.median(row[0] for row in candidate)
+          speed_ratio = base_s / candidate_s if candidate_s else float("inf")
+          call_reduction = 1.0 - candidate_calls / base_calls
+          byte_reduction = 1.0 - candidate_bytes / base_bytes
+
+          print(
+              "backward_scratch_compare | "
+              f"base_calls={base_calls} candidate_calls={candidate_calls} "
+              f"call_reduction={call_reduction:.4%} "
+              f"base_bytes={base_bytes} candidate_bytes={candidate_bytes} "
+              f"byte_reduction={byte_reduction:.4%} "
+              f"base_reallocs={base_reallocs} candidate_reallocs={candidate_reallocs} "
+              f"base_realloc_bytes={base_realloc_bytes} "
+              f"candidate_realloc_bytes={candidate_realloc_bytes} "
+              f"base_median_s={base_s:.9f} candidate_median_s={candidate_s:.9f} "
+              f"speed_ratio={speed_ratio:.4f}"
+          )
+
+          if candidate_calls >= base_calls:
+              raise SystemExit("allocation calls did not improve")
+          if candidate_bytes >= base_bytes:
+              raise SystemExit("allocation bytes did not improve")
+          if call_reduction < 0.25:
+              raise SystemExit(f"allocation-call reduction is not material: {call_reduction:.2%}")
+          if byte_reduction < 0.20:
+              raise SystemExit(f"allocation-byte reduction is not material: {byte_reduction:.2%}")
+          if candidate_reallocs > base_reallocs:
+              raise SystemExit("candidate introduced extra reallocations")
+          PY
