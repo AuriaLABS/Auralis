@@ -1,0 +1,63 @@
+name: Training Optimizer Variants Core
+
+on:
+  pull_request:
+    paths:
+      - "src/optim.rs"
+      - "src/bin/auralis_optimizer_variant_bench.rs"
+      - "docs/optimizer-variants.md"
+      - "docs/versions.md"
+      - "src/docs_check.rs"
+      - "README.md"
+      - ".github/workflows/training_optimizer_variants.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  variants-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Optimizer variant unit tests
+        run: |
+          cargo test --lib optim::tests::adamw_zero_weight_decay_is_bit_exact_with_adam -- --nocapture
+          cargo test --lib optim::tests::adamw_decoupled_weight_decay_matches_declared_formula -- --nocapture
+          cargo test --lib optim::tests::lion_update_matches_declared_sign_and_decay_semantics -- --nocapture
+          cargo test --lib optim::tests::adamw_and_lion_state_roundtrip_exactly -- --nocapture
+          cargo test --lib optim::tests::variant_states_fail_closed_on_kind_version_and_fingerprint -- --nocapture
+          cargo test --lib docs_check::tests::optimizer_variants_doc_matches_contract -- --nocapture
+
+      - name: Optimizer update microbenchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_optimizer_variant_bench -- 28580 5 50 5             | tee /tmp/optimizer-variants.txt
+
+          test "$(grep -c '^optimizer_variant_summary |' /tmp/optimizer-variants.txt)" -eq 3
+          grep -q '^optimizer_variant_summary | optimizer=adam ' /tmp/optimizer-variants.txt
+          grep -q '^optimizer_variant_summary | optimizer=adamw ' /tmp/optimizer-variants.txt
+          grep -q '^optimizer_variant_summary | optimizer=lion ' /tmp/optimizer-variants.txt
+
+          python3 - <<'PY'
+          import re
+          rows = {}
+          for line in open("/tmp/optimizer-variants.txt", encoding="utf-8"):
+              if not line.startswith("optimizer_variant_summary |"):
+                  continue
+              values = dict(part.split("=", 1) for part in line.strip().split()[2:] if "=" in part)
+              rows[values["optimizer"]] = values
+          assert set(rows) == {"adam", "adamw", "lion"}
+          assert int(rows["adam"]["state_bytes"]) == int(rows["adamw"]["state_bytes"])
+          assert int(rows["lion"]["state_bytes"]) * 2 == int(rows["adam"]["state_bytes"])
+          for row in rows.values():
+              assert float(row["median_ns_per_update"]) > 0
+              assert row["deterministic"] == "true"
+          print("optimizer_variants_core_gate | state_bytes=ok deterministic=true")
+          PY
+
+      - name: Full library tests
+        run: cargo test --lib
