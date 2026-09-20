@@ -39,7 +39,7 @@ jobs:
           python3 - <<'PY'
           import json, os
           data = json.load(open("/tmp/ab-same.json", encoding="utf-8"))
-          assert data["schema_version"] == 3
+          assert data["schema_version"] == 4
           assert data["code_revision"] == os.environ["AURALIS_COMMIT_SHA"]
           assert data["a_vs_a_reproducible"] is True
           assert data["protocol"]["steps"] == 3
@@ -47,6 +47,7 @@ jobs:
           assert data["a"]["config"] == data["b"]["config"]
           assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
           assert data["a"]["position"] == data["b"]["position"] == "learned_absolute"
+          assert data["a"]["optimizer"] == data["b"]["optimizer"] == "adam"
           a = data["a"]["measurements"]
           b = data["b"]["measurements"]
           assert len(a) == len(b) == 3
@@ -76,6 +77,7 @@ jobs:
           assert data["a_vs_a_reproducible"] is False
           assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
           assert data["a"]["position"] == data["b"]["position"] == "learned_absolute"
+          assert data["a"]["optimizer"] == data["b"]["optimizer"] == "adam"
           assert data["a"]["config"]["n_layer"] == 1
           assert data["b"]["config"]["n_layer"] == 2
           assert data["a"]["config"]["n_embd"] == data["b"]["config"]["n_embd"]
@@ -94,7 +96,7 @@ jobs:
                   assert m["checkpoint_bytes"] > 0
           print("brain_ab_depth_gate | comparable_budget=true records_complete=true")
           PY
-          grep -q '^brain_ab | schema=3 ' /tmp/ab-depth.txt
+          grep -q '^brain_ab | schema=4 ' /tmp/ab-depth.txt
           test "$(grep -c '^brain_ab_run |' /tmp/ab-depth.txt)" -eq 6
           grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true$' /tmp/ab-depth.txt
 
@@ -107,11 +109,12 @@ jobs:
           python3 - <<'PY'
           import json
           data = json.load(open("/tmp/ab-normalization.json", encoding="utf-8"))
-          assert data["schema_version"] == 3
+          assert data["schema_version"] == 4
           assert data["a"]["config"] == data["b"]["config"]
           assert data["a"]["normalization"] == "layernorm"
           assert data["b"]["normalization"] == "rmsnorm"
           assert data["a"]["position"] == data["b"]["position"] == "learned_absolute"
+          assert data["a"]["optimizer"] == data["b"]["optimizer"] == "adam"
           assert data["a_vs_a_reproducible"] is False
           assert data["protocol"]["steps"] == 3
           assert data["protocol"]["repeats"] == 3
