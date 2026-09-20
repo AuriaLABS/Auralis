@@ -1,0 +1,74 @@
+name: Brain Layer Diagnostics
+
+on:
+  pull_request:
+    paths:
+      - "src/layer_diagnostics.rs"
+      - "src/model.rs"
+      - "src/lib.rs"
+      - "tests/brain_layer_diagnostics.rs"
+      - "src/bin/auralis_layer_diagnostics_bench.rs"
+      - "docs/layer-diagnostics.md"
+      - ".github/workflows/brain_layer_diagnostics.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  layer-diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Tiny-model diagnostics tests
+        run: |
+          cargo test --lib layer_diagnostics::tests -- --nocapture
+          cargo test --test brain_layer_diagnostics -- --nocapture
+
+      - name: Hooks on/off benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_layer_diagnostics_bench -- 8 5 \
+            | tee /tmp/layer-diag.txt
+
+          test "$(grep -c '^layer_diagnostics_json |' /tmp/layer-diag.txt)" -eq 1
+          test "$(grep -c '^layer_diagnostics_run |' /tmp/layer-diag.txt)" -eq 5
+          summary="$(grep '^layer_diagnostics_summary |' /tmp/layer-diag.txt)"
+          grep -q 'exact=true' <<< "$summary"
+
+          python3 - <<'PY'
+          import json, re
+
+          lines = open("/tmp/layer-diag.txt", encoding="utf-8").read().splitlines()
+          json_line = next(x for x in lines if x.startswith("layer_diagnostics_json |"))
+          report = json.loads(json_line.split(" | ", 1)[1])
+
+          assert len(report["activations"]) == 18
+          assert len(report["gradients"]) == 2
+          assert len(report["adjacent_gradient_cosine"]) == 1
+
+          for entry in report["activations"]:
+              stats = entry["stats"]
+              assert stats["len"] > 0
+              assert stats["mean"] is not None
+              assert stats["l2"] is not None
+              assert stats["max_abs"] >= 0
+              assert stats["histogram"] is not None
+
+          for entry in report["gradients"]:
+              stats = entry["stats"]
+              assert stats["len"] > 0
+              assert stats["l2"] is not None
+              assert stats["histogram"] is not None
+
+          summary = next(x for x in lines if x.startswith("layer_diagnostics_summary |"))
+          off = float(re.search(r"off_ratio=([0-9.]+)", summary).group(1))
+          full = float(re.search(r"full_ratio=([0-9.]+)", summary).group(1))
+          if off > 1.10:
+              raise SystemExit(f"hooks-off overhead too high: {off:.4f}")
+          assert full > 0
+          print(f"brain_layer_diagnostics_gate | off_ratio={off:.4f} full_ratio={full:.4f}")
+          PY

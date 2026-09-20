@@ -20,6 +20,7 @@ pub mod experiment;
 pub mod gradcheck;
 pub mod inspect;
 pub mod kernels;
+pub mod layer_diagnostics;
 pub mod manifest;
 pub mod metrics;
 pub mod model;
