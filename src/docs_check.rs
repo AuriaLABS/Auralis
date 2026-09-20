@@ -140,6 +140,7 @@ mod tests {
             "ci-pruebas.md",
             "sec-unsafe.md",
             "scheduler.md",
+            "optimizer-boundary.md",
             "verify.md",
             "cli.md",
             "versions.md",
@@ -292,6 +293,24 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_boundary_doc_matches_code() {
+        let text = docs("optimizer-boundary.md");
+        for needle in [
+            "dyn Optimizer",
+            "AdamConfig",
+            "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
+            "OptimizerStateIdentity",
+            "AURLIS03 remains byte-format compatible",
+            "Optimizer::set_learning_rate",
+            "Future parameter groups",
+        ] {
+            assert!(text.contains(needle), "optimizer-boundary.md missing {needle}");
+        }
+        assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
@@ -300,6 +319,8 @@ mod tests {
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
         assert_eq!(crate::manifest::MANIFEST_VERSION, 4);
         assert_eq!(crate::release::RELEASE_MANIFEST_VERSION, 1);
         let versions = docs("versions.md");
@@ -309,6 +330,8 @@ mod tests {
             "RUN_CONFIG_SCHEMA_VERSION = 1",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
+            "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
+            "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
             "MANIFEST_VERSION = 4",
             "RELEASE_MANIFEST_VERSION = 1",
         ] {
