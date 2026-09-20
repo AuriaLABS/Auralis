@@ -1,5 +1,10 @@
-//! Registry of Engine microbenchmarks. This slice catalogs bins and
-//! exports the catalog; running kernels stays on `cargo run --bin`.
+//! Registry of Engine microbenchmarks and their optional in-process runners.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BenchRunnerKind {
+    Engine,
+    Matmul,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BenchSpec {
@@ -8,6 +13,7 @@ pub struct BenchSpec {
     pub kind: &'static str,
     pub summary: &'static str,
     pub default_args: &'static str,
+    pub runner: Option<BenchRunnerKind>,
     pub requires_alloc_profile: bool,
 }
 
@@ -18,6 +24,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "throughput",
         summary: "side-by-side train reference vs reuse",
         default_args: "3 20 5",
+        runner: Some(BenchRunnerKind::Engine),
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -26,6 +33,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "forward matmul reference",
         default_args: "5 40 5",
+        runner: Some(BenchRunnerKind::Matmul),
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -34,6 +42,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "B-transpose matmul",
         default_args: "5 40 5",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -42,6 +51,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "blocked matmul candidate",
         default_args: "",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -50,6 +60,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "matmul grad-B kernel",
         default_args: "5 40 5",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -58,6 +69,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "attention forward",
         default_args: "5 80 5",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -66,6 +78,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "kernel",
         summary: "attention backward",
         default_args: "5 80 5",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -74,6 +87,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "memory",
         summary: "engine allocation profile (reference vs reuse)",
         default_args: "2",
+        runner: None,
         requires_alloc_profile: true,
     },
     BenchSpec {
@@ -82,6 +96,7 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "memory",
         summary: "train-path allocation profile",
         default_args: "",
+        runner: None,
         requires_alloc_profile: false,
     },
     BenchSpec {
@@ -90,8 +105,20 @@ pub const BENCHES: &[BenchSpec] = &[
         kind: "memory",
         summary: "eval-path allocation profile",
         default_args: "",
+        runner: None,
         requires_alloc_profile: false,
     },
+];
+
+
+pub const INTERNAL_ONLY_BINS: &[&str] = &[
+    "auralis_bench_result_smoke",
+    "auralis_workspace_profile",
+    "auralis_training_diagnostics_bench",
+    "auralis_forward_diagnostics_bench",
+    "auralis_matmul_rowslices_vs_blocked_bench",
+    "auralis_engine_soak",
+    "auralis_engine_step_timing_bench",
 ];
 
 fn json_escape(s: &str) -> String {
@@ -138,21 +165,26 @@ impl BenchSpec {
     }
 
     pub fn describe(&self) -> String {
+        let invoke = if self.runner.is_some() {
+            format!("auralis bench run {}", self.id)
+        } else {
+            format!(
+                "cargo run --release{} --bin {} -- {}",
+                if self.requires_alloc_profile { " --features alloc-profile" } else { "" },
+                self.bin,
+                self.default_args
+            )
+        };
         format!(
-            "id={}\nbin={}\nkind={}\nsummary={}\ndefault_args={}\nrequires_alloc_profile={}\ninvoke=cargo run --release{} --bin {} -- {}\n",
+            "id={}\nbin={}\nkind={}\nsummary={}\ndefault_args={}\nrequires_alloc_profile={}\nlibrary_runner={}\ninvoke={}\n",
             self.id,
             self.bin,
             self.kind,
             self.summary,
             self.default_args,
             self.requires_alloc_profile,
-            if self.requires_alloc_profile {
-                " --features alloc-profile"
-            } else {
-                ""
-            },
-            self.bin,
-            self.default_args
+            self.runner.is_some(),
+            invoke
         )
     }
 
@@ -247,6 +279,19 @@ mod tests {
         let b = find("auralis_engine_bench").unwrap();
         assert_eq!(a, b);
         assert!(find("does-not-exist").is_none());
+    }
+
+    #[test]
+    fn first_library_runners_are_explicit() {
+        assert_eq!(find("engine").unwrap().runner, Some(BenchRunnerKind::Engine));
+        assert_eq!(find("matmul").unwrap().runner, Some(BenchRunnerKind::Matmul));
+        assert!(find("attention").unwrap().runner.is_none());
+    }
+
+    #[test]
+    fn internal_benchmark_allowlist_covers_workspace_profiler() {
+        assert!(INTERNAL_ONLY_BINS.contains(&"auralis_workspace_profile"));
+        assert!(INTERNAL_ONLY_BINS.contains(&"auralis_engine_step_timing_bench"));
     }
 
     #[test]
