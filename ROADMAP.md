@@ -55,6 +55,8 @@ Debe existir y estar probado:
 
 Objetivo: dejar de ser solo correcto y empezar a ser rápido.
 
+Estado técnico integrado y límites actuales: [docs/ENGINE_ARCHITECTURE.md](docs/ENGINE_ARCHITECTURE.md). El listado siguiente es roadmap de la fase, no implica que cada línea esté ya promovida.
+
 - multithreading;
 - SIMD donde aporte beneficio medido;
 - kernels optimizados;
