@@ -94,7 +94,7 @@ jobs:
                   assert m["checkpoint_bytes"] > 0
           print("brain_ab_depth_gate | comparable_budget=true records_complete=true")
           PY
-          grep -q '^brain_ab | schema=2 ' /tmp/ab-depth.txt
+          grep -q '^brain_ab | schema=3 ' /tmp/ab-depth.txt
           test "$(grep -c '^brain_ab_run |' /tmp/ab-depth.txt)" -eq 6
           grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true$' /tmp/ab-depth.txt
 
