@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
-pub const RUN_CONFIG_SCHEMA_VERSION: u32 = 1;
+pub const RUN_CONFIG_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RunConfig {
@@ -18,6 +18,7 @@ pub struct RunConfig {
     pub gradient_accumulation_steps: usize,
     pub learning_rate: f32,
     pub grad_clip_norm: f32,
+    pub grad_clip_enabled: bool,
     pub train_fraction: f32,
     pub validation_fraction: f32,
     pub bpe_merges: usize,
@@ -31,6 +32,7 @@ impl Default for RunConfig {
             gradient_accumulation_steps: 1,
             learning_rate: 3e-3,
             grad_clip_norm: 1.0,
+            grad_clip_enabled: true,
             train_fraction: 0.90,
             validation_fraction: 0.05,
             bpe_merges: 64,
@@ -83,6 +85,7 @@ impl RunConfig {
             batch_size: self.batch_size,
             gradient_accumulation_steps: self.gradient_accumulation_steps,
             grad_clip_norm: self.grad_clip_norm,
+            grad_clip_enabled: self.grad_clip_enabled,
         }
     }
 
@@ -112,6 +115,7 @@ impl RunConfig {
                 "gradient_accumulation_steps={}\n",
                 "learning_rate={}\n",
                 "grad_clip_norm={}\n",
+                "grad_clip_enabled={}\n",
                 "train_fraction={}\n",
                 "validation_fraction={}\n",
                 "bpe_merges={}\n"
@@ -122,6 +126,7 @@ impl RunConfig {
             self.gradient_accumulation_steps,
             self.learning_rate,
             self.grad_clip_norm,
+            self.grad_clip_enabled,
             self.train_fraction,
             self.validation_fraction,
             self.bpe_merges,
@@ -140,6 +145,7 @@ impl RunConfig {
         let mut gradient_accumulation_steps = None;
         let mut learning_rate = None;
         let mut grad_clip_norm = None;
+        let mut grad_clip_enabled = None;
         let mut train_fraction = None;
         let mut validation_fraction = None;
         let mut bpe_merges = None;
@@ -171,6 +177,7 @@ impl RunConfig {
                 }
                 "learning_rate" => set_once(&mut learning_rate, value, key)?,
                 "grad_clip_norm" => set_once(&mut grad_clip_norm, value, key)?,
+                "grad_clip_enabled" => set_once(&mut grad_clip_enabled, value, key)?,
                 "train_fraction" => set_once(&mut train_fraction, value, key)?,
                 "validation_fraction" => set_once(&mut validation_fraction, value, key)?,
                 "bpe_merges" => set_once(&mut bpe_merges, value, key)?,
@@ -179,11 +186,20 @@ impl RunConfig {
         }
 
         let version: u32 = required(version, "auralis_run_config")?;
-        if version != RUN_CONFIG_SCHEMA_VERSION {
-            return Err(format!(
-                "run config schema version {version} is unsupported (expected {RUN_CONFIG_SCHEMA_VERSION}); explicit migration required"
-            ));
-        }
+        let grad_clip_enabled = match version {
+            1 => {
+                if grad_clip_enabled.is_some() {
+                    return Err("run config v1 must not contain grad_clip_enabled".into());
+                }
+                true
+            }
+            RUN_CONFIG_SCHEMA_VERSION => required(grad_clip_enabled, "grad_clip_enabled")?,
+            other => {
+                return Err(format!(
+                    "run config schema version {other} is unsupported (expected 1 or {RUN_CONFIG_SCHEMA_VERSION})"
+                ));
+            }
+        };
 
         let cfg = Self {
             seed: required(seed, "seed")?,
@@ -194,6 +210,7 @@ impl RunConfig {
             )?,
             learning_rate: required(learning_rate, "learning_rate")?,
             grad_clip_norm: required(grad_clip_norm, "grad_clip_norm")?,
+            grad_clip_enabled,
             train_fraction: required(train_fraction, "train_fraction")?,
             validation_fraction: required(validation_fraction, "validation_fraction")?,
             bpe_merges: required(bpe_merges, "bpe_merges")?,
@@ -202,8 +219,43 @@ impl RunConfig {
         Ok(cfg)
     }
 
+    fn encode_v1_legacy(&self) -> Result<String, String> {
+        if !self.grad_clip_enabled {
+            return Err("RunConfig v1 cannot represent grad_clip_enabled=false".into());
+        }
+        Ok(format!(
+            concat!(
+                "auralis_run_config=1\n",
+                "seed={}\n",
+                "batch_size={}\n",
+                "gradient_accumulation_steps={}\n",
+                "learning_rate={}\n",
+                "grad_clip_norm={}\n",
+                "train_fraction={}\n",
+                "validation_fraction={}\n",
+                "bpe_merges={}\n"
+            ),
+            self.seed,
+            self.batch_size,
+            self.gradient_accumulation_steps,
+            self.learning_rate,
+            self.grad_clip_norm,
+            self.train_fraction,
+            self.validation_fraction,
+            self.bpe_merges,
+        ))
+    }
+
     pub fn fingerprint(&self) -> u64 {
         fingerprint_bytes(self.encode().as_bytes())
+    }
+
+    pub fn fingerprint_for_schema(&self, schema: u32) -> Result<u64, String> {
+        match schema {
+            1 => Ok(fingerprint_bytes(self.encode_v1_legacy()?.as_bytes())),
+            RUN_CONFIG_SCHEMA_VERSION => Ok(self.fingerprint()),
+            other => Err(format!("unsupported run config schema {other}")),
+        }
     }
 
     /// Human-readable effective config used before any expensive startup.
@@ -275,6 +327,7 @@ mod tests {
             cfg.gradient_accumulation_steps
         );
         assert_eq!(train.grad_clip_norm, cfg.grad_clip_norm);
+        assert_eq!(train.grad_clip_enabled, cfg.grad_clip_enabled);
         assert_eq!(cfg.effective_batch_size().unwrap(), 4);
     }
 
@@ -328,6 +381,30 @@ mod tests {
         let mut changed = a;
         changed.batch_size += 1;
         assert_ne!(a.fingerprint(), changed.fingerprint());
+    }
+
+    #[test]
+    fn v1_migrates_to_historical_clipping_enabled() {
+        let current = RunConfig::default().with_cli_overrides(7, 3, 5);
+        let v1 = current.encode_v1_legacy().unwrap();
+        let migrated = RunConfig::decode(&v1).unwrap();
+        assert!(migrated.grad_clip_enabled);
+        assert_eq!(migrated.grad_clip_norm, current.grad_clip_norm);
+        assert_eq!(
+            migrated.fingerprint_for_schema(1).unwrap(),
+            fingerprint_bytes(v1.as_bytes())
+        );
+        assert_ne!(migrated.fingerprint(), migrated.fingerprint_for_schema(1).unwrap());
+    }
+
+    #[test]
+    fn v1_cannot_represent_clipping_disabled() {
+        let mut cfg = RunConfig::default();
+        cfg.grad_clip_enabled = false;
+        assert!(cfg.fingerprint_for_schema(1).is_err());
+        let encoded = cfg.encode();
+        let decoded = RunConfig::decode(&encoded).unwrap();
+        assert!(!decoded.grad_clip_enabled);
     }
 
     #[test]
