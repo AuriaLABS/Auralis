@@ -1,0 +1,101 @@
+name: Engine CPU Soak
+
+on:
+  pull_request:
+    paths:
+      - "src/bin/auralis_engine_soak.rs"
+      - ".github/workflows/engine_soak.yml"
+      - "src/training.rs"
+      - "src/checkpoint.rs"
+      - "src/model.rs"
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: Optimizer steps for manual long soak
+        required: true
+        default: "3000"
+      window_steps:
+        description: Steps per throughput/RSS window
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AURALIS_COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Unit tests
+        run: cargo test --bin auralis_engine_soak -- --nocapture
+
+      - name: Select protocol
+        id: protocol
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "steps=${{ inputs.steps }}" >> "$GITHUB_OUTPUT"
+            echo "window_steps=${{ inputs.window_steps }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "steps=300" >> "$GITHUB_OUTPUT"
+            echo "window_steps=50" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run sustained Engine benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_engine_soak --             "${{ steps.protocol.outputs.steps }}"             "${{ steps.protocol.outputs.window_steps }}" | tee engine-soak.txt
+
+          test "$(grep -c '^engine_soak_child |' engine-soak.txt)" -eq 2
+          summary="$(grep '^engine_soak_summary |' engine-soak.txt)"
+          grep -q 'exact_state=true' <<< "$summary"
+          grep -q 'checkpoint_bytes_exact=true' <<< "$summary"
+          grep -q 'finite_loss=true' <<< "$summary"
+          grep -q 'continuous_rss_bounded=true' <<< "$summary"
+          grep -q 'split_rss_bounded=true' <<< "$summary"
+
+          python3 - <<'PY'
+          import re
+          text = open("engine-soak.txt", encoding="utf-8").read()
+          summary = next(line for line in text.splitlines() if line.startswith("engine_soak_summary |"))
+          for key in ["continuous_last_first_ratio", "split_last_first_ratio"]:
+              value = float(re.search(rf"{key}=([0-9.]+)", summary).group(1))
+              if value < 0.85:
+                  raise SystemExit(f"{key} regressed materially: {value:.4f}")
+          children = [line for line in text.splitlines() if line.startswith("engine_soak_child |")]
+          for line in children:
+              windows = int(re.search(r"windows=(\d+)", line).group(1))
+              median = float(re.search(r"median_tok_per_s=([0-9.]+)", line).group(1))
+              peak = int(re.search(r"peak_rss_kib=(\d+)", line).group(1))
+              if windows < 2 or median <= 0 or peak < 0:
+                  raise SystemExit(f"invalid child record: {line}")
+          PY
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f engine-soak.txt ]; then
+            {
+              echo "## Engine CPU soak"
+              echo
+              grep '^engine_soak_protocol |' engine-soak.txt || true
+              grep '^engine_soak_child |' engine-soak.txt || true
+              grep '^engine_soak_summary |' engine-soak.txt || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve machine-readable soak record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-soak-${{ github.run_id }}
+          path: engine-soak.txt
+          if-no-files-found: error
