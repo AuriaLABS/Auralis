@@ -280,7 +280,8 @@ mod tests {
         let stats = summarize_tensor(&[-2.0, -0.5, 0.0, 0.25, 3.0], true);
         assert_eq!(stats.len, 5);
         assert!((stats.mean.unwrap() - 0.15).abs() < 1e-6);
-        assert!((stats.l2.unwrap() - 3.6496575).abs() < 1e-6);
+        let expected_l2 = (4.0f32 + 0.25 + 0.0625 + 9.0).sqrt();
+        assert!((stats.l2.unwrap() - expected_l2).abs() < 1e-6);
         assert_eq!(stats.max_abs, 3.0);
         assert_eq!(
             stats.histogram.unwrap(),
