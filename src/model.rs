@@ -9,6 +9,10 @@ use crate::attention::{Attention, AttentionShape, RowSlicesAttention};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
+use crate::layer_diagnostics::{
+    cosine_similarity, summarize_tensor, AdjacentLayerCosine, GradientLayerSummary,
+    LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
+};
 use crate::numeric::{explain, scan_f32, Scan, Stage};
 use crate::position::{LearnedAbsolute, PositionalEncoding, TrainablePositionalEncoding};
 use rand::Rng;
@@ -540,6 +544,88 @@ impl Gpt {
         self.backward_into_reuse(x, y, grads, &mut workspace)
     }
 
+    pub fn backward_with_layer_diagnostics(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        grads: &mut [f32],
+        hooks: LayerHooks,
+    ) -> (f32, Option<LayerDiagnosticsReport>) {
+        if !hooks.enabled {
+            return (self.backward_into(x, y, grads), None);
+        }
+
+        let (_logits, cache) = self.forward_internal(x);
+        let mut activations = Vec::with_capacity(cache.layers.len() * 9);
+
+        fn push(
+            activations: &mut Vec<LayerTensorSummary>,
+            layer: usize,
+            name: &'static str,
+            values: &[f32],
+            histogram: bool,
+        ) {
+            activations.push(LayerTensorSummary {
+                layer,
+                name,
+                stage: Stage::Activation,
+                scan: scan_f32(values),
+                stats: summarize_tensor(values, histogram),
+            });
+        }
+
+        for (layer, cache) in cache.layers.iter().enumerate() {
+            push(&mut activations, layer, "h1", &cache.h1, hooks.histogram);
+            push(&mut activations, layer, "q", &cache.q, hooks.histogram);
+            push(&mut activations, layer, "k", &cache.k, hooks.histogram);
+            push(&mut activations, layer, "v", &cache.v, hooks.histogram);
+            push(&mut activations, layer, "probs", &cache.probs, hooks.histogram);
+            push(&mut activations, layer, "att", &cache.att, hooks.histogram);
+            push(&mut activations, layer, "h2", &cache.h2, hooks.histogram);
+            push(&mut activations, layer, "ff_pre", &cache.ff_pre, hooks.histogram);
+            push(&mut activations, layer, "ff_act", &cache.ff_act, hooks.histogram);
+        }
+
+        let loss = self.backward_into(x, y, grads);
+        let block_len = self.block_param_count();
+        let block_base = self.tok_emb.len() + self.pos_emb.len();
+        let mut gradients = Vec::with_capacity(self.cfg.n_layer);
+
+        for layer in 0..self.cfg.n_layer {
+            let start = block_base + layer * block_len;
+            let end = start + block_len;
+            gradients.push(GradientLayerSummary {
+                layer,
+                stats: summarize_tensor(&grads[start..end], hooks.histogram),
+            });
+        }
+
+        let mut adjacent_gradient_cosine = Vec::new();
+        if hooks.adjacent_cosine {
+            adjacent_gradient_cosine.reserve(self.cfg.n_layer.saturating_sub(1));
+            for layer in 0..self.cfg.n_layer.saturating_sub(1) {
+                let left_start = block_base + layer * block_len;
+                let right_start = left_start + block_len;
+                let left = &grads[left_start..left_start + block_len];
+                let right = &grads[right_start..right_start + block_len];
+                adjacent_gradient_cosine.push(AdjacentLayerCosine {
+                    left_layer: layer,
+                    right_layer: layer + 1,
+                    cosine: cosine_similarity(left, right),
+                });
+            }
+        }
+
+        (
+            loss,
+            Some(LayerDiagnosticsReport {
+                activations,
+                gradients,
+                adjacent_gradient_cosine,
+            }),
+        )
+    }
+
     pub(crate) fn backward_into_reuse(
         &self,
         x: &[usize],
@@ -862,15 +948,19 @@ impl Gpt {
         }
     }
 
-    fn param_count(&self) -> usize {
+    fn block_param_count(&self) -> usize {
         let d = self.cfg.n_embd;
-        let per_block = 4 * d * d
+        4 * d * d
             + 2 * d
             + 2 * d
             + d * self.cfg.n_ff
             + self.cfg.n_ff
             + self.cfg.n_ff * d
-            + d;
+            + d
+    }
+
+    fn param_count(&self) -> usize {
+        let per_block = self.block_param_count();
         self.tok_emb.len()
             + self.pos_emb.len()
             + self.cfg.n_layer * per_block
