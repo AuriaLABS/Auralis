@@ -281,44 +281,53 @@ impl Rotary {
             })
     }
 
-    fn rotate_in_place(
+    fn rotate_pair_in_place(
         &self,
-        values: &mut [f32],
+        first: &mut [f32],
+        second: &mut [f32],
         positions: usize,
         inverse: bool,
     ) -> Result<(), PositionError> {
         let expected = self.active_len(positions)?;
-        if values.len() != expected {
-            return Err(PositionError::ActivationMismatch {
-                expected,
-                actual: values.len(),
-            });
+        for values in [&*first, &*second] {
+            if values.len() != expected {
+                return Err(PositionError::ActivationMismatch {
+                    expected,
+                    actual: values.len(),
+                });
+            }
         }
+
         let head_width = self.width / self.heads;
         let pairs = head_width / 2;
-        for position in 0..positions {
-            for head in 0..self.heads {
-                let base = position * self.width + head * head_width;
-                for pair in 0..pairs {
+        for pair in 0..pairs {
+            let exponent = (2 * pair) as f32 / head_width as f32;
+            let denominator = 10_000.0f32.powf(exponent);
+            for position in 0..positions {
+                let theta = position as f32 / denominator;
+                let (sin, cos) = theta.sin_cos();
+                for head in 0..self.heads {
+                    let base = position * self.width + head * head_width;
                     let i0 = base + 2 * pair;
                     let i1 = i0 + 1;
-                    let exponent = (2 * pair) as f32 / head_width as f32;
-                    let theta = position as f32 / 10_000.0f32.powf(exponent);
-                    let (sin, cos) = theta.sin_cos();
-                    let x0 = values[i0];
-                    let x1 = values[i1];
-                    if inverse {
-                        values[i0] = x0 * cos + x1 * sin;
-                        values[i1] = -x0 * sin + x1 * cos;
-                    } else {
-                        values[i0] = x0 * cos - x1 * sin;
-                        values[i1] = x0 * sin + x1 * cos;
+
+                    for values in [&mut *first, &mut *second] {
+                        let x0 = values[i0];
+                        let x1 = values[i1];
+                        if inverse {
+                            values[i0] = x0 * cos + x1 * sin;
+                            values[i1] = -x0 * sin + x1 * cos;
+                        } else {
+                            values[i0] = x0 * cos - x1 * sin;
+                            values[i1] = x0 * sin + x1 * cos;
+                        }
                     }
                 }
             }
         }
         Ok(())
     }
+
 }
 
 impl PositionalEncoding for Rotary {
@@ -359,8 +368,7 @@ impl PositionalEncoding for Rotary {
             });
         }
         validate_qk(q, k, positions, self.width, heads)?;
-        self.rotate_in_place(q, positions, false)?;
-        self.rotate_in_place(k, positions, false)
+        self.rotate_pair_in_place(q, k, positions, false)
     }
 
     fn backward_qk(
@@ -377,8 +385,7 @@ impl PositionalEncoding for Rotary {
             });
         }
         validate_qk(dq, dk, positions, self.width, heads)?;
-        self.rotate_in_place(dq, positions, true)?;
-        self.rotate_in_place(dk, positions, true)
+        self.rotate_pair_in_place(dq, dk, positions, true)
     }
 }
 
@@ -508,6 +515,63 @@ mod tests {
             Rotary::new(8, 6, 2),
             Err(PositionError::HeadWidthMismatch { .. })
         ));
+    }
+
+    fn legacy_rotate(
+        values: &mut [f32],
+        positions: usize,
+        width: usize,
+        heads: usize,
+        inverse: bool,
+    ) {
+        let head_width = width / heads;
+        let pairs = head_width / 2;
+        for position in 0..positions {
+            for head in 0..heads {
+                let base = position * width + head * head_width;
+                for pair in 0..pairs {
+                    let i0 = base + 2 * pair;
+                    let i1 = i0 + 1;
+                    let exponent = (2 * pair) as f32 / head_width as f32;
+                    let theta = position as f32 / 10_000.0f32.powf(exponent);
+                    let (sin, cos) = theta.sin_cos();
+                    let x0 = values[i0];
+                    let x1 = values[i1];
+                    if inverse {
+                        values[i0] = x0 * cos + x1 * sin;
+                        values[i1] = -x0 * sin + x1 * cos;
+                    } else {
+                        values[i0] = x0 * cos - x1 * sin;
+                        values[i1] = x0 * sin + x1 * cos;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rope_trig_reuse_is_bit_exact_with_legacy_rotation() {
+        let rope = Rotary::new(8, 16, 4).unwrap();
+        let mut q: Vec<f32> = (0..8 * 16)
+            .map(|i| (i as f32 - 37.0) / 29.0)
+            .collect();
+        let mut k: Vec<f32> = (0..8 * 16)
+            .map(|i| (i as f32 + 11.0) / 31.0)
+            .collect();
+        let mut legacy_q = q.clone();
+        let mut legacy_k = k.clone();
+
+        legacy_rotate(&mut legacy_q, 8, 16, 4, false);
+        legacy_rotate(&mut legacy_k, 8, 16, 4, false);
+        rope.apply_qk(&mut q, &mut k, 8, 4).unwrap();
+        assert_eq!(q, legacy_q);
+        assert_eq!(k, legacy_k);
+
+        legacy_rotate(&mut legacy_q, 8, 16, 4, true);
+        legacy_rotate(&mut legacy_k, 8, 16, 4, true);
+        rope.backward_qk(&mut q, &mut k, 8, 4).unwrap();
+        assert_eq!(q, legacy_q);
+        assert_eq!(k, legacy_k);
     }
 
     #[test]
