@@ -1,0 +1,100 @@
+name: Brain A/B Harness
+
+on:
+  pull_request:
+    paths:
+      - "src/brain_ab.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_brain_ab.rs"
+      - "docs/brain-ab.md"
+      - "README.md"
+      - "src/docs_check.rs"
+      - ".github/workflows/brain_ab_harness.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AURALIS_COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Harness unit tests
+        run: |
+          cargo test --lib brain_ab::tests -- --nocapture
+          cargo test --lib docs_check::tests::brain_ab_doc_names_reproducibility_contract -- --nocapture
+
+      - name: A vs A deterministic control
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 3 3 same --json             | tee /tmp/ab-same.json
+
+          python3 - <<'PY'
+          import json, math, os
+          data = json.load(open("/tmp/ab-same.json", encoding="utf-8"))
+          assert data["schema_version"] == 1
+          assert data["code_revision"] == os.environ["AURALIS_COMMIT_SHA"]
+          assert data["a_vs_a_reproducible"] is True
+          assert data["protocol"]["steps"] == 3
+          assert data["protocol"]["repeats"] == 3
+          assert data["a"]["config"] == data["b"]["config"]
+          a = data["a"]["measurements"]
+          b = data["b"]["measurements"]
+          assert len(a) == len(b) == 3
+          fingerprints = {m["state_fingerprint"] for m in a + b}
+          assert len(fingerprints) == 1, fingerprints
+          checkpoints = {m["checkpoint_bytes"] for m in a + b}
+          assert len(checkpoints) == 1, checkpoints
+          for left, right in zip(a, b):
+              assert left["final_train_loss"] == right["final_train_loss"]
+              assert left["eval_loss"] == right["eval_loss"]
+              assert left["eval_perplexity"] == right["eval_perplexity"]
+              assert left["parameter_count"] == right["parameter_count"]
+              assert left["parameter_bytes"] == right["parameter_bytes"]
+              assert left["optimizer_state_bytes"] == right["optimizer_state_bytes"]
+              assert left["tokens_per_second"] > 0
+              assert right["tokens_per_second"] > 0
+          print("brain_ab_same_gate | deterministic_state=true comparable_budget=true")
+          PY
+
+      - name: Depth comparison uses identical budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 3 3 depth --json             | tee /tmp/ab-depth.json
+          cargo run --release --bin auralis_brain_ab -- 2 3 depth             | tee /tmp/ab-depth.txt
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/ab-depth.json", encoding="utf-8"))
+          assert data["a_vs_a_reproducible"] is False
+          assert data["a"]["config"]["n_layer"] == 1
+          assert data["b"]["config"]["n_layer"] == 2
+          assert data["a"]["config"]["n_embd"] == data["b"]["config"]["n_embd"]
+          assert data["a"]["config"]["n_head"] == data["b"]["config"]["n_head"]
+          assert data["protocol"]["steps"] == 3
+          assert data["protocol"]["repeats"] == 3
+          assert len(data["a"]["measurements"]) == 3
+          assert len(data["b"]["measurements"]) == 3
+          for side in ["a", "b"]:
+              for m in data[side]["measurements"]:
+                  assert m["final_train_loss"] > 0
+                  assert m["eval_loss"] > 0
+                  assert m["eval_perplexity"] >= 1
+                  assert m["tokens_per_second"] > 0
+                  assert m["parameter_count"] > 0
+                  assert m["parameter_bytes"] == 4 * m["parameter_count"]
+                  assert m["optimizer_state_bytes"] == 8 * m["parameter_count"]
+                  assert m["checkpoint_bytes"] > 0
+          print("brain_ab_depth_gate | comparable_budget=true records_complete=true")
+          PY
+
+          grep -q '^brain_ab | schema=1 ' /tmp/ab-depth.txt
+          test "$(grep -c '^brain_ab_run |' /tmp/ab-depth.txt)" -eq 6
+          grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true$' /tmp/ab-depth.txt

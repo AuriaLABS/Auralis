@@ -8,6 +8,7 @@ pub mod bench_format;
 pub mod bench_result;
 pub mod bench_runner;
 pub mod bpe;
+pub mod brain_ab;
 pub mod checkpoint;
 pub mod ci_matrix;
 pub mod cpu_matmul;

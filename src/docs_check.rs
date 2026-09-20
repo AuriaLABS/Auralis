@@ -136,6 +136,7 @@ mod tests {
         for name in [
             "architecture-config.md",
             "bench-registry.md",
+            "brain-ab.md",
             "ci-pruebas.md",
             "sec-unsafe.md",
             "verify.md",
@@ -244,6 +245,23 @@ mod tests {
             ).unwrap_or_else(|e| panic!("{example}: {e}"));
             cfg.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn brain_ab_doc_names_reproducibility_contract() {
+        let text = docs("brain-ab.md");
+        for needle in [
+            "same",
+            "depth",
+            "same training budget",
+            "final training loss",
+            "eval loss and perplexity",
+            "real AURLIS03 checkpoint bytes",
+            "does **not** declare a winner",
+        ] {
+            assert!(text.contains(needle), "docs/brain-ab.md missing {needle}");
+        }
+        assert!(readme().contains("docs/brain-ab.md"));
     }
 
     #[test]
