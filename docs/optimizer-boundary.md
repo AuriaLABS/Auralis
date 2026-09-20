@@ -76,9 +76,11 @@ AURLIS03 remains byte-format compatible. Its optimizer payload is still:
 4. m values;
 5. v values.
 
-Loading maps that legacy binary payload into the validated Adam state contract. Invalid legacy state returns InvalidData instead of reaching optimizer/model assertions.
+Loading preserves the historical AURLIS03 adapter through Adam::from_state. This is intentional: numerical diagnostics must still be able to load a checkpoint whose optimizer moments contain NaN/Inf and identify the fault context before any bad state is persisted.
 
-No checkpoint magic/version bump is introduced by #110.
+The stricter AdamState schema-1 validation applies to the canonical versioned optimizer-state contract, not retroactively to the legacy AURLIS03 loader.
+
+No checkpoint magic/version bump or loader-schema change is introduced by #110.
 
 ## Future parameter groups
 
