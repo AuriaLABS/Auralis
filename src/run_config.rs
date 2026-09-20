@@ -199,7 +199,7 @@ impl RunConfig {
             RUN_CONFIG_SCHEMA_VERSION => required(grad_clip_enabled, "grad_clip_enabled")?,
             other => {
                 return Err(format!(
-                    "run config schema version {other} is unsupported (expected 1 or {RUN_CONFIG_SCHEMA_VERSION})"
+                    "run config schema version {other} is unsupported (expected 1 or {RUN_CONFIG_SCHEMA_VERSION}); explicit migration required"
                 ));
             }
         };
