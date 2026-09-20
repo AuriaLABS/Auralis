@@ -1,0 +1,167 @@
+name: Numeric Diagnostics CLI
+
+on:
+  pull_request:
+    paths:
+      - "src/main.rs"
+      - "src/numeric.rs"
+      - "src/numeric_state.rs"
+      - "src/training.rs"
+      - "src/model.rs"
+      - "docs/DIAGNOSTICS.md"
+      - ".github/workflows/numeric_diagnostics_cli.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: CLI parser unit tests
+        run: cargo test --bin auralis cli_tests -- --nocapture
+
+      - name: Numeric scan and fixture exit codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet -- numeric "1 2 3"
+
+          set +e
+          cargo run --quiet -- numeric --fixture nan-logits >/tmp/nan-logits.txt 2>&1
+          nan_code=$?
+          cargo run --quiet -- numeric --fixture neg-inf-grad >/tmp/neg-inf-grad.txt 2>&1
+          inf_code=$?
+          set -e
+
+          test "$nan_code" -eq 3
+          test "$inf_code" -eq 3
+          grep -q 'NaN' /tmp/nan-logits.txt
+          grep -q -- '-Inf' /tmp/neg-inf-grad.txt
+
+      - name: Normal vs diagnostics training state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release -- train-fresh 2 /tmp/normal.bin 659918 1 1
+          cargo run --release -- train-fresh 2 /tmp/diagnostics.bin 659918 1 1 --diagnostics             | tee /tmp/diagnostics-train.txt
+
+          cmp /tmp/normal.bin /tmp/diagnostics.bin
+          cmp /tmp/normal.bin.manifest /tmp/diagnostics.bin.manifest
+          grep -q '^numeric | training_diagnostics=on$' /tmp/diagnostics-train.txt
+          test "$(grep -c '^numeric_train |' /tmp/diagnostics-train.txt)" -eq 2
+
+      - name: Checkpoint-backed forward diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet -- numeric forward /tmp/normal.bin --tokens 0,1,2             | tee /tmp/numeric-forward.txt
+          grep -q '^numeric_forward |' /tmp/numeric-forward.txt
+          grep -q 'finite=true' /tmp/numeric-forward.txt
+          test "$(grep -c '^numeric_tensor |' /tmp/numeric-forward.txt)" -gt 0
+
+      - name: Corrupt Adam state aborts without checkpoint overwrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/normal.bin /tmp/corrupt.bin
+          cp /tmp/normal.bin.manifest /tmp/corrupt.bin.manifest
+
+          python3 - <<'PY'
+          import struct
+
+          path = "/tmp/corrupt.bin"
+          data = bytearray(open(path, "rb").read())
+          off = 0
+
+          def take(n):
+              global off
+              out = data[off:off+n]
+              if len(out) != n:
+                  raise SystemExit("truncated checkpoint while locating Adam m")
+              off += n
+              return out
+
+          def u32():
+              return struct.unpack("<I", take(4))[0]
+
+          magic = bytes(take(8))
+          if magic != b"AURLIS03":
+              raise SystemExit(f"expected AURLIS03, got {magic!r}")
+
+          for _ in range(6):
+              u32()
+
+          kind = u32()
+          if kind == 0:
+              take(u32())
+          elif kind == 1:
+              vocab = u32()
+              for _ in range(vocab):
+                  take(u32())
+              merges = u32()
+              for _ in range(merges):
+                  take(u32())
+                  take(u32())
+          else:
+              raise SystemExit(f"unknown tokenizer kind {kind}")
+
+          n_params = u32()
+          take(n_params * 4)
+          take(4)  # learning rate
+          take(4)  # Adam t
+          n_state = u32()
+          if n_state != n_params:
+              raise SystemExit("Adam/model state length mismatch")
+
+          m_offset = off
+          data[m_offset:m_offset+4] = struct.pack("<f", float("nan"))
+          open(path, "wb").write(data)
+          print(f"corrupted_adam_m_offset={m_offset}")
+          PY
+
+          before_ckpt="$(sha256sum /tmp/corrupt.bin | cut -d' ' -f1)"
+          before_manifest="$(sha256sum /tmp/corrupt.bin.manifest | cut -d' ' -f1)"
+
+          set +e
+          cargo run --release -- train 1 /tmp/corrupt.bin 659918 1 1 --diagnostics             >/tmp/corrupt-train.txt 2>&1
+          code=$?
+          set -e
+
+          test "$code" -ne 0
+          grep -q 'adam_m' /tmp/corrupt-train.txt
+          grep -q 'NaN' /tmp/corrupt-train.txt
+          test "$before_ckpt" = "$(sha256sum /tmp/corrupt.bin | cut -d' ' -f1)"
+          test "$before_manifest" = "$(sha256sum /tmp/corrupt.bin.manifest | cut -d' ' -f1)"
+
+      - name: Diagnostics-off benchmark gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_training_diagnostics_bench -- 8 5             | tee /tmp/training-diagnostics.txt
+          python3 - <<'PY'
+          import re
+          text = open("/tmp/training-diagnostics.txt", encoding="utf-8").read()
+          m = re.search(r"off_over_baseline=([0-9.]+)", text)
+          if not m:
+              raise SystemExit("missing off_over_baseline")
+          ratio = float(m.group(1))
+          if ratio > 1.10:
+              raise SystemExit(f"diagnostics-off overhead too high: {ratio:.4f}")
+          print(f"numeric_cli_off_gate | off_over_baseline={ratio:.4f}")
+          PY
+
+      - name: Persistent schemas untouched
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs
