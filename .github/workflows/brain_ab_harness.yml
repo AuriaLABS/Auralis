@@ -99,7 +99,44 @@ jobs:
 
           grep -q '^brain_ab | schema=2 ' /tmp/ab-depth.txt
           test "$(grep -c '^brain_ab_run |' /tmp/ab-depth.txt)" -eq 6
-          grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true /tmp/ab-depth.txt
+          grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true
+
+      - name: LayerNorm vs RMSNorm uses identical architecture and budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 3 3 normalization --json             | tee /tmp/ab-normalization.json
+          cargo run --release --bin auralis_brain_ab -- 2 3 normalization             | tee /tmp/ab-normalization.txt
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/ab-normalization.json", encoding="utf-8"))
+          assert data["schema_version"] == 2
+          assert data["a"]["config"] == data["b"]["config"]
+          assert data["a"]["normalization"] == "layernorm"
+          assert data["b"]["normalization"] == "rmsnorm"
+          assert data["a_vs_a_reproducible"] is False
+          assert data["protocol"]["steps"] == 3
+          assert data["protocol"]["repeats"] == 3
+          for left, right in zip(data["a"]["measurements"], data["b"]["measurements"]):
+              assert left["parameter_count"] == right["parameter_count"]
+              assert left["parameter_bytes"] == right["parameter_bytes"]
+              assert left["optimizer_state_bytes"] == right["optimizer_state_bytes"]
+              assert left["checkpoint_bytes"] == right["checkpoint_bytes"]
+              assert left["final_train_loss"] > 0
+              assert right["final_train_loss"] > 0
+              assert left["eval_loss"] > 0
+              assert right["eval_loss"] > 0
+              assert left["tokens_per_second"] > 0
+              assert right["tokens_per_second"] > 0
+              assert left["state_fingerprint"] != right["state_fingerprint"]
+          print("brain_ab_normalization_gate | same_architecture=true same_budget=true layout_equal=true")
+          PY
+
+          grep -q 'normalization=layernorm' /tmp/ab-normalization.txt
+          grep -q 'normalization=rmsnorm' /tmp/ab-normalization.txt
+          test "$(grep -c '^brain_ab_run |' /tmp/ab-normalization.txt)" -eq 6
+ /tmp/ab-depth.txt
 
       - name: LayerNorm vs RMSNorm uses identical architecture and budget
         shell: bash
