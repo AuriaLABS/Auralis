@@ -13,7 +13,7 @@ use auralis::manifest::{self, ExperimentManifest};
 use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
 use auralis::numeric::{self, Diagnostics};
-use auralis::optim::Adam;
+use auralis::optim::{Adam, Optimizer};
 use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
 use auralis::scheduler::{scheduler_path, SchedulerConfig};
@@ -118,7 +118,7 @@ fn validate_resume_manifest(
 
     let m = manifest::load_manifest(ckpt)?;
     m.validate_resume(gpt, tok, run, dataset_fingerprint)?;
-    let optimizer_step = adam.t.max(0) as u64;
+    let optimizer_step = adam.global_step();
     if m.global_step != optimizer_step {
         return Err(format!(
             "resume mismatch for global_step: manifest={} adam={}",
@@ -281,8 +281,12 @@ fn train(
     } else {
         Adam::new(n_params, run.learning_rate)
     };
-    if adam.export().2.len() != n_params {
-        return Err("estado Adam incompatible con el número de parámetros".into());
+    if adam.parameter_count() != n_params {
+        return Err(format!(
+            "estado optimizer incompatible con parámetros: optimizer={} model={}",
+            adam.parameter_count(),
+            n_params
+        ));
     }
 
     let train_cfg = run.train_config();
@@ -291,7 +295,14 @@ fn train(
         .map_err(|e| format!("configuración de step inválida: {e}"))?;
     let mut workspace = TrainWorkspace::new(&gpt);
 
-    println!("params={} adam.t={}", n_params, adam.t);
+    println!(
+        "params={} optimizer={} global_step={} lr={}",
+        n_params,
+        adam.id().as_str(),
+        adam.global_step(),
+        adam.learning_rate()
+    );
+    println!("{}", adam.state_identity().line());
     let t0 = Instant::now();
     let mut processed_tokens = 0u64;
 
@@ -300,9 +311,10 @@ fn train(
     }
 
     for local_step in 1..=steps {
-        let global_step = adam.t.max(0) as u64;
+        let global_step = adam.global_step();
         let scheduled_lr = scheduler.learning_rate(run.learning_rate, global_step)?;
-        adam.lr = scheduled_lr;
+        adam.set_learning_rate(scheduled_lr)
+            .map_err(|e| format!("scheduler produjo LR inválido: {e}"))?;
         let metrics = if diagnostics {
             let (metrics, report) = train_step_reuse_diagnostics(
                 &mut gpt,
@@ -353,7 +365,7 @@ fn train(
                 metrics.loss,
                 metrics.grad_norm_before_clip,
                 metrics.grad_scale,
-                adam.lr,
+                adam.learning_rate(),
                 metrics.microbatches,
                 metrics.effective_batch_size,
                 sample
@@ -363,11 +375,11 @@ fn train(
 
     let throughput = Throughput::from_duration(processed_tokens, t0.elapsed());
     println!(
-        "train | tiempo={:.3}s tokens={} {:.0} tok/s adam.t={}",
+        "train | tiempo={:.3}s tokens={} {:.0} tok/s optimizer_step={}",
         throughput.elapsed_seconds,
         throughput.tokens,
         throughput.tokens_per_second,
-        adam.t
+        adam.global_step()
     );
 
     let validation = evaluate_holdout("validation", &gpt, &split.validation)?;
@@ -381,7 +393,7 @@ fn train(
         &tok,
         &run,
         dataset_fingerprint,
-        adam.t.max(0) as u64,
+        adam.global_step(),
     );
     let manifest_path = manifest::save_manifest(ckpt, &manifest)
         .map_err(|e| format!("checkpoint guardado pero falló el manifiesto: {e}"))?;
@@ -412,7 +424,7 @@ fn train(
     println!(
         "run_summary | params={} optimizer_steps={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
         n_params,
-        adam.t,
+        adam.global_step(),
         run.batch_size,
         run.gradient_accumulation_steps,
         effective_batch,
