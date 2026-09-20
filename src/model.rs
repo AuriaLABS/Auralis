@@ -14,7 +14,7 @@ use crate::layer_diagnostics::{
     LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
 };
 use crate::numeric::{explain, scan_f32, Scan, Stage};
-use crate::position::{LearnedAbsolute, PositionalEncoding, TrainablePositionalEncoding};
+use crate::position::{LearnedAbsolute, PositionKind, PositionalEncoding, Rotary, TrainablePositionalEncoding};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +117,7 @@ struct Block {
 pub struct Gpt {
     pub cfg: Config,
     normalization: NormalizationKind,
+    position: PositionKind,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -318,7 +319,12 @@ impl BackwardWorkspace {
 
 impl Gpt {
     pub fn new(cfg: Config, rng: &mut impl Rng) -> Self {
-        Self::new_with_normalization(cfg, NormalizationKind::LayerNorm, rng)
+        Self::new_with_policies(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            rng,
+        )
     }
 
     pub fn new_with_normalization(
@@ -326,7 +332,20 @@ impl Gpt {
         normalization: NormalizationKind,
         rng: &mut impl Rng,
     ) -> Self {
+        Self::new_with_policies(cfg, normalization, PositionKind::LearnedAbsolute, rng)
+    }
+
+    pub fn new_with_policies(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
+        if position == PositionKind::Rope {
+            Rotary::new(cfg.block, cfg.n_embd, cfg.n_head)
+                .expect("RoPE requires even per-head width");
+        }
         let d = cfg.n_embd;
         let mut blocks = Vec::with_capacity(cfg.n_layer);
         for _ in 0..cfg.n_layer {
@@ -348,6 +367,7 @@ impl Gpt {
         Self {
             cfg,
             normalization,
+            position,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -366,6 +386,18 @@ impl Gpt {
         self.normalization = normalization;
     }
 
+    pub fn position_kind(&self) -> PositionKind {
+        self.position
+    }
+
+    pub fn set_position_kind(&mut self, position: PositionKind) {
+        if position == PositionKind::Rope {
+            Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                .expect("RoPE requires even per-head width");
+        }
+        self.position = position;
+    }
+
     fn embed_tokens_with_positions(&self, tokens: &[usize]) -> Vec<f32> {
         assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
@@ -380,12 +412,76 @@ impl Gpt {
             }
         }
 
-        let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
-            .expect("model positional storage matches config");
-        positional
-            .add_forward(&mut x, t)
-            .expect("token length already validated against positional capacity");
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
+                    .expect("model positional storage matches config");
+                positional
+                    .add_forward(&mut x, t)
+                    .expect("token length already validated against positional capacity");
+            }
+            PositionKind::Rope => {
+                let positional = Rotary::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model RoPE shape matches config");
+                positional
+                    .add_forward(&mut x, t)
+                    .expect("token length already validated against positional capacity");
+            }
+        }
         x
+    }
+
+    fn apply_position_to_qk(&self, q: &mut [f32], k: &mut [f32], positions: usize) {
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let positional = LearnedAbsolute::new(
+                    &self.pos_emb,
+                    self.cfg.block,
+                    self.cfg.n_embd,
+                )
+                .expect("model positional storage matches config");
+                positional
+                    .apply_qk(q, k, positions, self.cfg.n_head)
+                    .expect("model Q/K shapes match positional contract");
+            }
+            PositionKind::Rope => {
+                let positional =
+                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                        .expect("model RoPE shape matches config");
+                positional
+                    .apply_qk(q, k, positions, self.cfg.n_head)
+                    .expect("model Q/K shapes match RoPE contract");
+            }
+        }
+    }
+
+    fn backward_position_qk(
+        &self,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        positions: usize,
+    ) {
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let positional = LearnedAbsolute::new(
+                    &self.pos_emb,
+                    self.cfg.block,
+                    self.cfg.n_embd,
+                )
+                .expect("model positional storage matches config");
+                positional
+                    .backward_qk(dq, dk, positions, self.cfg.n_head)
+                    .expect("model Q/K gradient shapes match positional contract");
+            }
+            PositionKind::Rope => {
+                let positional =
+                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                        .expect("model RoPE shape matches config");
+                positional
+                    .backward_qk(dq, dk, positions, self.cfg.n_head)
+                    .expect("model Q/K gradient shapes match RoPE contract");
+            }
+        }
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
@@ -811,6 +907,7 @@ impl Gpt {
                     dv,
                     dp,
                 );
+                self.backward_position_qk(dq, dk, t);
 
                 matmul_grad_b(&c.h1, t, d, dq, d, &mut bg.wq);
                 matmul_grad_b(&c.h1, t, d, dk, d, &mut bg.wk);
@@ -844,11 +941,22 @@ impl Gpt {
             }
         }
 
-        let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
-            .expect("model positional storage matches config");
-        positional
-            .accumulate_backward(dx, t, &mut gg.pos_emb)
-            .expect("backward positional shapes match validated forward");
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
+                    .expect("model positional storage matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("backward positional shapes match validated forward");
+            }
+            PositionKind::Rope => {
+                let positional = Rotary::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model RoPE shape matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("reserved positional gradient layout matches model");
+            }
+        }
 
         copy_grads_into(gg, grads);
         loss
@@ -891,9 +999,10 @@ impl Gpt {
 
         for b in &self.blocks {
             let h1 = normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
-            let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+            let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            self.apply_position_to_qk(&mut q, &mut k, t);
             let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
@@ -932,9 +1041,10 @@ impl Gpt {
         let mut layer_caches = Vec::with_capacity(self.blocks.len());
         for b in &self.blocks {
             let (h1, ln1) = normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
-            let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+            let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            self.apply_position_to_qk(&mut q, &mut k, t);
             let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
