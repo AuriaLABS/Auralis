@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod arena;
 pub mod batch;
+pub mod backend;
 pub mod bench;
 pub mod bench_format;
 pub mod bench_result;
