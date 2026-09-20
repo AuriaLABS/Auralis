@@ -63,10 +63,11 @@ jobs:
           python3 - <<'PY'
           import json
           data = json.load(open("/tmp/rope-ab.json", encoding="utf-8"))
-          assert data["schema_version"] == 3
+          assert data["schema_version"] == 4
           assert data["a"]["position"] == "learned_absolute"
           assert data["b"]["position"] == "rope"
           assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
+          assert data["a"]["optimizer"] == data["b"]["optimizer"] == "adam"
           assert data["a"]["config"] == data["b"]["config"]
           assert len(data["a"]["measurements"]) == len(data["b"]["measurements"]) == 3
           for a, b in zip(data["a"]["measurements"], data["b"]["measurements"]):

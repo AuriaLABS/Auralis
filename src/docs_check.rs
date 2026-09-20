@@ -141,6 +141,7 @@ mod tests {
             "sec-unsafe.md",
             "scheduler.md",
             "optimizer-boundary.md",
+            "optimizer-variants.md",
             "rope-experiment.md",
             "gradient-clipping.md",
             "verify.md",
@@ -268,11 +269,16 @@ mod tests {
             "same training budget",
             "final training loss",
             "eval loss and perplexity",
-            "real AURLIS03 checkpoint bytes",
+            "canonical serialized optimizer-state bytes",
+            "checkpoint bytes",
             "LayerNorm vs RMSNorm",
             "normalization policy",
             "positional policy",
             "Learned absolute vs RoPE",
+            "Optimizer comparisons",
+            "optimizer-adamw",
+            "optimizer-lion",
+            "checkpoint_includes_optimizer",
             "does **not** declare a winner",
         ] {
             assert!(text.contains(needle), "docs/brain-ab.md missing {needle}");
@@ -325,6 +331,25 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_variants_doc_matches_contract() {
+        let text = docs("optimizer-variants.md");
+        for needle in [
+            "AdamW",
+            "Lion",
+            "weight_decay=0",
+            "decoupled weight decay",
+            "AdamWState",
+            "LionState",
+            "auralis_optimizer_variant_bench",
+            "does **not** measure model quality",
+        ] {
+            assert!(text.contains(needle), "optimizer-variants.md missing {needle}");
+        }
+        assert_eq!(crate::optim::ADAMW_STATE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::optim::LION_STATE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn gradient_clipping_docs_and_examples_match_code() {
         let text = docs("gradient-clipping.md");
         for needle in [
@@ -367,7 +392,7 @@ mod tests {
             assert!(text.contains(needle), "rope-experiment.md missing {needle}");
         }
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
-        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
     }
 
     #[test]
@@ -378,7 +403,7 @@ mod tests {
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
-        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
@@ -390,7 +415,7 @@ mod tests {
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 2",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 3",
-            "BRAIN_AB_SCHEMA_VERSION = 3",
+            "BRAIN_AB_SCHEMA_VERSION = 4",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

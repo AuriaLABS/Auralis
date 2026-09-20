@@ -10,7 +10,6 @@ Both variants share:
 
 - seed;
 - synthetic token stream and token fingerprint;
-- optimizer;
 - learning rate;
 - gradient clipping;
 - batch size;
@@ -20,19 +19,22 @@ Both variants share:
 
 Order alternates A-first/B-first between repetitions.
 
-Each variant records normalization and positional policy. Both policies are included in the final state fingerprint, because identical weight bytes interpreted under different execution semantics are not the same model state.
+Each variant records normalization, positional policy and optimizer identity. All three are included in the final state fingerprint, because identical weight bytes interpreted under different execution semantics or optimizer state are not the same experiment state.
 
 Each measurement records:
 
 - complete model config;
 - normalization policy;
 - positional policy;
+- optimizer identity;
 - final training loss;
 - eval loss and perplexity;
 - tokens/s;
 - parameter count and parameter bytes;
-- Adam state bytes;
-- real AURLIS03 checkpoint bytes;
+- optimizer state-vector bytes;
+- canonical serialized optimizer-state bytes;
+- checkpoint bytes;
+- whether the checkpoint contains the legacy Adam payload;
 - final state fingerprint.
 
 The experiment record also contains the build commit/revision.
@@ -75,5 +77,23 @@ cargo run --release --bin auralis_brain_ab -- 8 5 rope --json
 This scenario holds vocab, width, heads, depth, block, FF width, normalization, seed, data and training budget constant. Only positional policy changes.
 
 RoPE keeps the historical learned-position parameter slots reserved/inert, so parameter count and raw AURLIS03 tensor layout remain directly comparable. The harness reports both variants and does **not** promote RoPE automatically.
+
+## Optimizer comparisons
+
+```bash
+cargo run --release --bin auralis_brain_ab -- 8 5 optimizer-adamw
+cargo run --release --bin auralis_brain_ab -- 8 5 optimizer-lion
+```
+
+These scenarios hold architecture, LayerNorm, learned-absolute position, seed, token stream, learning rate, clipping, batch, accumulation and optimizer-step budget constant.
+
+- `optimizer-adamw`: historical Adam vs AdamW with `weight_decay=0.01`.
+- `optimizer-lion`: historical Adam vs Lion with `weight_decay=0.01`.
+
+This first comparison deliberately uses the **same learning rate** for all optimizers. It is an algorithm-isolation baseline, not a hyperparameter-tuned leaderboard.
+
+Adam keeps the historical AURLIS03 optimizer payload in the checkpoint. AdamW and Lion do not pretend to be Adam inside AURLIS03: their canonical schema-1 optimizer state is reported separately, while the model checkpoint remains loadable through the existing checkpoint format. The JSON field `checkpoint_includes_optimizer` makes this distinction explicit.
+
+Lion uses one moment vector while Adam/AdamW use two; `optimizer_state_bytes` reports that difference directly.
 
 The harness reports all variants. It does **not** declare a winner from a noisy hosted-runner timing or a single metric.

@@ -1,0 +1,120 @@
+name: Training Optimizer Variants Core
+
+on:
+  pull_request:
+    paths:
+      - "src/optim.rs"
+      - "src/brain_ab.rs"
+      - "src/bin/auralis_brain_ab.rs"
+      - "docs/brain-ab.md"
+      - ".github/workflows/brain_ab_harness.yml"
+      - ".github/workflows/brain_rope_experiment.yml"
+      - "src/bin/auralis_optimizer_variant_bench.rs"
+      - "docs/optimizer-variants.md"
+      - "docs/versions.md"
+      - "src/docs_check.rs"
+      - "README.md"
+      - ".github/workflows/training_optimizer_variants.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  variants-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Optimizer variant unit tests
+        run: |
+          cargo test --lib optim::tests::adamw_zero_weight_decay_is_bit_exact_with_adam -- --nocapture
+          cargo test --lib optim::tests::adamw_decoupled_weight_decay_matches_declared_formula -- --nocapture
+          cargo test --lib optim::tests::lion_update_matches_declared_sign_and_decay_semantics -- --nocapture
+          cargo test --lib optim::tests::adamw_and_lion_state_roundtrip_exactly -- --nocapture
+          cargo test --lib optim::tests::variant_states_fail_closed_on_kind_version_and_fingerprint -- --nocapture
+          cargo test --lib docs_check::tests::optimizer_variants_doc_matches_contract -- --nocapture
+
+      - name: Optimizer update microbenchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_optimizer_variant_bench -- 28580 5 50 5             | tee /tmp/optimizer-variants.txt
+
+          test "$(grep -c '^optimizer_variant_summary |' /tmp/optimizer-variants.txt)" -eq 3
+          grep -q '^optimizer_variant_summary | optimizer=adam ' /tmp/optimizer-variants.txt
+          grep -q '^optimizer_variant_summary | optimizer=adamw ' /tmp/optimizer-variants.txt
+          grep -q '^optimizer_variant_summary | optimizer=lion ' /tmp/optimizer-variants.txt
+
+          python3 - <<'PY'
+          import re
+          rows = {}
+          for line in open("/tmp/optimizer-variants.txt", encoding="utf-8"):
+              if not line.startswith("optimizer_variant_summary |"):
+                  continue
+              values = dict(part.split("=", 1) for part in line.strip().split()[2:] if "=" in part)
+              rows[values["optimizer"]] = values
+          assert set(rows) == {"adam", "adamw", "lion"}
+          assert int(rows["adam"]["state_bytes"]) == int(rows["adamw"]["state_bytes"])
+          assert int(rows["lion"]["state_bytes"]) * 2 == int(rows["adam"]["state_bytes"])
+          for row in rows.values():
+              assert float(row["median_ns_per_update"]) > 0
+              assert row["deterministic"] == "true"
+          print("optimizer_variants_core_gate | state_bytes=ok deterministic=true")
+          PY
+
+      - name: Same-budget Adam vs AdamW/Lion A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 4 3 optimizer-adamw --json | tee /tmp/ab-adamw.json
+          cargo run --release --bin auralis_brain_ab -- 4 3 optimizer-lion --json | tee /tmp/ab-lion.json
+
+          python3 - <<'PY'
+          import json
+
+          for path, expected in [
+              ("/tmp/ab-adamw.json", "adamw"),
+              ("/tmp/ab-lion.json", "lion"),
+          ]:
+              data = json.load(open(path, encoding="utf-8"))
+              assert data["schema_version"] == 4
+              assert data["a"]["optimizer"] == "adam"
+              assert data["b"]["optimizer"] == expected
+              assert data["a"]["config"] == data["b"]["config"]
+              assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
+              assert data["a"]["position"] == data["b"]["position"] == "learned_absolute"
+              assert data["protocol"]["steps"] == 4
+              assert data["protocol"]["repeats"] == 3
+              assert data["protocol"]["learning_rate"] == 0.003
+              assert len(data["a"]["measurements"]) == len(data["b"]["measurements"]) == 3
+
+              for a, b in zip(data["a"]["measurements"], data["b"]["measurements"]):
+                  assert a["parameter_count"] == b["parameter_count"]
+                  assert a["parameter_bytes"] == b["parameter_bytes"]
+                  assert a["checkpoint_includes_optimizer"] is True
+                  assert b["checkpoint_includes_optimizer"] is False
+                  assert a["optimizer_state_serialized_bytes"] > 0
+                  assert b["optimizer_state_serialized_bytes"] > 0
+                  for row in (a, b):
+                      assert row["final_train_loss"] > 0
+                      assert row["eval_loss"] > 0
+                      assert row["eval_perplexity"] >= 1
+                      assert row["tokens_per_second"] > 0
+
+              if expected == "adamw":
+                  assert data["a"]["measurements"][0]["optimizer_state_bytes"] == data["b"]["measurements"][0]["optimizer_state_bytes"]
+              else:
+                  assert data["b"]["measurements"][0]["optimizer_state_bytes"] * 2 == data["a"]["measurements"][0]["optimizer_state_bytes"]
+
+          print("optimizer_variants_ab_gate | schema=4 same_budget=true records=3")
+          PY
+
+      - name: Exact variant resume under training loop
+        run: |
+          cargo test --lib brain_ab::tests::adamw_training_resume_is_exact -- --nocapture
+          cargo test --lib brain_ab::tests::lion_training_resume_is_exact -- --nocapture
+
+      - name: Full library tests
+        run: cargo test --lib

@@ -1,5 +1,6 @@
 use auralis::brain_ab::{run_experiment, AbProtocol, AbVariant};
 use auralis::model::{Config, NormalizationKind};
+use auralis::optim::OptimizerId;
 use auralis::position::PositionKind;
 use std::env;
 
@@ -29,16 +30,16 @@ fn main() {
 
     let (a, b) = match scenario.as_str() {
         "same" => (
-            AbVariant { label: "same-a".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
-            AbVariant { label: "same-b".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "same-a".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
+            AbVariant { label: "same-b".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
         ),
         "depth" => (
-            AbVariant { label: "1-layer".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
-            AbVariant { label: "2-layer".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "1-layer".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
+            AbVariant { label: "2-layer".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
         ),
         "normalization" => (
-            AbVariant { label: "layernorm".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
-            AbVariant { label: "rmsnorm".into(), config: config(2), normalization: NormalizationKind::RmsNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "layernorm".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
+            AbVariant { label: "rmsnorm".into(), config: config(2), normalization: NormalizationKind::RmsNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
         ),
         "rope" => (
             AbVariant {
@@ -46,16 +47,52 @@ fn main() {
                 config: config(2),
                 normalization: NormalizationKind::LayerNorm,
                 position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
             },
             AbVariant {
                 label: "rope".into(),
                 config: config(2),
                 normalization: NormalizationKind::LayerNorm,
                 position: PositionKind::Rope,
+                optimizer: OptimizerId::Adam,
+            },
+        ),
+        "optimizer-adamw" => (
+            AbVariant {
+                label: "adam".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
+            },
+            AbVariant {
+                label: "adamw".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::AdamW,
+            },
+        ),
+        "optimizer-lion" => (
+            AbVariant {
+                label: "adam".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
+            },
+            AbVariant {
+                label: "lion".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Lion,
             },
         ),
         other => {
-            eprintln!("unknown A/B scenario {other}; expected same|depth|normalization|rope");
+            eprintln!(
+                "unknown A/B scenario {other}; expected same|depth|normalization|rope|optimizer-adamw|optimizer-lion"
+            );
             std::process::exit(2);
         }
     };

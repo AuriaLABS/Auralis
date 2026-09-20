@@ -12,7 +12,9 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | scheduler config schema | `SCHEDULER_CONFIG_SCHEMA_VERSION = 1` |
 | optimizer config schema | `OPTIMIZER_CONFIG_SCHEMA_VERSION = 1` |
 | optimizer state schema | `OPTIMIZER_STATE_SCHEMA_VERSION = 1` |
-| brain A/B schema | `BRAIN_AB_SCHEMA_VERSION = 3` |
+| AdamW state schema | `ADAMW_STATE_SCHEMA_VERSION = 1` |
+| Lion state schema | `LION_STATE_SCHEMA_VERSION = 1` |
+| brain A/B schema | `BRAIN_AB_SCHEMA_VERSION = 4` |
 | experiment manifest | `MANIFEST_VERSION = 4` |
 | release manifest | `RELEASE_MANIFEST_VERSION = 1` |
 
