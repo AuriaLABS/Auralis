@@ -528,7 +528,7 @@ Una mejora no puede rebajar este gate de forma oportunista.
 
 ### SIMD
 
-No existe SIMD promovido actualmente.
+Actualmente no existe SIMD promovido.
 
 Los prototipos no justificaron romper la política vigente; futuras rutas SIMD necesitan evidencia nueva y un contrato seguro aceptado.
 
