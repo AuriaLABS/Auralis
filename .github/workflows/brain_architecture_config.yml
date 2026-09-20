@@ -98,7 +98,19 @@ jobs:
           cmp /tmp/rms-full.bin /tmp/rms-split.bin
           cmp /tmp/rms-full.bin.manifest /tmp/rms-split.bin.manifest
           cmp /tmp/rms-full.bin.architecture /tmp/rms-split.bin.architecture
-          grep -q '^normalization=rmsnorm /tmp/rms-full.bin.architecture
+          grep -q '^normalization=rmsnorm
+          grep -q 'normalization=rmsnorm' /tmp/rms-full.txt
+          grep -q 'normalization=rmsnorm' /tmp/rms-split-b.txt
+          grep -q '^architecture_metadata → /tmp/rms-split.bin.architecture
+          echo "brain_arch_rms_resume | checkpoint_exact=true manifest_exact=true metadata_exact=true"
+ /tmp/rms-full.bin.architecture
+          grep -q 'normalization=rmsnorm' /tmp/rms-full.txt
+          grep -q 'normalization=rmsnorm' /tmp/rms-split-b.txt
+          grep -q '^architecture_metadata → /tmp/rms-split.bin.architecture /tmp/rms-split-b.txt
+          echo "brain_arch_rms_resume | checkpoint_exact=true manifest_exact=true metadata_exact=true"
+ /tmp/rms-split-b.txt
+          echo "brain_arch_rms_resume | checkpoint_exact=true manifest_exact=true metadata_exact=true"
+ /tmp/rms-full.bin.architecture
           grep -q 'normalization=rmsnorm' /tmp/rms-full.txt
           grep -q 'normalization=rmsnorm' /tmp/rms-split-b.txt
           grep -q '^architecture_metadata → /tmp/rms-split.bin.architecture /tmp/rms-split-b.txt
