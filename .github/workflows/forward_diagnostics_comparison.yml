@@ -1,0 +1,58 @@
+
+name: Forward Diagnostics Comparison
+
+on:
+  pull_request:
+    paths:
+      - "src/model.rs"
+      - "src/numeric.rs"
+      - "src/bin/auralis_forward_diagnostics_bench.rs"
+      - ".github/workflows/forward_diagnostics_comparison.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Forward diagnostics tests
+        run: cargo test --lib forward_diagnostics -- --nocapture
+
+      - name: Measure debug-only overhead
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_forward_diagnostics_bench -- 12 5 | tee /tmp/forward-diagnostics.txt
+          python3 - <<'PY'
+          import math
+          import re
+
+          text = open("/tmp/forward-diagnostics.txt", encoding="utf-8").read()
+          m = re.search(
+              r"forward_diagnostics_bench \| calls=(\d+) repeats=(\d+) "
+              r"baseline_ns_per_call=([0-9.]+) diagnostics_ns_per_call=([0-9.]+) "
+              r"diagnostics_over_baseline=([0-9.]+) summaries=(\d+)",
+              text,
+          )
+          if not m:
+              raise SystemExit("missing forward diagnostics benchmark record")
+          calls, repeats, baseline, diagnostics, ratio, summaries = m.groups()
+          values = [float(baseline), float(diagnostics), float(ratio)]
+          if int(calls) <= 0 or int(repeats) < 3 or int(summaries) <= 0:
+              raise SystemExit("invalid forward diagnostics benchmark protocol")
+          if not all(math.isfinite(x) and x > 0 for x in values):
+              raise SystemExit("invalid forward diagnostics benchmark measurements")
+          if float(diagnostics) < float(baseline):
+              print("note: diagnostics measured faster than baseline; treat as runner noise, not a speed claim")
+          print(
+              "forward_diagnostics_compare | "
+              f"baseline_ns_per_call={float(baseline):.3f} "
+              f"diagnostics_ns_per_call={float(diagnostics):.3f} "
+              f"diagnostics_over_baseline={float(ratio):.4f} "
+              f"summaries={int(summaries)}"
+          )
+          PY
