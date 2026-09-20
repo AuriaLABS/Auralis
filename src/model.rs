@@ -61,13 +61,6 @@ impl CpuBackend {
             Self::Scalar => BackendId::ScalarCpu,
         }
     }
-
-    fn backend(self) -> &'static dyn Backend {
-        match self {
-            Self::Optimized => &OPTIMIZED_CPU_BACKEND,
-            Self::Scalar => &SCALAR_CPU_BACKEND,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -375,14 +368,19 @@ impl Gpt {
     /// Compute vocabulary logits for every input position without constructing
     /// backward-only caches. The returned tensor is row-major `[tokens, vocab]`.
     pub fn logits(&self, tokens: &[usize]) -> Vec<f32> {
-        self.logits_with_cpu_backend(tokens, CpuBackend::Optimized)
+        self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
     }
 
     /// Explicit CPU backend selection for verification/benchmarking.
     ///
     /// This choice is ephemeral and is not part of RunConfig/checkpoints.
     pub fn logits_with_cpu_backend(&self, tokens: &[usize], backend: CpuBackend) -> Vec<f32> {
-        self.forward_eval_with_backend(tokens, backend.backend())
+        match backend {
+            CpuBackend::Optimized => {
+                self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+            }
+            CpuBackend::Scalar => self.forward_eval_with_backend(tokens, &SCALAR_CPU_BACKEND),
+        }
     }
 
     /// Debug-only forward pass with compact numerical summaries for cached
@@ -718,13 +716,13 @@ impl Gpt {
     /// Forward path for evaluation/inference. It preserves the training-forward
     /// arithmetic order but does not materialize caches used only by backward.
     fn forward_eval(&self, tokens: &[usize]) -> Vec<f32> {
-        self.forward_eval_with_backend(tokens, CpuBackend::Optimized.backend())
+        self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
     }
 
-    fn forward_eval_with_backend(
+    fn forward_eval_with_backend<B: Backend>(
         &self,
         tokens: &[usize],
-        backend: &dyn Backend,
+        backend: &B,
     ) -> Vec<f32> {
         assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
@@ -766,13 +764,13 @@ impl Gpt {
     }
 
     fn forward_internal(&self, tokens: &[usize]) -> (Vec<f32>, ForwardCache) {
-        self.forward_internal_with_backend(tokens, CpuBackend::Optimized.backend())
+        self.forward_internal_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
     }
 
-    fn forward_internal_with_backend(
+    fn forward_internal_with_backend<B: Backend>(
         &self,
         tokens: &[usize],
-        backend: &dyn Backend,
+        backend: &B,
     ) -> (Vec<f32>, ForwardCache) {
         assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
@@ -931,8 +929,8 @@ fn sum_rows_into(x: &[f32], rows: usize, cols: usize, out: &mut [f32]) {
     }
 }
 
-fn matmul_with_backend(
-    backend: &dyn Backend,
+fn matmul_with_backend<B: Backend>(
+    backend: &B,
     a: &[f32],
     rows: usize,
     inner: usize,
@@ -944,8 +942,8 @@ fn matmul_with_backend(
     out
 }
 
-fn matmul_into_with_backend(
-    backend: &dyn Backend,
+fn matmul_into_with_backend<B: Backend>(
+    backend: &B,
     a: &[f32],
     rows: usize,
     inner: usize,
