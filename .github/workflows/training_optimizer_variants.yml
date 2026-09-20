@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "src/optim.rs"
+      - "src/brain_ab.rs"
+      - "src/bin/auralis_brain_ab.rs"
+      - "docs/brain-ab.md"
+      - ".github/workflows/brain_ab_harness.yml"
+      - ".github/workflows/brain_rope_experiment.yml"
       - "src/bin/auralis_optimizer_variant_bench.rs"
       - "docs/optimizer-variants.md"
       - "docs/versions.md"
@@ -58,6 +63,58 @@ jobs:
               assert row["deterministic"] == "true"
           print("optimizer_variants_core_gate | state_bytes=ok deterministic=true")
           PY
+
+      - name: Same-budget Adam vs AdamW/Lion A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 4 3 optimizer-adamw --json | tee /tmp/ab-adamw.json
+          cargo run --release --bin auralis_brain_ab -- 4 3 optimizer-lion --json | tee /tmp/ab-lion.json
+
+          python3 - <<'PY'
+          import json
+
+          for path, expected in [
+              ("/tmp/ab-adamw.json", "adamw"),
+              ("/tmp/ab-lion.json", "lion"),
+          ]:
+              data = json.load(open(path, encoding="utf-8"))
+              assert data["schema_version"] == 4
+              assert data["a"]["optimizer"] == "adam"
+              assert data["b"]["optimizer"] == expected
+              assert data["a"]["config"] == data["b"]["config"]
+              assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
+              assert data["a"]["position"] == data["b"]["position"] == "learned_absolute"
+              assert data["protocol"]["steps"] == 4
+              assert data["protocol"]["repeats"] == 3
+              assert data["protocol"]["learning_rate"] == 0.003
+              assert len(data["a"]["measurements"]) == len(data["b"]["measurements"]) == 3
+
+              for a, b in zip(data["a"]["measurements"], data["b"]["measurements"]):
+                  assert a["parameter_count"] == b["parameter_count"]
+                  assert a["parameter_bytes"] == b["parameter_bytes"]
+                  assert a["checkpoint_includes_optimizer"] is True
+                  assert b["checkpoint_includes_optimizer"] is False
+                  assert a["optimizer_state_serialized_bytes"] > 0
+                  assert b["optimizer_state_serialized_bytes"] > 0
+                  for row in (a, b):
+                      assert row["final_train_loss"] > 0
+                      assert row["eval_loss"] > 0
+                      assert row["eval_perplexity"] >= 1
+                      assert row["tokens_per_second"] > 0
+
+              if expected == "adamw":
+                  assert data["a"]["measurements"][0]["optimizer_state_bytes"] == data["b"]["measurements"][0]["optimizer_state_bytes"]
+              else:
+                  assert data["b"]["measurements"][0]["optimizer_state_bytes"] * 2 == data["a"]["measurements"][0]["optimizer_state_bytes"]
+
+          print("optimizer_variants_ab_gate | schema=4 same_budget=true records=3")
+          PY
+
+      - name: Exact variant resume under training loop
+        run: |
+          cargo test --lib brain_ab::tests::adamw_training_resume_is_exact -- --nocapture
+          cargo test --lib brain_ab::tests::lion_training_resume_is_exact -- --nocapture
 
       - name: Full library tests
         run: cargo test --lib
