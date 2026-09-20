@@ -105,9 +105,9 @@ impl LayerDiagnosticsReport {
             match stats.histogram {
                 Some(h) => format!(
                     concat!(
-                        "{\"negative_large\":{},\"negative_small\":{},",
+                        "{{\"negative_large\":{},\"negative_small\":{},",
                         "\"near_zero\":{},\"positive_small\":{},",
-                        "\"positive_large\":{},\"non_finite\":{}}"
+                        "\"positive_large\":{},\"non_finite\":{}}}"
                     ),
                     h.negative_large,
                     h.negative_small,
@@ -123,8 +123,8 @@ impl LayerDiagnosticsReport {
         fn stats_json(stats: &TensorStats) -> String {
             format!(
                 concat!(
-                    "{\"len\":{},\"mean\":{},\"l2\":{},\"max_abs\":{},",
-                    "\"histogram\":{}}"
+                    "{{\"len\":{},\"mean\":{},\"l2\":{},\"max_abs\":{},",
+                    "\"histogram\":{}}}"
                 ),
                 stats.len,
                 optional(stats.mean),
@@ -140,8 +140,8 @@ impl LayerDiagnosticsReport {
             .map(|entry| {
                 format!(
                     concat!(
-                        "{\"layer\":{},\"name\":\"{}\",\"stage\":\"{:?}\",",
-                        "\"nans\":{},\"infs\":{},\"stats\":{}}"
+                        "{{\"layer\":{},\"name\":\"{}\",\"stage\":\"{:?}\",",
+                        "\"nans\":{},\"infs\":{},\"stats\":{}}}"
                     ),
                     entry.layer,
                     entry.name,
@@ -159,7 +159,7 @@ impl LayerDiagnosticsReport {
             .iter()
             .map(|entry| {
                 format!(
-                    "{\"layer\":{},\"stats\":{}}",
+                    "{{\"layer\":{},\"stats\":{}}}",
                     entry.layer,
                     stats_json(&entry.stats),
                 )
@@ -172,7 +172,7 @@ impl LayerDiagnosticsReport {
             .iter()
             .map(|entry| {
                 format!(
-                    "{\"left_layer\":{},\"right_layer\":{},\"cosine\":{}}",
+                    "{{\"left_layer\":{},\"right_layer\":{},\"cosine\":{}}}",
                     entry.left_layer,
                     entry.right_layer,
                     optional(entry.cosine),
@@ -183,8 +183,8 @@ impl LayerDiagnosticsReport {
 
         format!(
             concat!(
-                "{\"activations\":[{}],\"gradients\":[{}],",
-                "\"adjacent_gradient_cosine\":[{}]}"
+                "{{\"activations\":[{}],\"gradients\":[{}],",
+                "\"adjacent_gradient_cosine\":[{}]}}"
             ),
             activations, gradients, cosine,
         )
