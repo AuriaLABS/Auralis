@@ -16,6 +16,7 @@ use auralis::numeric::{self, Diagnostics};
 use auralis::optim::Adam;
 use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
+use auralis::scheduler::{scheduler_path, SchedulerConfig};
 use auralis::sec::scan_tree;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use auralis::training::{
@@ -131,6 +132,41 @@ fn validate_resume_manifest(
     Ok(())
 }
 
+fn resolve_scheduler(
+    ckpt: &Path,
+    fresh: bool,
+    requested: Option<SchedulerConfig>,
+) -> Result<(SchedulerConfig, bool), String> {
+    let sidecar = scheduler_path(ckpt);
+    if fresh || !ckpt.exists() {
+        return Ok((requested.unwrap_or_default(), requested.is_some()));
+    }
+
+    if sidecar.exists() {
+        let persisted = SchedulerConfig::load(&sidecar)?;
+        if let Some(requested) = requested {
+            if requested != persisted {
+                return Err(format!(
+                    "scheduler mismatch on resume: persisted={} requested={}",
+                    persisted.line(),
+                    requested.line()
+                ));
+            }
+        }
+        return Ok((persisted, true));
+    }
+
+    if let Some(requested) = requested {
+        if requested != SchedulerConfig::default() {
+            return Err(
+                "checkpoint has no scheduler metadata; non-constant scheduler cannot start mid-run"
+                    .into(),
+            );
+        }
+    }
+    Ok((SchedulerConfig::default(), false))
+}
+
 fn train(
     steps: usize,
     ckpt: &Path,
@@ -138,10 +174,15 @@ fn train(
     run: RunConfig,
     diagnostics: bool,
     architecture: Option<ArchitectureConfig>,
+    requested_scheduler: Option<SchedulerConfig>,
 ) -> Result<(), String> {
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
     print!("{}", run.effective_report());
+
+    let (scheduler, persist_scheduler) =
+        resolve_scheduler(ckpt, fresh, requested_scheduler)?;
+    println!("{}", scheduler.line());
 
     let effective_batch = run
         .effective_batch_size()
@@ -260,6 +301,8 @@ fn train(
 
     for local_step in 1..=steps {
         let global_step = adam.t.max(0) as u64;
+        let scheduled_lr = scheduler.learning_rate(run.learning_rate, global_step)?;
+        adam.lr = scheduled_lr;
         let metrics = if diagnostics {
             let (metrics, report) = train_step_reuse_diagnostics(
                 &mut gpt,
@@ -304,12 +347,13 @@ fn train(
             );
             let sample = sample_prompt(&gpt, &tok, "Auralis es", 24, 0.2, &mut eval_rng);
             println!(
-                "step {:4} global={} loss {:.4} grad {:.4} clip {:.3} microbatches={} effective_batch={} sample={}",
+                "step {:4} global={} loss {:.4} grad {:.4} clip {:.3} lr={:.8} microbatches={} effective_batch={} sample={}",
                 local_step,
                 metrics.global_step,
                 metrics.loss,
                 metrics.grad_norm_before_clip,
                 metrics.grad_scale,
+                adam.lr,
                 metrics.microbatches,
                 metrics.effective_batch_size,
                 sample
@@ -341,6 +385,15 @@ fn train(
     );
     let manifest_path = manifest::save_manifest(ckpt, &manifest)
         .map_err(|e| format!("checkpoint guardado pero falló el manifiesto: {e}"))?;
+    let scheduler_sidecar = scheduler_path(ckpt);
+    if persist_scheduler {
+        scheduler
+            .save(&scheduler_sidecar)
+            .map_err(|e| format!("checkpoint guardado pero falló scheduler metadata: {e}"))?;
+    } else if fresh && scheduler_sidecar.exists() {
+        fs::remove_file(&scheduler_sidecar)
+            .map_err(|e| format!("no se pudo limpiar scheduler metadata obsoleta: {e}"))?;
+    }
     let checkpoint_bytes = fs::metadata(ckpt)
         .map_err(|e| format!("no se pudo medir checkpoint {}: {e}", ckpt.display()))?
         .len();
@@ -353,6 +406,9 @@ fn train(
         ckpt.display(),
         manifest_path.display()
     );
+    if persist_scheduler {
+        println!("scheduler_metadata → {}", scheduler_sidecar.display());
+    }
     println!(
         "run_summary | params={} optimizer_steps={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
         n_params,
@@ -380,8 +436,17 @@ fn run_train_or_exit(
     run: RunConfig,
     diagnostics: bool,
     architecture: Option<ArchitectureConfig>,
+    scheduler: Option<SchedulerConfig>,
 ) {
-    if let Err(e) = train(steps, ckpt, fresh, run, diagnostics, architecture) {
+    if let Err(e) = train(
+        steps,
+        ckpt,
+        fresh,
+        run,
+        diagnostics,
+        architecture,
+        scheduler,
+    ) {
         eprintln!("error: {e}");
         std::process::exit(2);
     }
@@ -726,6 +791,7 @@ fn run_bench(args: &[String]) {
 struct TrainCliOptions {
     diagnostics: bool,
     architecture: Option<ArchitectureConfig>,
+    scheduler: Option<SchedulerConfig>,
 }
 
 fn parse_token_ids(spec: &str) -> Result<Vec<usize>, String> {
@@ -843,6 +909,7 @@ fn parse_train_args(
 ) -> Result<(usize, PathBuf, RunConfig, TrainCliOptions), String> {
     let mut config_path: Option<&str> = None;
     let mut model_config_path: Option<&str> = None;
+    let mut scheduler_config_path: Option<&str> = None;
     let mut diagnostics = false;
     let mut positional: Vec<&str> = Vec::new();
     let mut i = 2;
@@ -856,6 +923,12 @@ fn parse_train_args(
         if args[i] == "--model-config" {
             let path = args.get(i + 1).ok_or("--model-config requires a path")?;
             model_config_path = Some(path.as_str());
+            i += 2;
+            continue;
+        }
+        if args[i] == "--scheduler-config" {
+            let path = args.get(i + 1).ok_or("--scheduler-config requires a path")?;
+            scheduler_config_path = Some(path.as_str());
             i += 2;
             continue;
         }
@@ -905,6 +978,10 @@ fn parse_train_args(
         Some(path) => Some(ArchitectureConfig::load(path)?),
         None => None,
     };
+    let scheduler = match scheduler_config_path {
+        Some(path) => Some(SchedulerConfig::load(path)?),
+        None => None,
+    };
     Ok((
         steps,
         ckpt,
@@ -912,13 +989,14 @@ fn parse_train_args(
         TrainCliOptions {
             diagnostics,
             architecture,
+            scheduler,
         },
     ))
 }
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -935,6 +1013,7 @@ fn main() {
                     run,
                     options.diagnostics,
                     options.architecture,
+                    options.scheduler,
                 )
             },
             Err(e) => {
@@ -951,6 +1030,7 @@ fn main() {
                     run,
                     options.diagnostics,
                     options.architecture,
+                    options.scheduler,
                 )
             },
             Err(e) => {
@@ -977,8 +1057,17 @@ fn main() {
             RunConfig::default(),
             false,
             None,
+            None,
         ),
-        None => run_train_or_exit(80, ckpt_default, false, RunConfig::default(), false, None),
+        None => run_train_or_exit(
+            80,
+            ckpt_default,
+            false,
+            RunConfig::default(),
+            false,
+            None,
+            None,
+        ),
         _ => usage(),
     }
 }
@@ -1012,6 +1101,7 @@ mod cli_tests {
         assert_eq!(run.gradient_accumulation_steps, 4);
         assert!(options.diagnostics);
         assert!(options.architecture.is_none());
+        assert!(options.scheduler.is_none());
     }
 
     #[test]
@@ -1020,6 +1110,7 @@ mod cli_tests {
         let (_, _, _, options) = parse_train_args(&args).unwrap();
         assert!(!options.diagnostics);
         assert!(options.architecture.is_none());
+        assert!(options.scheduler.is_none());
     }
 
     #[test]
