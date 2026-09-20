@@ -7,6 +7,7 @@ use crate::checkpoint;
 use crate::eval::evaluate_tokens_reference;
 use crate::manifest::{build_revision, fingerprint_params};
 use crate::model::{Config, Gpt, NormalizationKind};
+use crate::position::PositionKind;
 use crate::optim::{Adam, Optimizer};
 use crate::tokenizer::{AnyTok, CharTokenizer};
 use crate::training::{train_step_reuse, TrainConfig, TrainWorkspace};
@@ -17,7 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub const BRAIN_AB_SCHEMA_VERSION: u32 = 2;
+pub const BRAIN_AB_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AbProtocol {
@@ -81,6 +82,7 @@ pub struct AbVariant {
     pub label: String,
     pub config: Config,
     pub normalization: NormalizationKind,
+    pub position: PositionKind,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +104,7 @@ pub struct AbVariantResult {
     pub label: String,
     pub config: Config,
     pub normalization: NormalizationKind,
+    pub position: PositionKind,
     pub measurements: Vec<AbMeasurement>,
 }
 
@@ -117,7 +120,10 @@ pub struct AbExperimentResult {
 
 impl AbExperimentResult {
     pub fn a_vs_a_reproducible(&self) -> bool {
-        if self.a.config != self.b.config || self.a.normalization != self.b.normalization {
+        if self.a.config != self.b.config
+            || self.a.normalization != self.b.normalization
+            || self.a.position != self.b.position
+        {
             return false;
         }
         self.a
@@ -154,10 +160,11 @@ impl AbExperimentResult {
         for variant in [&self.a, &self.b] {
             for m in &variant.measurements {
                 out.push_str(&format!(
-                    "brain_ab_run | variant={} repetition={} normalization={} n_embd={} n_head={} n_layer={} block={} n_ff={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} optimizer_state_bytes={} checkpoint_bytes={} state_fingerprint={:016x}\n",
+                    "brain_ab_run | variant={} repetition={} normalization={} position={} n_embd={} n_head={} n_layer={} block={} n_ff={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} optimizer_state_bytes={} checkpoint_bytes={} state_fingerprint={:016x}\n",
                     variant.label,
                     m.repetition,
                     variant.normalization.as_str(),
+                    variant.position.as_str(),
                     variant.config.n_embd,
                     variant.config.n_head,
                     variant.config.n_layer,
@@ -220,9 +227,10 @@ impl AbExperimentResult {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"label\":\"{}\",\"normalization\":\"{}\",\"config\":{},\"measurements\":[{}]}}",
+                "{{\"label\":\"{}\",\"normalization\":\"{}\",\"position\":\"{}\",\"config\":{},\"measurements\":[{}]}}",
                 escape_json(&v.label),
                 v.normalization.as_str(),
+                v.position.as_str(),
                 cfg(v.config),
                 ms,
             )
@@ -285,12 +293,14 @@ pub fn run_experiment(
             label: a.label,
             config: a.config,
             normalization: a.normalization,
+            position: a.position,
             measurements: a_measurements,
         },
         b: AbVariantResult {
             label: b.label,
             config: b.config,
             normalization: b.normalization,
+            position: b.position,
             measurements: b_measurements,
         },
     })
@@ -303,7 +313,10 @@ fn validate_variants(a: &AbVariant, b: &AbVariant, token_count: usize) -> Result
     if a.config.vocab != b.config.vocab {
         return Err("A/B variants must use the same vocabulary".into());
     }
-    for (label, cfg) in [(&a.label, a.config), (&b.label, b.config)] {
+    for (label, cfg, position) in [
+        (&a.label, a.config, a.position),
+        (&b.label, b.config, b.position),
+    ] {
         if cfg.vocab <= 1
             || cfg.n_embd == 0
             || cfg.n_head == 0
@@ -317,6 +330,9 @@ fn validate_variants(a: &AbVariant, b: &AbVariant, token_count: usize) -> Result
         if token_count <= cfg.block {
             return Err(format!("A/B token budget too short for {label} block"));
         }
+        if position == PositionKind::Rope && (cfg.n_embd / cfg.n_head) % 2 != 0 {
+            return Err(format!("A/B RoPE requires even head width for {label}"));
+        }
     }
     Ok(())
 }
@@ -328,7 +344,12 @@ fn run_variant(
     repetition: usize,
 ) -> Result<AbMeasurement, String> {
     let mut rng = StdRng::seed_from_u64(protocol.seed);
-    let mut gpt = Gpt::new_with_normalization(variant.config, variant.normalization, &mut rng);
+    let mut gpt = Gpt::new_with_policies(
+        variant.config,
+        variant.normalization,
+        variant.position,
+        &mut rng,
+    );
     let parameter_count = gpt.collect_params().len();
     let mut adam = Adam::new(parameter_count, protocol.learning_rate);
     let mut grads = vec![0.0f32; parameter_count];
@@ -357,7 +378,8 @@ fn run_variant(
     let eval = evaluate_tokens_reference(&gpt, tokens)
         .map_err(|e| format!("A/B eval failed for {}: {e}", variant.label))?;
     let params = gpt.collect_params();
-    let state_fingerprint = training_state_fingerprint(&params, &adam, variant.normalization);
+    let state_fingerprint =
+        training_state_fingerprint(&params, &adam, variant.normalization, variant.position);
 
     let tok = synthetic_tokenizer(variant.config.vocab)?;
     let path = temporary_checkpoint_path(&variant.label, repetition);
@@ -382,9 +404,18 @@ fn run_variant(
     })
 }
 
-fn training_state_fingerprint(params: &[f32], adam: &Adam, normalization: NormalizationKind) -> u64 {
+fn training_state_fingerprint(
+    params: &[f32],
+    adam: &Adam,
+    normalization: NormalizationKind,
+    position: PositionKind,
+) -> u64 {
     let mut h = fingerprint_params(params);
-    for byte in normalization.as_str().bytes() {
+    for byte in normalization
+        .as_str()
+        .bytes()
+        .chain(position.as_str().bytes())
+    {
         h ^= byte as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
@@ -478,8 +509,8 @@ mod tests {
                 token_count: 128,
                 ..AbProtocol::default()
             },
-            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm },
-            AbVariant { label: "B".into(), config: tiny(), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "B".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
         ).unwrap();
         assert!(result.a_vs_a_reproducible());
         assert_eq!(result.a.measurements[0].state_fingerprint, result.a.measurements[1].state_fingerprint);
@@ -501,11 +532,13 @@ mod tests {
                 label: "layernorm".into(),
                 config: tiny(),
                 normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
             },
             AbVariant {
                 label: "rmsnorm".into(),
                 config: tiny(),
                 normalization: NormalizationKind::RmsNorm,
+                position: PositionKind::LearnedAbsolute,
             },
         )
         .unwrap();
@@ -519,13 +552,46 @@ mod tests {
     }
 
     #[test]
+    fn rope_variant_is_reproducible_and_distinct_from_learned_absolute() {
+        let result = run_experiment(
+            AbProtocol {
+                steps: 2,
+                repeats: 2,
+                token_count: 128,
+                ..AbProtocol::default()
+            },
+            AbVariant {
+                label: "learned".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+            },
+            AbVariant {
+                label: "rope".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::Rope,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.a.position, PositionKind::LearnedAbsolute);
+        assert_eq!(result.b.position, PositionKind::Rope);
+        assert!(!result.a_vs_a_reproducible());
+        assert_ne!(
+            result.a.measurements[0].state_fingerprint,
+            result.b.measurements[0].state_fingerprint
+        );
+        assert!(result.json().contains("\"position\":\"rope\""));
+    }
+
+    #[test]
     fn mismatched_vocab_is_rejected() {
         let mut other = tiny();
         other.vocab = 9;
         assert!(run_experiment(
             AbProtocol { steps: 1, repeats: 1, token_count: 64, ..AbProtocol::default() },
-            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm },
-            AbVariant { label: "B".into(), config: other, normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "B".into(), config: other, normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
         ).is_err());
     }
 }

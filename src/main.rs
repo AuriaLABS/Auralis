@@ -75,7 +75,12 @@ fn new_model(
     let tok = AnyTok::Bpe(BpeTokenizer::fit(train_text, run.bpe_merges));
     let mut rng = StdRng::seed_from_u64(run.seed);
     let cfg = architecture.model_config(tok.vocab_size())?;
-    let gpt = Gpt::new_with_normalization(cfg, architecture.normalization, &mut rng);
+    let gpt = Gpt::new_with_policies(
+        cfg,
+        architecture.normalization,
+        architecture.position,
+        &mut rng,
+    );
     Ok((gpt, tok))
 }
 
@@ -91,7 +96,7 @@ fn resolve_model_architecture(
             return Err(format!(
                 "architecture metadata/model mismatch: metadata={} checkpoint={}",
                 persisted.line(),
-                ArchitectureConfig::from_model(gpt.cfg, gpt.normalization()).line(),
+                ArchitectureConfig::from_model(gpt.cfg, gpt.normalization(), gpt.position_kind()).line(),
             ));
         }
         if let Some(requested) = requested {
@@ -105,7 +110,7 @@ fn resolve_model_architecture(
         }
         persisted
     } else {
-        let legacy = ArchitectureConfig::from_model(gpt.cfg, gpt.normalization());
+        let legacy = ArchitectureConfig::from_model(gpt.cfg, gpt.normalization(), gpt.position_kind());
         if let Some(requested) = requested {
             if !requested.matches_model(gpt.cfg) {
                 return Err(format!(
@@ -120,12 +125,19 @@ fn resolve_model_architecture(
                         .into(),
                 );
             }
+            if requested.position != legacy.position {
+                return Err(
+                    "checkpoint has no architecture metadata; non-default positional policy cannot be inferred safely"
+                        .into(),
+                );
+            }
             requested
         } else {
             legacy
         }
     };
     gpt.set_normalization(selected.normalization);
+    gpt.set_position_kind(selected.position);
     Ok((selected, sidecar.exists() || requested.is_some()))
 }
 

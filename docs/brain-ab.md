@@ -20,12 +20,13 @@ Both variants share:
 
 Order alternates A-first/B-first between repetitions.
 
-Each variant also records its normalization policy. The policy is included in the final state fingerprint, because identical weight bytes interpreted under LayerNorm and RMSNorm are not the same model state.
+Each variant records normalization and positional policy. Both policies are included in the final state fingerprint, because identical weight bytes interpreted under different execution semantics are not the same model state.
 
 Each measurement records:
 
 - complete model config;
 - normalization policy;
+- positional policy;
 - final training loss;
 - eval loss and perplexity;
 - tokens/s;
@@ -64,4 +65,15 @@ This scenario holds vocab, width, heads, depth, block, FF width, seed, data and 
 
 RMSNorm keeps the same parameter count and AURLIS03 checkpoint byte size by reserving the historical beta slots with zero gradient.
 
-The harness reports both variants. It does **not** declare a winner from a noisy hosted-runner timing or a single metric.
+## Learned absolute vs RoPE
+
+```bash
+cargo run --release --bin auralis_brain_ab -- 8 5 rope
+cargo run --release --bin auralis_brain_ab -- 8 5 rope --json
+```
+
+This scenario holds vocab, width, heads, depth, block, FF width, normalization, seed, data and training budget constant. Only positional policy changes.
+
+RoPE keeps the historical learned-position parameter slots reserved/inert, so parameter count and raw AURLIS03 tensor layout remain directly comparable. The harness reports both variants and does **not** promote RoPE automatically.
+
+The harness reports all variants. It does **not** declare a winner from a noisy hosted-runner timing or a single metric.

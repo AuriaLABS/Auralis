@@ -4,11 +4,12 @@
 //! experiments do not reinterpret training/data/optimizer semantics.
 
 use crate::model::{Config, NormalizationKind};
+use crate::position::PositionKind;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-pub const ARCHITECTURE_CONFIG_SCHEMA_VERSION: u32 = 2;
+pub const ARCHITECTURE_CONFIG_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchitectureConfig {
@@ -18,6 +19,7 @@ pub struct ArchitectureConfig {
     pub block: usize,
     pub n_ff: usize,
     pub normalization: NormalizationKind,
+    pub position: PositionKind,
 }
 
 impl Default for ArchitectureConfig {
@@ -29,12 +31,17 @@ impl Default for ArchitectureConfig {
             block: 32,
             n_ff: 96,
             normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::LearnedAbsolute,
         }
     }
 }
 
 impl ArchitectureConfig {
-    pub fn from_model(cfg: Config, normalization: NormalizationKind) -> Self {
+    pub fn from_model(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+    ) -> Self {
         Self {
             n_embd: cfg.n_embd,
             n_head: cfg.n_head,
@@ -42,6 +49,7 @@ impl ArchitectureConfig {
             block: cfg.block,
             n_ff: cfg.n_ff,
             normalization,
+            position,
         }
     }
 
@@ -63,6 +71,9 @@ impl ArchitectureConfig {
         }
         if self.n_embd % self.n_head != 0 {
             return Err("n_embd must be divisible by n_head".into());
+        }
+        if self.position == PositionKind::Rope && (self.n_embd / self.n_head) % 2 != 0 {
+            return Err("RoPE requires an even per-head width".into());
         }
         Ok(())
     }
@@ -99,7 +110,8 @@ impl ArchitectureConfig {
                 "n_layer={}\n",
                 "block={}\n",
                 "n_ff={}\n",
-                "normalization={}\n"
+                "normalization={}\n",
+                "position={}\n"
             ),
             ARCHITECTURE_CONFIG_SCHEMA_VERSION,
             self.n_embd,
@@ -108,6 +120,7 @@ impl ArchitectureConfig {
             self.block,
             self.n_ff,
             self.normalization.as_str(),
+            self.position.as_str(),
         )
     }
 
@@ -120,6 +133,7 @@ impl ArchitectureConfig {
         let mut block = None;
         let mut n_ff = None;
         let mut normalization = None;
+        let mut position = None;
 
         for (line_index, raw) in text.lines().enumerate() {
             let line = raw.trim();
@@ -139,24 +153,40 @@ impl ArchitectureConfig {
                 "block" => set_once(&mut block, value, key)?,
                 "n_ff" => set_once(&mut n_ff, value, key)?,
                 "normalization" => set_once(&mut normalization, value, key)?,
+                "position" => set_once(&mut position, value, key)?,
                 other => return Err(format!("unknown architecture field {other}")),
             }
         }
 
         let version: u32 = required(version, "auralis_architecture")?;
-        let normalization = match version {
+        let (normalization, position) = match version {
             1 => {
-                if normalization.is_some() {
-                    return Err("architecture schema 1 must not contain normalization".into());
+                if normalization.is_some() || position.is_some() {
+                    return Err(
+                        "architecture schema 1 must not contain normalization or position".into(),
+                    );
                 }
-                NormalizationKind::LayerNorm
+                (
+                    NormalizationKind::LayerNorm,
+                    PositionKind::LearnedAbsolute,
+                )
             }
-            ARCHITECTURE_CONFIG_SCHEMA_VERSION => {
-                required::<NormalizationKind>(normalization, "normalization")?
+            2 => {
+                if position.is_some() {
+                    return Err("architecture schema 2 must not contain position".into());
+                }
+                (
+                    required::<NormalizationKind>(normalization, "normalization")?,
+                    PositionKind::LearnedAbsolute,
+                )
             }
+            ARCHITECTURE_CONFIG_SCHEMA_VERSION => (
+                required::<NormalizationKind>(normalization, "normalization")?,
+                required::<PositionKind>(position, "position")?,
+            ),
             other => {
                 return Err(format!(
-                    "architecture schema version {other} is unsupported (expected 1 or {ARCHITECTURE_CONFIG_SCHEMA_VERSION})"
+                    "architecture schema version {other} is unsupported (expected 1, 2 or {ARCHITECTURE_CONFIG_SCHEMA_VERSION}); explicit migration required"
                 ))
             }
         };
@@ -168,6 +198,7 @@ impl ArchitectureConfig {
             block: required(block, "block")?,
             n_ff: required(n_ff, "n_ff")?,
             normalization,
+            position,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -197,7 +228,7 @@ impl ArchitectureConfig {
 
     pub fn line(&self) -> String {
         format!(
-            "architecture | schema={} n_embd={} n_head={} n_layer={} block={} n_ff={} normalization={} fingerprint={:016x}",
+            "architecture | schema={} n_embd={} n_head={} n_layer={} block={} n_ff={} normalization={} position={} fingerprint={:016x}",
             ARCHITECTURE_CONFIG_SCHEMA_VERSION,
             self.n_embd,
             self.n_head,
@@ -205,6 +236,7 @@ impl ArchitectureConfig {
             self.block,
             self.n_ff,
             self.normalization.as_str(),
+            self.position.as_str(),
             self.fingerprint(),
         )
     }
@@ -244,6 +276,7 @@ mod tests {
         let cfg = a.model_config(101).unwrap();
         assert_eq!(cfg, Config::tiny(101));
         assert_eq!(a.normalization, NormalizationKind::LayerNorm);
+        assert_eq!(a.position, PositionKind::LearnedAbsolute);
     }
 
     #[test]
@@ -251,7 +284,7 @@ mod tests {
         for cfg in [
             ArchitectureConfig { n_embd: 8, n_head: 1, n_layer: 1, block: 8, n_ff: 16, ..ArchitectureConfig::default() },
             ArchitectureConfig { n_embd: 16, n_head: 2, n_layer: 3, block: 16, n_ff: 32, ..ArchitectureConfig::default() },
-            ArchitectureConfig { n_embd: 32, n_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm },
+            ArchitectureConfig { n_embd: 32, n_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
         ] {
             cfg.validate().unwrap();
             assert_eq!(ArchitectureConfig::decode(&cfg.encode()).unwrap(), cfg);
@@ -263,8 +296,46 @@ mod tests {
         let old = "auralis_architecture=1\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\n";
         let decoded = ArchitectureConfig::decode(old).unwrap();
         assert_eq!(decoded, ArchitectureConfig::default());
-        assert!(decoded.encode().starts_with("auralis_architecture=2\n"));
+        assert!(decoded.encode().starts_with("auralis_architecture=3\n"));
         assert!(decoded.encode().contains("normalization=layernorm\n"));
+        assert!(decoded.encode().contains("position=learned_absolute\n"));
+    }
+
+    #[test]
+    fn schema_two_migrates_to_learned_absolute() {
+        let old = concat!(
+            "auralis_architecture=2\n",
+            "n_embd=32\n",
+            "n_head=4\n",
+            "n_layer=2\n",
+            "block=32\n",
+            "n_ff=96\n",
+            "normalization=rmsnorm\n"
+        );
+        let decoded = ArchitectureConfig::decode(old).unwrap();
+        assert_eq!(decoded.normalization, NormalizationKind::RmsNorm);
+        assert_eq!(decoded.position, PositionKind::LearnedAbsolute);
+        assert!(decoded.encode().starts_with("auralis_architecture=3\n"));
+    }
+
+    #[test]
+    fn rope_requires_even_head_width() {
+        let bad = ArchitectureConfig {
+            n_embd: 6,
+            n_head: 2,
+            n_layer: 1,
+            block: 8,
+            n_ff: 12,
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::Rope,
+        };
+        assert!(bad.validate().is_err());
+
+        let learned = ArchitectureConfig {
+            position: PositionKind::LearnedAbsolute,
+            ..bad
+        };
+        learned.validate().unwrap();
     }
 
     #[test]
@@ -272,13 +343,13 @@ mod tests {
         let bad = ArchitectureConfig { n_embd: 10, n_head: 3, ..ArchitectureConfig::default() };
         assert!(bad.validate().is_err());
         assert!(ArchitectureConfig::decode(
-            "auralis_architecture=3\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=layernorm\n"
+            "auralis_architecture=4\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=layernorm\nposition=learned_absolute\n"
         ).is_err());
         assert!(ArchitectureConfig::decode(
-            "auralis_architecture=2\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=unknown\n"
+            "auralis_architecture=3\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=unknown\nposition=learned_absolute\n"
         ).is_err());
         assert!(ArchitectureConfig::decode(
-            "auralis_architecture=2\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=layernorm\nunknown=1\n"
+            "auralis_architecture=3\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\nnormalization=layernorm\nposition=learned_absolute\nunknown=1\n"
         ).is_err());
     }
 

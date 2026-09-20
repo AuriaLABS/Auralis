@@ -1,0 +1,139 @@
+name: Brain RoPE Experiment
+
+on:
+  pull_request:
+    paths:
+      - "src/position.rs"
+      - "src/model.rs"
+      - "src/architecture.rs"
+      - "src/brain_ab.rs"
+      - "src/main.rs"
+      - "src/bin/auralis_brain_ab.rs"
+      - "src/bin/auralis_rope_context_bench.rs"
+      - "examples/architecture-rope.cfg"
+      - "examples/architecture-rmsnorm.cfg"
+      - "docs/architecture-config.md"
+      - "docs/brain-ab.md"
+      - "docs/rope-experiment.md"
+      - "docs/versions.md"
+      - "src/docs_check.rs"
+      - ".github/workflows/brain_rope_experiment.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: RoPE contract tests
+        run: |
+          cargo test --lib position::tests -- --nocapture
+          cargo test --lib model::tests::explicit_learned_absolute_policy_is_bit_exact_with_default -- --nocapture
+          cargo test --lib model::tests::rope_keeps_parameter_layout_but_reserved_position_gradient_zero -- --nocapture
+          cargo test --lib architecture::tests -- --nocapture
+          cargo test --lib brain_ab::tests::rope_variant_is_reproducible_and_distinct_from_learned_absolute -- --nocapture
+          cargo test --lib docs_check::tests::rope_experiment_doc_matches_contract -- --nocapture
+
+      - name: RoPE split resume exactness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release -- train-fresh 3 /tmp/rope-full.bin 659918 2 1             --model-config examples/architecture-rope.cfg | tee /tmp/rope-full.txt
+          cargo run --release -- train-fresh 2 /tmp/rope-split.bin 659918 2 1             --model-config examples/architecture-rope.cfg > /tmp/rope-split-a.txt
+          cargo run --release -- train 1 /tmp/rope-split.bin 659918 2 1             --model-config examples/architecture-rope.cfg | tee /tmp/rope-split-b.txt
+
+          cmp /tmp/rope-full.bin /tmp/rope-split.bin
+          cmp /tmp/rope-full.bin.manifest /tmp/rope-split.bin.manifest
+          cmp /tmp/rope-full.bin.architecture /tmp/rope-split.bin.architecture
+          grep -q 'position=rope' /tmp/rope-full.txt
+          grep -q 'position=rope' /tmp/rope-split-b.txt
+          echo "rope_resume_gate | checkpoint_exact=true manifest_exact=true architecture_exact=true"
+
+      - name: Learned absolute vs RoPE A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 4 3 rope --json             | tee /tmp/rope-ab.json
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/rope-ab.json", encoding="utf-8"))
+          assert data["schema_version"] == 3
+          assert data["a"]["position"] == "learned_absolute"
+          assert data["b"]["position"] == "rope"
+          assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
+          assert data["a"]["config"] == data["b"]["config"]
+          assert len(data["a"]["measurements"]) == len(data["b"]["measurements"]) == 3
+          for a, b in zip(data["a"]["measurements"], data["b"]["measurements"]):
+              assert a["parameter_count"] == b["parameter_count"]
+              assert a["parameter_bytes"] == b["parameter_bytes"]
+              assert a["checkpoint_bytes"] == b["checkpoint_bytes"]
+              for row in (a, b):
+                  assert row["final_train_loss"] > 0
+                  assert row["eval_loss"] > 0
+                  assert row["eval_perplexity"] >= 1
+                  assert row["tokens_per_second"] > 0
+          print("rope_ab_gate | same_budget=true same_parameter_layout=true records=3")
+          PY
+
+      - name: Context sensitivity and resource profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_rope_context_bench -- 4 30 3             | tee /tmp/rope-context.txt
+          test "$(grep -c '^rope_context_child |' /tmp/rope-context.txt)" -eq 8
+
+          python3 - <<'PY'
+          rows = []
+          for line in open("/tmp/rope-context.txt", encoding="utf-8"):
+              if not line.startswith("rope_context_child |"):
+                  continue
+              fields = {}
+              for token in line.strip().split()[2:]:
+                  if "=" in token:
+                      key, value = token.split("=", 1)
+                      fields[key] = value
+              rows.append(fields)
+
+          by = {}
+          for row in rows:
+              key = (int(row["context"]), row["policy"])
+              by[key] = row
+              assert int(row["block"]) == 32
+              assert int(row["train_steps"]) == 4
+              assert int(row["optimizer_step"]) == 4
+              assert int(row["params"]) > 0
+              assert float(row["loss"]) > 0
+              assert float(row["ppl"]) >= 1
+              assert float(row["tok_per_s"]) > 0
+              assert row["peak_rss_kib"] == "null" or int(row["peak_rss_kib"]) > 0
+
+          for context in [4, 8, 16, 32]:
+              learned = by[(context, "learned_absolute")]
+              rope = by[(context, "rope")]
+              assert learned["params"] == rope["params"]
+              speed_ratio = float(rope["tok_per_s"]) / float(learned["tok_per_s"])
+              if speed_ratio < 0.60:
+                  raise SystemExit(
+                      f"RoPE throughput regression too large at context {context}: {speed_ratio:.4f}"
+                  )
+              if learned["peak_rss_kib"] != "null" and rope["peak_rss_kib"] != "null":
+                  if int(rope["peak_rss_kib"]) > int(learned["peak_rss_kib"]) + 2048:
+                      raise SystemExit(
+                          f"RoPE RSS regression too large at context {context}: "
+                          f"{rope['peak_rss_kib']} vs {learned['peak_rss_kib']}"
+                      )
+              print(
+                  f"rope_context_gate | context={context} "
+                  f"rope_over_learned_tok_s={speed_ratio:.4f} "
+                  f"learned_loss={learned['loss']} rope_loss={rope['loss']}"
+              )
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets
