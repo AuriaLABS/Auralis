@@ -1,4 +1,10 @@
-//! Opt-in per-tensor statistics for Brain layer instrumentation.
+//! Opt-in per-layer statistics for Brain experiments.
+//!
+//! These summaries are intentionally separate from the supported math path.
+//! When hooks are disabled, callers can delegate directly to the historical
+//! forward/backward implementation without scans or histogram work.
+
+use crate::numeric::{Scan, Stage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompactHistogram {
@@ -55,6 +61,133 @@ impl LayerHooks {
 impl Default for LayerHooks {
     fn default() -> Self {
         Self::off()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerTensorSummary {
+    pub layer: usize,
+    pub name: &'static str,
+    pub stage: Stage,
+    pub scan: Scan,
+    pub stats: TensorStats,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientLayerSummary {
+    pub layer: usize,
+    pub stats: TensorStats,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdjacentLayerCosine {
+    pub left_layer: usize,
+    pub right_layer: usize,
+    pub cosine: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerDiagnosticsReport {
+    pub activations: Vec<LayerTensorSummary>,
+    pub gradients: Vec<GradientLayerSummary>,
+    pub adjacent_gradient_cosine: Vec<AdjacentLayerCosine>,
+}
+
+impl LayerDiagnosticsReport {
+    pub fn json(&self) -> String {
+        fn optional(value: Option<f32>) -> String {
+            value
+                .map(|v| format!("{v}"))
+                .unwrap_or_else(|| "null".into())
+        }
+
+        fn histogram(stats: &TensorStats) -> String {
+            match stats.histogram {
+                Some(h) => format!(
+                    concat!(
+                        "{\"negative_large\":{},\"negative_small\":{},",
+                        "\"near_zero\":{},\"positive_small\":{},",
+                        "\"positive_large\":{},\"non_finite\":{}}"
+                    ),
+                    h.negative_large,
+                    h.negative_small,
+                    h.near_zero,
+                    h.positive_small,
+                    h.positive_large,
+                    h.non_finite,
+                ),
+                None => "null".into(),
+            }
+        }
+
+        fn stats_json(stats: &TensorStats) -> String {
+            format!(
+                concat!(
+                    "{\"len\":{},\"mean\":{},\"l2\":{},\"max_abs\":{},",
+                    "\"histogram\":{}}"
+                ),
+                stats.len,
+                optional(stats.mean),
+                optional(stats.l2),
+                stats.max_abs,
+                histogram(stats),
+            )
+        }
+
+        let activations = self
+            .activations
+            .iter()
+            .map(|entry| {
+                format!(
+                    concat!(
+                        "{\"layer\":{},\"name\":\"{}\",\"stage\":\"{:?}\",",
+                        "\"nans\":{},\"infs\":{},\"stats\":{}}"
+                    ),
+                    entry.layer,
+                    entry.name,
+                    entry.stage,
+                    entry.scan.nans,
+                    entry.scan.infs,
+                    stats_json(&entry.stats),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let gradients = self
+            .gradients
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{\"layer\":{},\"stats\":{}}",
+                    entry.layer,
+                    stats_json(&entry.stats),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let cosine = self
+            .adjacent_gradient_cosine
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{\"left_layer\":{},\"right_layer\":{},\"cosine\":{}}",
+                    entry.left_layer,
+                    entry.right_layer,
+                    optional(entry.cosine),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        format!(
+            concat!(
+                "{\"activations\":[{}],\"gradients\":[{}],",
+                "\"adjacent_gradient_cosine\":[{}]}"
+            ),
+            activations, gradients, cosine,
+        )
     }
 }
 
@@ -146,7 +279,7 @@ mod tests {
     fn stats_report_mean_l2_max_and_histogram() {
         let stats = summarize_tensor(&[-2.0, -0.5, 0.0, 0.25, 3.0], true);
         assert_eq!(stats.len, 5);
-        assert_eq!(stats.mean, Some(0.15));
+        assert!((stats.mean.unwrap() - 0.15).abs() < 1e-6);
         assert!((stats.l2.unwrap() - 3.6496575).abs() < 1e-6);
         assert_eq!(stats.max_abs, 3.0);
         assert_eq!(
@@ -179,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn off_hooks_are_zero_cost_contract() {
+    fn off_hooks_are_zero_work_contract() {
         assert_eq!(
             LayerHooks::off(),
             LayerHooks {
