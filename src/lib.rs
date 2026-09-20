@@ -4,6 +4,7 @@ pub mod batch;
 pub mod bench;
 pub mod bench_format;
 pub mod bench_result;
+pub mod bench_runner;
 pub mod bpe;
 pub mod checkpoint;
 pub mod ci_matrix;
