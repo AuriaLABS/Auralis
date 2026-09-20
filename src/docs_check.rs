@@ -145,6 +145,7 @@ mod tests {
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
+            "ENGINE_ARCHITECTURE.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -152,6 +153,46 @@ mod tests {
         assert!(root().join("VISION.md").is_file());
         assert!(root().join("ROADMAP.md").is_file());
         assert!(root().join("examples/tiny.cfg").is_file());
+    }
+
+    #[test]
+    fn engine_architecture_doc_names_current_invariants() {
+        let text = docs("ENGINE_ARCHITECTURE.md");
+        for needle in [
+            "# Auralis Engine 0.3 — arquitectura actual",
+            "## 2. Rutas de ejecución",
+            "## 3. Ownership y memoria",
+            "## 4. Invariantes de shapes",
+            "## 7. Kernels CPU",
+            "## 8. Backend boundary",
+            "## 9. Diagnósticos numéricos",
+            "## 10. Observabilidad de rendimiento",
+            "## 12. Checkpoint y reproducibilidad",
+            "## 13. Política unsafe / SIMD / threads",
+            "## 14. Evidencia reproducible",
+            "## 15. Límites conocidos",
+            "train_step_reuse",
+            "matmul_row_slices_into",
+            "EngineStepTiming",
+            "ScalarCpuBackend",
+            "OptimizedCpuBackend",
+            "MockBackend",
+            "auralis bench run",
+            "Auralis-Scratch-Optimization: true",
+            "no existe SIMD promovido",
+            "no hay worker pool CPU productivo promovido",
+        ] {
+            assert!(
+                text.contains(needle),
+                "docs/ENGINE_ARCHITECTURE.md missing {needle}"
+            );
+        }
+
+        let readme = readme();
+        assert!(readme.contains("docs/ENGINE_ARCHITECTURE.md"));
+        let roadmap =
+            fs::read_to_string(root().join("ROADMAP.md")).expect("ROADMAP.md");
+        assert!(roadmap.contains("docs/ENGINE_ARCHITECTURE.md"));
     }
 
     #[test]
