@@ -6,8 +6,8 @@ Fuente de verdad del texto de ayuda: `fn usage()` en `src/main.rs`.
 ## Verbos
 
 ```
-auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]
-auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]
+auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]
+auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]
 auralis config [FILE]
 auralis inspect [checkpoint] [--json]
 auralis release-check [ROOT] [--json]
@@ -34,3 +34,5 @@ Config de ejemplo (schema 1): [`examples/tiny.cfg`](../examples/tiny.cfg).
 Cómo ejecutarlos: [verify.md](verify.md).
 
 Model architecture config (schema 1): [architecture-config.md](architecture-config.md).
+
+Learning-rate scheduler (schema 1): [scheduler.md](scheduler.md).

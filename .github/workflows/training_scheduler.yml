@@ -1,0 +1,145 @@
+name: Training Scheduler
+
+on:
+  pull_request:
+    paths:
+      - "src/scheduler.rs"
+      - "src/main.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/scheduler.md"
+      - "docs/cli.md"
+      - "docs/versions.md"
+      - "examples/scheduler-*.cfg"
+      - ".github/workflows/training_scheduler.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  scheduler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      AURALIS_COMMIT_SHA: \${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Scheduler contract tests
+        run: |
+          cargo test --lib scheduler::tests -- --nocapture
+          cargo test --lib docs_check::tests::scheduler_docs_and_examples_match_code -- --nocapture
+          cargo test --bin auralis cli_tests -- --nocapture
+
+      - name: Constant preserves historical artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/sched-implicit.bin* /tmp/sched-explicit.bin*
+          cargo run --release -- train-fresh 4 /tmp/sched-implicit.bin 659918 2 1 \
+            | tee /tmp/sched-implicit.txt
+          cargo run --release -- train-fresh 4 /tmp/sched-explicit.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-constant.cfg \
+            | tee /tmp/sched-explicit.txt
+
+          cmp /tmp/sched-implicit.bin /tmp/sched-explicit.bin
+          cmp /tmp/sched-implicit.bin.manifest /tmp/sched-explicit.bin.manifest
+          test ! -e /tmp/sched-implicit.bin.scheduler
+          test -s /tmp/sched-explicit.bin.scheduler
+          grep -q '^scheduler | schema=1 kind=constant ' /tmp/sched-implicit.txt
+          grep -q '^scheduler | schema=1 kind=constant ' /tmp/sched-explicit.txt
+          echo "scheduler_constant_gate | checkpoint_exact=true manifest_exact=true implicit_sidecar=false"
+
+      - name: Linear warmup curve
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/sched-warm.bin*
+          cargo run --release -- train-fresh 4 /tmp/sched-warm.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-warmup.cfg \
+            | tee /tmp/sched-warm.txt
+
+          grep -q '^scheduler | schema=1 kind=linear_warmup warmup_steps=4 ' /tmp/sched-warm.txt
+          python3 - <<'PY'
+          import re
+          lines = [x for x in open("/tmp/sched-warm.txt", encoding="utf-8") if x.startswith("step ")]
+          values = []
+          for line in lines:
+              global_step = int(re.search(r"global=(\d+)", line).group(1))
+              lr = float(re.search(r"lr=([0-9.]+)", line).group(1))
+              values.append((global_step, lr))
+          expected = [(0, 0.00075), (3, 0.003)]
+          assert values == expected, (values, expected)
+          print("scheduler_warmup_gate | first_lr=0.00075 fourth_lr=0.003")
+          PY
+          test -s /tmp/sched-warm.bin.scheduler
+
+      - name: Warmup split resume is byte-exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/sched-cont.bin* /tmp/sched-split.bin*
+
+          cargo run --release -- train-fresh 6 /tmp/sched-cont.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-warmup.cfg \
+            > /tmp/sched-cont.txt
+
+          cargo run --release -- train-fresh 3 /tmp/sched-split.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-warmup.cfg \
+            > /tmp/sched-split-a.txt
+          cargo run --release -- train 3 /tmp/sched-split.bin 659918 2 1 \
+            > /tmp/sched-split-b.txt
+
+          cmp /tmp/sched-cont.bin /tmp/sched-split.bin
+          cmp /tmp/sched-cont.bin.manifest /tmp/sched-split.bin.manifest
+          cmp /tmp/sched-cont.bin.scheduler /tmp/sched-split.bin.scheduler
+          grep -q '^scheduler | schema=1 kind=linear_warmup ' /tmp/sched-split-b.txt
+          grep -q 'global=3 .*lr=0.00300000' /tmp/sched-split-b.txt
+          echo "scheduler_resume_gate | checkpoint_exact=true manifest_exact=true sidecar_exact=true"
+
+      - name: Scheduler mismatch fails without overwrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          before_ckpt="$(sha256sum /tmp/sched-split.bin | cut -d' ' -f1)"
+          before_manifest="$(sha256sum /tmp/sched-split.bin.manifest | cut -d' ' -f1)"
+          before_scheduler="$(sha256sum /tmp/sched-split.bin.scheduler | cut -d' ' -f1)"
+
+          set +e
+          cargo run --release -- train 1 /tmp/sched-split.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-cosine.cfg \
+            > /tmp/sched-mismatch.txt 2>&1
+          code=$?
+          set -e
+
+          test "$code" -eq 2
+          grep -q 'scheduler mismatch on resume' /tmp/sched-mismatch.txt
+          test "$before_ckpt" = "$(sha256sum /tmp/sched-split.bin | cut -d' ' -f1)"
+          test "$before_manifest" = "$(sha256sum /tmp/sched-split.bin.manifest | cut -d' ' -f1)"
+          test "$before_scheduler" = "$(sha256sum /tmp/sched-split.bin.scheduler | cut -d' ' -f1)"
+          echo "scheduler_mismatch_gate | rejected=true artifacts_unchanged=true"
+
+      - name: Fresh constant removes stale sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp examples/scheduler-warmup.cfg /tmp/stale.bin.scheduler
+          cargo run --release -- train-fresh 1 /tmp/stale.bin 659918 2 1 \
+            > /tmp/stale.txt
+          test ! -e /tmp/stale.bin.scheduler
+          grep -q '^scheduler | schema=1 kind=constant ' /tmp/stale.txt
+          echo "scheduler_stale_gate | removed=true"
+
+      - name: Cosine policy executes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/sched-cos.bin*
+          cargo run --release -- train-fresh 6 /tmp/sched-cos.bin 659918 2 1 \
+            --scheduler-config examples/scheduler-cosine.cfg \
+            | tee /tmp/sched-cos.txt
+          grep -q '^scheduler | schema=1 kind=cosine warmup_steps=2 decay_steps=4 min_lr_ratio=0.1 ' /tmp/sched-cos.txt
+          grep -q 'global=0 .*lr=0.00150000' /tmp/sched-cos.txt
+          grep -q 'global=5 .*lr=0.00030000' /tmp/sched-cos.txt
+          test -s /tmp/sched-cos.bin.scheduler

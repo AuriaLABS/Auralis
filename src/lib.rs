@@ -30,6 +30,7 @@ pub mod position;
 pub mod release;
 pub mod run_config;
 pub mod sampling;
+pub mod scheduler;
 pub mod sec;
 pub mod sec_overflow;
 pub mod sec_path;
