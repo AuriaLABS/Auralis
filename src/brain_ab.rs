@@ -8,7 +8,7 @@ use crate::eval::evaluate_tokens_reference;
 use crate::manifest::{build_revision, fingerprint_params};
 use crate::model::{Config, Gpt, NormalizationKind};
 use crate::position::PositionKind;
-use crate::optim::{Adam, AdamW, Lion, Optimizer, OptimizerId};
+use crate::optim::{Adam, AdamW, AdamWState, Lion, LionState, Optimizer, OptimizerId};
 use crate::tokenizer::{AnyTok, CharTokenizer};
 use crate::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -651,6 +651,104 @@ mod tests {
         assert!(result.a.measurements[0].checkpoint_includes_optimizer);
         assert!(!result.b.measurements[0].checkpoint_includes_optimizer);
         assert!(result.json().contains("\"optimizer\":\"lion\""));
+    }
+
+    fn run_optimizer_steps(
+        gpt: &mut Gpt,
+        optimizer: &mut dyn Optimizer,
+        tokens: &[usize],
+        steps: usize,
+    ) {
+        let n = gpt.collect_params().len();
+        let mut grads = vec![0.0f32; n];
+        let mut workspace = TrainWorkspace::new(gpt);
+        let cfg = TrainConfig {
+            seed: 659_918,
+            batch_size: 2,
+            gradient_accumulation_steps: 2,
+            grad_clip_norm: 1.0,
+        };
+        for _ in 0..steps {
+            let global_step = optimizer.global_step();
+            train_step_reuse(
+                gpt,
+                optimizer,
+                tokens,
+                cfg,
+                global_step,
+                &mut grads,
+                &mut workspace,
+            )
+            .unwrap();
+        }
+    }
+
+    fn fresh_resume_model(seed: u64) -> Gpt {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Gpt::new_with_policies(
+            tiny(),
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            &mut rng,
+        )
+    }
+
+    #[test]
+    fn adamw_training_resume_is_exact() {
+        let seed = 7_141;
+        let tokens = token_stream(8, 256);
+
+        let mut continuous = fresh_resume_model(seed);
+        let n = continuous.collect_params().len();
+        let mut continuous_opt = AdamW::new(n, 3e-3, 0.01);
+        run_optimizer_steps(&mut continuous, &mut continuous_opt, &tokens, 4);
+
+        let mut split = fresh_resume_model(seed);
+        let mut split_opt = AdamW::new(n, 3e-3, 0.01);
+        run_optimizer_steps(&mut split, &mut split_opt, &tokens, 2);
+        let split_params = split.collect_params();
+        let encoded = split_opt.state().encode().unwrap();
+
+        let mut resumed = fresh_resume_model(seed);
+        resumed.write_params(&split_params);
+        let state = AdamWState::decode(&encoded).unwrap();
+        let mut resumed_opt = AdamW::try_from_state(state).unwrap();
+        run_optimizer_steps(&mut resumed, &mut resumed_opt, &tokens, 2);
+
+        assert_eq!(resumed.collect_params(), continuous.collect_params());
+        assert_eq!(
+            resumed_opt.state().encode().unwrap(),
+            continuous_opt.state().encode().unwrap()
+        );
+    }
+
+    #[test]
+    fn lion_training_resume_is_exact() {
+        let seed = 7_142;
+        let tokens = token_stream(8, 256);
+
+        let mut continuous = fresh_resume_model(seed);
+        let n = continuous.collect_params().len();
+        let mut continuous_opt = Lion::new(n, 3e-3, 0.01);
+        run_optimizer_steps(&mut continuous, &mut continuous_opt, &tokens, 4);
+
+        let mut split = fresh_resume_model(seed);
+        let mut split_opt = Lion::new(n, 3e-3, 0.01);
+        run_optimizer_steps(&mut split, &mut split_opt, &tokens, 2);
+        let split_params = split.collect_params();
+        let encoded = split_opt.state().encode().unwrap();
+
+        let mut resumed = fresh_resume_model(seed);
+        resumed.write_params(&split_params);
+        let state = LionState::decode(&encoded).unwrap();
+        let mut resumed_opt = Lion::try_from_state(state).unwrap();
+        run_optimizer_steps(&mut resumed, &mut resumed_opt, &tokens, 2);
+
+        assert_eq!(resumed.collect_params(), continuous.collect_params());
+        assert_eq!(
+            resumed_opt.state().encode().unwrap(),
+            continuous_opt.state().encode().unwrap()
+        );
     }
 
     #[test]
