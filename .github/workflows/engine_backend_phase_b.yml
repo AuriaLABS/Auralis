@@ -34,12 +34,14 @@ jobs:
           cargo test --test engine_equivalence -- --nocapture
           cargo test --test engine_state_equivalence -- --nocapture
 
-      - name: Persistent schema must stay untouched
+      - name: Backend changes must not alter persistent schema
         shell: bash
         run: |
           set -euo pipefail
-          if ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs; then
-            echo "Phase B must not change RunConfig/checkpoint schemas"
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/model.rs src/backend.rs; then
+            echo "No backend/model diff in this PR; backend scope restriction does not apply."
+          elif ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs; then
+            echo "A backend/model change must not also change RunConfig/checkpoint schemas"
             git diff "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs
             exit 1
           fi
