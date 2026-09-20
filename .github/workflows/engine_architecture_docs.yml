@@ -1,0 +1,47 @@
+name: Engine Architecture Docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/ENGINE_ARCHITECTURE.md"
+      - "README.md"
+      - "ROADMAP.md"
+      - "src/docs_check.rs"
+      - ".github/workflows/engine_architecture_docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Engine architecture contract
+        run: cargo test --lib docs_check::tests::engine_architecture_doc_names_current_invariants -- --nocapture
+
+      - name: Internal markdown links
+        run: cargo test --lib docs_check::tests::internal_markdown_links_resolve -- --nocapture
+
+      - name: Required docs
+        run: cargo test --lib docs_check::tests::required_docs_exist -- --nocapture
+
+      - name: Current-state wording guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          doc="docs/ENGINE_ARCHITECTURE.md"
+          grep -q 'Phase A está integrada' "$doc"
+          grep -q 'integración model-wide es Phase B' "$doc"
+          grep -q 'no existe SIMD promovido' "$doc"
+          grep -q 'no hay worker pool CPU productivo promovido' "$doc"
+          grep -q 'manual-long de 3000 steps' "$doc"
+          grep -q 'no implica que ese run largo se haya ejecutado' "$doc"
+
+          if grep -Eiq 'GPU (integrada|productiva)|worker pool productivo|SIMD promovido actualmente[^.]*(sí|true)' "$doc"; then
+            echo "architecture doc overstates an unpromoted capability"
+            exit 1
+          fi
