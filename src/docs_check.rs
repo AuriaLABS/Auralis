@@ -134,6 +134,7 @@ mod tests {
     #[test]
     fn required_docs_exist() {
         for name in [
+            "architecture-config.md",
             "bench-registry.md",
             "ci-pruebas.md",
             "sec-unsafe.md",
@@ -220,12 +221,39 @@ mod tests {
     }
 
     #[test]
+    fn architecture_config_docs_match_code() {
+        let text = docs("architecture-config.md");
+        for needle in [
+            "auralis_architecture=1",
+            "--model-config",
+            "architecture-tiny.cfg",
+            "architecture-small-1x1.cfg",
+            "architecture-small-3x2.cfg",
+            "RunConfig",
+            "AURLIS02/AURLIS03",
+        ] {
+            assert!(text.contains(needle), "architecture-config.md missing {needle}");
+        }
+        for example in [
+            "architecture-tiny.cfg",
+            "architecture-small-1x1.cfg",
+            "architecture-small-3x2.cfg",
+        ] {
+            let cfg = crate::architecture::ArchitectureConfig::load(
+                root().join("examples").join(example)
+            ).unwrap_or_else(|e| panic!("{example}: {e}"));
+            cfg.validate().unwrap();
+        }
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
         assert!(cargo.contains("edition = \"2021\""));
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::manifest::MANIFEST_VERSION, 4);
         assert_eq!(crate::release::RELEASE_MANIFEST_VERSION, 1);
         let versions = docs("versions.md");
@@ -233,6 +261,7 @@ mod tests {
             "`0.1.0`",
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 1",
+            "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 1",
             "MANIFEST_VERSION = 4",
             "RELEASE_MANIFEST_VERSION = 1",
         ] {
@@ -360,7 +389,7 @@ mod tests {
             assert!(usage.contains(line), "fn usage() missing {line}");
             assert!(cli.contains(line.trim()), "docs/cli.md missing {line}");
         }
-        for flag in ["--config", "--json", "--csv", "--out", "--verify"] {
+        for flag in ["--config", "--model-config", "--diagnostics", "--json", "--csv", "--out", "--verify"] {
             assert!(usage.contains(flag), "fn usage() missing {flag}");
             assert!(cli.contains(flag), "docs/cli.md missing {flag}");
         }
