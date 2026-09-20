@@ -599,8 +599,103 @@ fn finish_step_with_params(
 mod tests {
     use super::*;
     use crate::model::Config;
+    use crate::optim::{OptimizerDiagnostics, OptimizerId};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    struct RecordingOptimizer {
+        learning_rate: f32,
+        updates: u64,
+        parameter_count: usize,
+        empty: Vec<f32>,
+    }
+
+    impl RecordingOptimizer {
+        fn new(parameter_count: usize, learning_rate: f32) -> Self {
+            Self {
+                learning_rate,
+                updates: 0,
+                parameter_count,
+                empty: Vec::new(),
+            }
+        }
+    }
+
+    impl Optimizer for RecordingOptimizer {
+        fn id(&self) -> OptimizerId {
+            OptimizerId::Adam
+        }
+
+        fn learning_rate(&self) -> f32 {
+            self.learning_rate
+        }
+
+        fn set_learning_rate(&mut self, learning_rate: f32) -> Result<(), &'static str> {
+            self.learning_rate = learning_rate;
+            Ok(())
+        }
+
+        fn global_step(&self) -> u64 {
+            self.updates
+        }
+
+        fn parameter_count(&self) -> usize {
+            self.parameter_count
+        }
+
+        fn config_fingerprint(&self) -> u64 {
+            0xfeed
+        }
+
+        fn state_fingerprint(&self) -> u64 {
+            self.updates
+        }
+
+        fn diagnostics(&self) -> OptimizerDiagnostics<'_> {
+            OptimizerDiagnostics {
+                first_name: "mock_state_1",
+                first: &self.empty,
+                second_name: "mock_state_2",
+                second: &self.empty,
+            }
+        }
+
+        fn update(
+            &mut self,
+            parameters: &mut [f32],
+            gradients: &[f32],
+        ) -> Result<(), &'static str> {
+            if parameters.len() != gradients.len() || parameters.len() != self.parameter_count {
+                return Err("mock optimizer size mismatch");
+            }
+            for (parameter, gradient) in parameters.iter_mut().zip(gradients) {
+                *parameter -= self.learning_rate * gradient;
+            }
+            self.updates += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reference_training_accepts_non_adam_optimizer_through_boundary() {
+        let mut gpt = model(6001);
+        let n = gpt.collect_params().len();
+        let mut optimizer = RecordingOptimizer::new(n, 1e-3);
+        let mut grads = vec![0.0; n];
+        let tokens: Vec<usize> = (0..256).map(|i| i % gpt.cfg.vocab).collect();
+        let cfg = TrainConfig {
+            seed: 44,
+            batch_size: 1,
+            gradient_accumulation_steps: 1,
+            grad_clip_norm: 1.0,
+        };
+
+        let metrics =
+            train_step(&mut gpt, &mut optimizer, &tokens, cfg, 0, &mut grads).unwrap();
+        assert_eq!(optimizer.global_step(), 1);
+        assert_eq!(metrics.global_step, 0);
+        assert!(metrics.loss.is_finite());
+    }
 
     fn model(seed: u64) -> Gpt {
         let cfg = Config {
