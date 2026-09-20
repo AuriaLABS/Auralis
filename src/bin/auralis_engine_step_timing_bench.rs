@@ -1,6 +1,6 @@
 use auralis::metrics::EngineStepTiming;
 use auralis::model::{Config, Gpt};
-use auralis::optim::Adam;
+use auralis::optim::{Adam, Optimizer};
 use auralis::training::{
     train_step_reuse, train_step_reuse_timing, TrainConfig, TrainWorkspace,
 };
@@ -55,7 +55,7 @@ fn step(
     grads: &mut [f32],
     workspace: &mut TrainWorkspace,
 ) -> Option<EngineStepTiming> {
-    let global_step = adam.t.max(0) as u64;
+    let global_step = adam.global_step();
     match mode {
         Mode::Baseline => {
             train_step_reuse(gpt, adam, stream, cfg, global_step, grads, workspace)
