@@ -421,6 +421,7 @@ fn train(
     if persist_scheduler {
         println!("scheduler_metadata → {}", scheduler_sidecar.display());
     }
+    println!("{}", adam.state_identity().line());
     println!(
         "run_summary | params={} optimizer_steps={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
         n_params,
