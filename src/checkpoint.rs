@@ -296,7 +296,10 @@ pub fn load_full(path: impl AsRef<Path>) -> std::io::Result<(Gpt, AnyTok, Option
             .chunks_exact(4)
             .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
             .collect();
-        Some(Adam::from_state(lr, t, m, v))
+        Some(
+            Adam::try_from_legacy_state(lr, t, m, v)
+                .map_err(|e| invalid_data(format!("invalid Adam optimizer state: {e}")))?,
+        )
     } else {
         None
     };
