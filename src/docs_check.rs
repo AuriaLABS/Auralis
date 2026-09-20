@@ -228,9 +228,12 @@ mod tests {
     fn architecture_config_docs_match_code() {
         let text = docs("architecture-config.md");
         for needle in [
-            "auralis_architecture=2",
+            "auralis_architecture=3",
             "normalization=layernorm",
             "architecture-rmsnorm.cfg",
+            "architecture-rope.cfg",
+            "position=learned_absolute",
+            "rope",
             "CHECKPOINT.architecture",
             "--model-config",
             "architecture-tiny.cfg",
@@ -246,6 +249,7 @@ mod tests {
             "architecture-small-1x1.cfg",
             "architecture-small-3x2.cfg",
             "architecture-rmsnorm.cfg",
+            "architecture-rope.cfg",
         ] {
             let cfg = crate::architecture::ArchitectureConfig::load(
                 root().join("examples").join(example)
@@ -266,6 +270,8 @@ mod tests {
             "real AURLIS03 checkpoint bytes",
             "LayerNorm vs RMSNorm",
             "normalization policy",
+            "positional policy",
+            "Learned absolute vs RoPE",
             "does **not** declare a winner",
         ] {
             assert!(text.contains(needle), "docs/brain-ab.md missing {needle}");
@@ -350,8 +356,8 @@ mod tests {
         assert!(cargo.contains("edition = \"2021\""));
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
-        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 2);
-        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 2);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
@@ -362,8 +368,8 @@ mod tests {
             "`0.1.0`",
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 2",
-            "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 2",
-            "BRAIN_AB_SCHEMA_VERSION = 2",
+            "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 3",
+            "BRAIN_AB_SCHEMA_VERSION = 3",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
