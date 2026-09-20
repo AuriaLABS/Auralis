@@ -1,6 +1,6 @@
 use auralis::checkpoint;
 use auralis::model::{Config, Gpt};
-use auralis::optim::Adam;
+use auralis::optim::{Adam, Optimizer};
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use auralis::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -169,7 +169,7 @@ fn execute_windows(
         let started = Instant::now();
         let mut chunk_tokens = 0u64;
         for _ in 0..chunk {
-            let global_step = adam.t.max(0) as u64;
+            let global_step = adam.global_step();
             let metrics = train_step_reuse(
                 gpt,
                 adam,
@@ -336,7 +336,7 @@ fn child_run(
         rss_bounded,
         final_loss,
         finite_loss,
-        adam.t,
+        adam.global_step() as i32,
         checkpoint_bytes,
         fingerprint,
     );
