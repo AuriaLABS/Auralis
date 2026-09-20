@@ -1,5 +1,5 @@
 use auralis::brain_ab::{run_experiment, AbProtocol, AbVariant};
-use auralis::model::Config;
+use auralis::model::{Config, NormalizationKind};
 use std::env;
 
 fn parse_usize(index: usize, default: usize) -> usize {
@@ -28,15 +28,19 @@ fn main() {
 
     let (a, b) = match scenario.as_str() {
         "same" => (
-            AbVariant { label: "same-a".into(), config: config(1) },
-            AbVariant { label: "same-b".into(), config: config(1) },
+            AbVariant { label: "same-a".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "same-b".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
         ),
         "depth" => (
-            AbVariant { label: "1-layer".into(), config: config(1) },
-            AbVariant { label: "2-layer".into(), config: config(2) },
+            AbVariant { label: "1-layer".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "2-layer".into(), config: config(2), normalization: NormalizationKind::LayerNorm },
+        ),
+        "normalization" => (
+            AbVariant { label: "layernorm".into(), config: config(2), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "rmsnorm".into(), config: config(2), normalization: NormalizationKind::RmsNorm },
         ),
         other => {
-            eprintln!("unknown A/B scenario {other}; expected same|depth");
+            eprintln!("unknown A/B scenario {other}; expected same|depth|normalization");
             std::process::exit(2);
         }
     };
