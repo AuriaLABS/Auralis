@@ -574,10 +574,10 @@ Engine 0.3 todavía no es un motor GPU ni un runtime final.
 Pendientes relevantes:
 
 - backend Phase B dentro de un boundary explícito del modelo;
-- GPU/device memory real;
+- GPU/device memory real todavía pendiente;
 - mixed/low precision promovida;
-- worker pool productivo;
-- SIMD productivo;
+- pool persistente multihilo todavía pendiente;
+- SIMD productivo todavía pendiente;
 - energía/tokens por joule;
 - timers separados de data/checkpoint a nivel correcto;
 - auditoría adicional de layout/strides;
