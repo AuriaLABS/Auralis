@@ -9,6 +9,7 @@ use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
 use crate::numeric::{explain, scan_f32, Scan, Stage};
+use crate::position::{LearnedAbsolute, PositionalEncoding, TrainablePositionalEncoding};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +313,28 @@ impl Gpt {
             w_out: init_vec(rng, d * cfg.vocab, 0.02),
             b_out: vec![0.0; cfg.vocab],
         }
+    }
+
+    fn embed_tokens_with_positions(&self, tokens: &[usize]) -> Vec<f32> {
+        assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
+        let t = tokens.len();
+        let d = self.cfg.n_embd;
+        let mut x = vec![0.0; t * d];
+
+        for i in 0..t {
+            let tok = tokens[i];
+            assert!(tok < self.cfg.vocab);
+            for j in 0..d {
+                x[i * d + j] = self.tok_emb[tok * d + j];
+            }
+        }
+
+        let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
+            .expect("model positional storage matches config");
+        positional
+            .add_forward(&mut x, t)
+            .expect("token length already validated against positional capacity");
+        x
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
@@ -685,9 +708,14 @@ impl Gpt {
             for j in 0..d {
                 let g = dx[i * d + j];
                 gg.tok_emb[tok * d + j] += g;
-                gg.pos_emb[i * d + j] += g;
             }
         }
+
+        let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
+            .expect("model positional storage matches config");
+        positional
+            .accumulate_backward(dx, t, &mut gg.pos_emb)
+            .expect("backward positional shapes match validated forward");
 
         copy_grads_into(gg, grads);
         loss
@@ -724,17 +752,9 @@ impl Gpt {
         tokens: &[usize],
         backend: &B,
     ) -> Vec<f32> {
-        assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
         let d = self.cfg.n_embd;
-        let mut x = vec![0.0; t * d];
-        for i in 0..t {
-            let tok = tokens[i];
-            assert!(tok < self.cfg.vocab);
-            for j in 0..d {
-                x[i * d + j] = self.tok_emb[tok * d + j] + self.pos_emb[i * d + j];
-            }
-        }
+        let mut x = self.embed_tokens_with_positions(tokens);
 
         for b in &self.blocks {
             let h1 = layernorm_eval(&x, t, d, &b.ln1_g, &b.ln1_b);
@@ -772,17 +792,9 @@ impl Gpt {
         tokens: &[usize],
         backend: &B,
     ) -> (Vec<f32>, ForwardCache) {
-        assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
         let d = self.cfg.n_embd;
-        let mut x = vec![0.0; t * d];
-        for i in 0..t {
-            let tok = tokens[i];
-            assert!(tok < self.cfg.vocab);
-            for j in 0..d {
-                x[i * d + j] = self.tok_emb[tok * d + j] + self.pos_emb[i * d + j];
-            }
-        }
+        let mut x = self.embed_tokens_with_positions(tokens);
 
         let mut layer_caches = Vec::with_capacity(self.blocks.len());
         for b in &self.blocks {
