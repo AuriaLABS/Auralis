@@ -7,10 +7,12 @@ use crate::batch::{
     backward_batch_into, backward_deterministic_batch_from_stream_into,
     deterministic_batch_from_stream,
 };
+use crate::metrics::EngineStepTiming;
 use crate::model::{BackwardWorkspace, Gpt};
 use crate::numeric::{explain, Diagnostics, Scan, Stage};
 use crate::numeric_state::{fault_context, summarize_training_state, TrainingStateSummary};
 use crate::optim::Adam;
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TrainConfig {
@@ -231,6 +233,133 @@ pub fn train_step_reuse(
     )
 }
 
+pub fn train_step_reuse_timing(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    train_tokens: &[usize],
+    cfg: TrainConfig,
+    global_step: u64,
+    grads: &mut [f32],
+    workspace: &mut TrainWorkspace,
+    enabled: bool,
+) -> Result<(StepMetrics, Option<EngineStepTiming>), &'static str> {
+    if !enabled {
+        return train_step_reuse(
+            gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+        )
+        .map(|metrics| (metrics, None));
+    }
+    train_step_reuse_timed(
+        gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+    )
+    .map(|(metrics, timing)| (metrics, Some(timing)))
+}
+fn current_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/self/status").ok()?;
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                return rest.split_whitespace().find_map(|part| part.parse().ok());
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Opt-in Engine step timing. The production timing-off path remains
+/// train_step_reuse and is intentionally unchanged.
+pub fn train_step_reuse_timed(
+    gpt: &mut Gpt,
+    adam: &mut Adam,
+    train_tokens: &[usize],
+    cfg: TrainConfig,
+    global_step: u64,
+    grads: &mut [f32],
+    workspace: &mut TrainWorkspace,
+) -> Result<(StepMetrics, EngineStepTiming), &'static str> {
+    cfg.validate()?;
+    let effective_batch_size = cfg.effective_batch_size()?;
+    if !workspace.matches(gpt, grads.len()) {
+        return Err("training workspace has wrong size or model config");
+    }
+
+    let total_start = Instant::now();
+    grads.fill(0.0);
+    let mut loss_sum = 0.0f32;
+
+    let backward_start = Instant::now();
+    for micro in 0..cfg.gradient_accumulation_steps {
+        let stream_offset = (micro as u64)
+            .checked_mul(cfg.batch_size as u64)
+            .ok_or("batch stream overflow")?;
+        loss_sum += backward_deterministic_batch_from_stream_into(
+            gpt,
+            train_tokens,
+            gpt.cfg.block,
+            cfg.batch_size,
+            cfg.seed,
+            global_step,
+            stream_offset,
+            &mut workspace.micro_grads,
+            &mut workspace.sample_grads,
+            &mut workspace.backward,
+        )?;
+        for (dst, src) in grads.iter_mut().zip(&workspace.micro_grads) {
+            *dst += *src;
+        }
+    }
+    let backward_accum_ns = backward_start.elapsed().as_nanos() as u64;
+
+    let grad_start = Instant::now();
+    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+    let grad_process_ns = grad_start.elapsed().as_nanos() as u64;
+
+    let optimizer_start = Instant::now();
+    adam.step(&mut workspace.params, grads);
+    if workspace.params.iter().any(|x| !x.is_finite()) {
+        return Err("optimizer produced non-finite parameters");
+    }
+    let optimizer_ns = optimizer_start.elapsed().as_nanos() as u64;
+
+    let writeback_start = Instant::now();
+    gpt.write_params(&workspace.params);
+    let writeback_ns = writeback_start.elapsed().as_nanos() as u64;
+
+    let metrics = make_metrics(
+        gpt,
+        cfg,
+        global_step,
+        effective_batch_size,
+        loss,
+        grad_norm,
+        grad_scale,
+    )?;
+    let total_ns = total_start.elapsed().as_nanos() as u64;
+
+    Ok((
+        metrics,
+        EngineStepTiming {
+            schema_version: EngineStepTiming::SCHEMA_VERSION,
+            global_step,
+            tokens: metrics.tokens,
+            total_ns,
+            backward_accum_ns,
+            grad_process_ns,
+            optimizer_ns,
+            writeback_ns,
+            data_ns: None,
+            checkpoint_ns: None,
+            rss_kib: current_rss_kib(),
+            alloc_calls: None,
+            alloc_bytes: None,
+        },
+    ))
+}
 /// Opt-in Engine training step with numerical diagnostics.
 ///
 /// The existing `train_step_reuse` remains the production diagnostics-off path
@@ -495,6 +624,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn timing_off_wrapper_delegates_to_exact_reuse_path() {
+        let mut reference = model(811);
+        let mut observed = reference.clone();
+        let tokens: Vec<usize> = (0..96).map(|i| (i * 3 + 2) % 7).collect();
+        let cfg = cfg(812, 2);
+        let n = reference.collect_params().len();
+        let mut adam_reference = Adam::new(n, 1e-3);
+        let mut adam_observed = Adam::new(n, 1e-3);
+        let mut grads_reference = vec![0.0; n];
+        let mut grads_observed = vec![0.0; n];
+        let mut workspace_reference = TrainWorkspace::new(&reference);
+        let mut workspace_observed = TrainWorkspace::new(&observed);
+
+        let metrics_reference = train_step_reuse(
+            &mut reference, &mut adam_reference, &tokens, cfg, 0,
+            &mut grads_reference, &mut workspace_reference,
+        ).unwrap();
+        let (metrics_observed, timing) = train_step_reuse_timing(
+            &mut observed, &mut adam_observed, &tokens, cfg, 0,
+            &mut grads_observed, &mut workspace_observed, false,
+        ).unwrap();
+
+        assert!(timing.is_none());
+        assert_eq!(metrics_observed, metrics_reference);
+        assert_eq!(grads_observed, grads_reference);
+        assert_eq!(observed.collect_params(), reference.collect_params());
+        assert_eq!(adam_observed.export().1, adam_reference.export().1);
+        assert_eq!(adam_observed.export().2, adam_reference.export().2);
+        assert_eq!(adam_observed.export().3, adam_reference.export().3);
+    }
+    #[test]
+    fn timed_path_preserves_clean_training_state_exactly() {
+        let mut reference = model(912);
+        let mut observed = reference.clone();
+        let tokens: Vec<usize> = (0..96).map(|i| (i * 5 + 1) % 7).collect();
+        let cfg = cfg(913, 2);
+        let n = reference.collect_params().len();
+        let mut adam_reference = Adam::new(n, 1e-3);
+        let mut adam_observed = Adam::new(n, 1e-3);
+        let mut grads_reference = vec![0.0; n];
+        let mut grads_observed = vec![0.0; n];
+        let mut workspace_reference = TrainWorkspace::new(&reference);
+        let mut workspace_observed = TrainWorkspace::new(&observed);
+
+        let metrics_reference = train_step_reuse(
+            &mut reference,
+            &mut adam_reference,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_reference,
+            &mut workspace_reference,
+        )
+        .unwrap();
+        let (metrics_observed, timing) = train_step_reuse_timed(
+            &mut observed,
+            &mut adam_observed,
+            &tokens,
+            cfg,
+            0,
+            &mut grads_observed,
+            &mut workspace_observed,
+        )
+        .unwrap();
+
+        assert_eq!(metrics_observed, metrics_reference);
+        assert_eq!(grads_observed, grads_reference);
+        assert_eq!(observed.collect_params(), reference.collect_params());
+        assert_eq!(adam_observed.export().1, adam_reference.export().1);
+        assert_eq!(adam_observed.export().2, adam_reference.export().2);
+        assert_eq!(adam_observed.export().3, adam_reference.export().3);
+        assert_eq!(timing.schema_version, EngineStepTiming::SCHEMA_VERSION);
+        assert_eq!(timing.global_step, 0);
+        assert_eq!(timing.tokens, metrics_observed.tokens);
+        assert!(timing.known_phase_ns() <= timing.total_ns);
+        assert!(timing.data_ns.is_none());
+        assert!(timing.checkpoint_ns.is_none());
+        assert!(timing.alloc_calls.is_none());
+        assert!(timing.alloc_bytes.is_none());
+    }
     #[test]
     fn diagnostics_off_delegates_to_exact_reuse_path() {
         let mut reference = model(123);
