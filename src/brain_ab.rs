@@ -8,7 +8,7 @@ use crate::eval::evaluate_tokens_reference;
 use crate::manifest::{build_revision, fingerprint_params};
 use crate::model::{Config, Gpt, NormalizationKind};
 use crate::position::PositionKind;
-use crate::optim::{Adam, Optimizer};
+use crate::optim::{Adam, AdamW, Lion, Optimizer, OptimizerId};
 use crate::tokenizer::{AnyTok, CharTokenizer};
 use crate::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -18,7 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-pub const BRAIN_AB_SCHEMA_VERSION: u32 = 3;
+pub const BRAIN_AB_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AbProtocol {
@@ -83,6 +83,7 @@ pub struct AbVariant {
     pub config: Config,
     pub normalization: NormalizationKind,
     pub position: PositionKind,
+    pub optimizer: OptimizerId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,7 +96,9 @@ pub struct AbMeasurement {
     pub parameter_count: usize,
     pub parameter_bytes: usize,
     pub optimizer_state_bytes: usize,
+    pub optimizer_state_serialized_bytes: usize,
     pub checkpoint_bytes: u64,
+    pub checkpoint_includes_optimizer: bool,
     pub state_fingerprint: u64,
 }
 
@@ -105,6 +108,7 @@ pub struct AbVariantResult {
     pub config: Config,
     pub normalization: NormalizationKind,
     pub position: PositionKind,
+    pub optimizer: OptimizerId,
     pub measurements: Vec<AbMeasurement>,
 }
 
@@ -123,6 +127,7 @@ impl AbExperimentResult {
         if self.a.config != self.b.config
             || self.a.normalization != self.b.normalization
             || self.a.position != self.b.position
+            || self.a.optimizer != self.b.optimizer
         {
             return false;
         }
@@ -137,7 +142,9 @@ impl AbExperimentResult {
                     && a.parameter_count == b.parameter_count
                     && a.parameter_bytes == b.parameter_bytes
                     && a.optimizer_state_bytes == b.optimizer_state_bytes
+                    && a.optimizer_state_serialized_bytes == b.optimizer_state_serialized_bytes
                     && a.checkpoint_bytes == b.checkpoint_bytes
+                    && a.checkpoint_includes_optimizer == b.checkpoint_includes_optimizer
                     && a.state_fingerprint == b.state_fingerprint
             })
     }
@@ -160,11 +167,12 @@ impl AbExperimentResult {
         for variant in [&self.a, &self.b] {
             for m in &variant.measurements {
                 out.push_str(&format!(
-                    "brain_ab_run | variant={} repetition={} normalization={} position={} n_embd={} n_head={} n_layer={} block={} n_ff={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} optimizer_state_bytes={} checkpoint_bytes={} state_fingerprint={:016x}\n",
+                    "brain_ab_run | variant={} repetition={} normalization={} position={} optimizer={} n_embd={} n_head={} n_layer={} block={} n_ff={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} optimizer_state_bytes={} optimizer_state_serialized_bytes={} checkpoint_bytes={} checkpoint_includes_optimizer={} state_fingerprint={:016x}\n",
                     variant.label,
                     m.repetition,
                     variant.normalization.as_str(),
                     variant.position.as_str(),
+                    variant.optimizer.as_str(),
                     variant.config.n_embd,
                     variant.config.n_head,
                     variant.config.n_layer,
@@ -177,7 +185,9 @@ impl AbExperimentResult {
                     m.parameter_count,
                     m.parameter_bytes,
                     m.optimizer_state_bytes,
+                    m.optimizer_state_serialized_bytes,
                     m.checkpoint_bytes,
+                    m.checkpoint_includes_optimizer,
                     m.state_fingerprint,
                 ));
             }
@@ -204,7 +214,8 @@ impl AbExperimentResult {
                     "{{\"repetition\":{},\"final_train_loss\":{},\"eval_loss\":{},",
                     "\"eval_perplexity\":{},\"tokens_per_second\":{},",
                     "\"parameter_count\":{},\"parameter_bytes\":{},",
-                    "\"optimizer_state_bytes\":{},\"checkpoint_bytes\":{},",
+                    "\"optimizer_state_bytes\":{},\"optimizer_state_serialized_bytes\":{},",
+                    "\"checkpoint_bytes\":{},\"checkpoint_includes_optimizer\":{},",
                     "\"state_fingerprint\":\"{:016x}\"}}"
                 ),
                 m.repetition,
@@ -215,7 +226,9 @@ impl AbExperimentResult {
                 m.parameter_count,
                 m.parameter_bytes,
                 m.optimizer_state_bytes,
+                m.optimizer_state_serialized_bytes,
                 m.checkpoint_bytes,
+                m.checkpoint_includes_optimizer,
                 m.state_fingerprint,
             )
         }
@@ -227,10 +240,11 @@ impl AbExperimentResult {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"label\":\"{}\",\"normalization\":\"{}\",\"position\":\"{}\",\"config\":{},\"measurements\":[{}]}}",
+                "{{\"label\":\"{}\",\"normalization\":\"{}\",\"position\":\"{}\",\"optimizer\":\"{}\",\"config\":{},\"measurements\":[{}]}}",
                 escape_json(&v.label),
                 v.normalization.as_str(),
                 v.position.as_str(),
+                v.optimizer.as_str(),
                 cfg(v.config),
                 ms,
             )
@@ -294,6 +308,7 @@ pub fn run_experiment(
             config: a.config,
             normalization: a.normalization,
             position: a.position,
+            optimizer: a.optimizer,
             measurements: a_measurements,
         },
         b: AbVariantResult {
@@ -301,6 +316,7 @@ pub fn run_experiment(
             config: b.config,
             normalization: b.normalization,
             position: b.position,
+            optimizer: b.optimizer,
             measurements: b_measurements,
         },
     })
@@ -351,7 +367,7 @@ fn run_variant(
         &mut rng,
     );
     let parameter_count = gpt.collect_params().len();
-    let mut adam = Adam::new(parameter_count, protocol.learning_rate);
+    let mut optimizer = make_optimizer(variant.optimizer, parameter_count, protocol.learning_rate);
     let mut grads = vec![0.0f32; parameter_count];
     let mut workspace = TrainWorkspace::new(&gpt);
     let cfg = protocol.train_config();
@@ -360,10 +376,10 @@ fn run_variant(
     let mut final_train_loss = f32::NAN;
 
     for _ in 0..protocol.steps {
-        let global_step = adam.global_step();
+        let global_step = optimizer.global_step();
         let metrics = train_step_reuse(
             &mut gpt,
-            &mut adam,
+            optimizer.as_mut(),
             tokens,
             cfg,
             global_step,
@@ -378,12 +394,22 @@ fn run_variant(
     let eval = evaluate_tokens_reference(&gpt, tokens)
         .map_err(|e| format!("A/B eval failed for {}: {e}", variant.label))?;
     let params = gpt.collect_params();
-    let state_fingerprint =
-        training_state_fingerprint(&params, &adam, variant.normalization, variant.position);
+    let state_fingerprint = training_state_fingerprint(
+        &params,
+        optimizer.as_ref(),
+        variant.normalization,
+        variant.position,
+    );
+    let optimizer_state_bytes = optimizer.state_vector_bytes();
+    let optimizer_state_serialized_bytes = optimizer
+        .canonical_state_text()
+        .map_err(|e| format!("A/B optimizer state serialization failed for {}: {e}", variant.label))?
+        .len();
+    let checkpoint_includes_optimizer = optimizer.legacy_adam().is_some();
 
     let tok = synthetic_tokenizer(variant.config.vocab)?;
     let path = temporary_checkpoint_path(&variant.label, repetition);
-    checkpoint::save_full(&path, &gpt, &tok, Some(&adam))
+    checkpoint::save_full(&path, &gpt, &tok, optimizer.legacy_adam())
         .map_err(|e| format!("A/B checkpoint failed for {}: {e}", variant.label))?;
     let checkpoint_bytes = fs::metadata(&path)
         .map_err(|e| format!("A/B checkpoint metadata failed: {e}"))?
@@ -398,15 +424,29 @@ fn run_variant(
         tokens_per_second: processed_tokens as f64 / elapsed,
         parameter_count,
         parameter_bytes: parameter_count.saturating_mul(4),
-        optimizer_state_bytes: parameter_count.saturating_mul(8),
+        optimizer_state_bytes,
+        optimizer_state_serialized_bytes,
         checkpoint_bytes,
+        checkpoint_includes_optimizer,
         state_fingerprint,
     })
 }
 
+fn make_optimizer(
+    kind: OptimizerId,
+    parameter_count: usize,
+    learning_rate: f32,
+) -> Box<dyn Optimizer> {
+    match kind {
+        OptimizerId::Adam => Box::new(Adam::new(parameter_count, learning_rate)),
+        OptimizerId::AdamW => Box::new(AdamW::new(parameter_count, learning_rate, 0.01)),
+        OptimizerId::Lion => Box::new(Lion::new(parameter_count, learning_rate, 0.01)),
+    }
+}
+
 fn training_state_fingerprint(
     params: &[f32],
-    adam: &Adam,
+    optimizer: &dyn Optimizer,
     normalization: NormalizationKind,
     position: PositionKind,
 ) -> u64 {
@@ -415,26 +455,14 @@ fn training_state_fingerprint(
         .as_str()
         .bytes()
         .chain(position.as_str().bytes())
+        .chain(optimizer.id().as_str().bytes())
     {
         h ^= byte as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
-    let (lr, t, m, v) = adam.export();
-    for byte in lr.to_bits().to_le_bytes() {
+    for byte in optimizer.state_fingerprint().to_le_bytes() {
         h ^= byte as u64;
         h = h.wrapping_mul(0x100000001b3);
-    }
-    for byte in t.to_le_bytes() {
-        h ^= byte as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    for values in [m, v] {
-        for &value in values {
-            for byte in value.to_bits().to_le_bytes() {
-                h ^= byte as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }
-        }
     }
     h
 }
@@ -509,8 +537,8 @@ mod tests {
                 token_count: 128,
                 ..AbProtocol::default()
             },
-            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
-            AbVariant { label: "B".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
+            AbVariant { label: "B".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
         ).unwrap();
         assert!(result.a_vs_a_reproducible());
         assert_eq!(result.a.measurements[0].state_fingerprint, result.a.measurements[1].state_fingerprint);
@@ -533,12 +561,14 @@ mod tests {
                 config: tiny(),
                 normalization: NormalizationKind::LayerNorm,
                 position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
             },
             AbVariant {
                 label: "rmsnorm".into(),
                 config: tiny(),
                 normalization: NormalizationKind::RmsNorm,
                 position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
             },
         )
         .unwrap();
@@ -565,12 +595,14 @@ mod tests {
                 config: tiny(),
                 normalization: NormalizationKind::LayerNorm,
                 position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
             },
             AbVariant {
                 label: "rope".into(),
                 config: tiny(),
                 normalization: NormalizationKind::LayerNorm,
                 position: PositionKind::Rope,
+                optimizer: OptimizerId::Adam,
             },
         )
         .unwrap();
@@ -585,13 +617,50 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_variant_is_part_of_experiment_identity() {
+        let result = run_experiment(
+            AbProtocol {
+                steps: 2,
+                repeats: 2,
+                token_count: 128,
+                ..AbProtocol::default()
+            },
+            AbVariant {
+                label: "adam".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
+            },
+            AbVariant {
+                label: "lion".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Lion,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.a.optimizer, OptimizerId::Adam);
+        assert_eq!(result.b.optimizer, OptimizerId::Lion);
+        assert!(!result.a_vs_a_reproducible());
+        assert_eq!(
+            result.b.measurements[0].optimizer_state_bytes * 2,
+            result.a.measurements[0].optimizer_state_bytes
+        );
+        assert!(result.a.measurements[0].checkpoint_includes_optimizer);
+        assert!(!result.b.measurements[0].checkpoint_includes_optimizer);
+        assert!(result.json().contains("\"optimizer\":\"lion\""));
+    }
+
+    #[test]
     fn mismatched_vocab_is_rejected() {
         let mut other = tiny();
         other.vocab = 9;
         assert!(run_experiment(
             AbProtocol { steps: 1, repeats: 1, token_count: 64, ..AbProtocol::default() },
-            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
-            AbVariant { label: "B".into(), config: other, normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "A".into(), config: tiny(), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
+            AbVariant { label: "B".into(), config: other, normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute, optimizer: OptimizerId::Adam },
         ).is_err());
     }
 }
