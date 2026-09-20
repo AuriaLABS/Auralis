@@ -1,0 +1,160 @@
+name: Engine Backend Phase B
+
+on:
+  pull_request:
+    paths:
+      - "src/model.rs"
+      - "src/backend.rs"
+      - "src/run_config.rs"
+      - "src/checkpoint.rs"
+      - ".github/workflows/engine_backend_phase_b.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  model-backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Model backend exactness
+        run: |
+          cargo test --lib model::tests::cpu_backends_are_exact_for_logits_and_loss_across_contexts -- --nocapture
+          cargo test --test engine_equivalence -- --nocapture
+          cargo test --test engine_state_equivalence -- --nocapture
+
+      - name: Persistent schema must stay untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs; then
+            echo "Phase B must not change RunConfig/checkpoint schemas"
+            git diff "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs
+            exit 1
+          fi
+
+      - name: Base eval profile and training fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$BASE_SHA"
+
+          cargo run --release --bin auralis_eval_profile -- 12             | tee /tmp/backend-base-eval.txt
+          cargo run --release --bin auralis_engine_soak -- 20 10             | tee /tmp/backend-base-soak.txt
+
+          test "$(grep -c '^eval_profile |' /tmp/backend-base-eval.txt)" -eq 2
+          test "$(grep -c '^engine_soak_summary |' /tmp/backend-base-soak.txt)" -eq 1
+
+      - name: Head eval profile and training fingerprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$HEAD_SHA"
+
+          cargo run --release --bin auralis_eval_profile -- 12             | tee /tmp/backend-head-eval.txt
+          cargo run --release --bin auralis_engine_soak -- 20 10             | tee /tmp/backend-head-soak.txt
+
+          test "$(grep -c '^eval_profile |' /tmp/backend-head-eval.txt)" -eq 2
+          test "$(grep -c '^engine_soak_summary |' /tmp/backend-head-soak.txt)" -eq 1
+
+      - name: Compare pre-boundary and Phase B
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+
+          def kv(line):
+              out = {}
+              for token in line.split():
+                  if "=" in token:
+                      k, v = token.split("=", 1)
+                      out[k] = v
+              return out
+
+          def profiles(path):
+              rows = {}
+              for line in open(path, encoding="utf-8"):
+                  if line.startswith("eval_profile |"):
+                      row = kv(line)
+                      rows[row["mode"]] = row
+              return rows
+
+          base = profiles("/tmp/backend-base-eval.txt")
+          head = profiles("/tmp/backend-head-eval.txt")
+          assert set(base) == {"loss", "generate_one"}
+          assert set(head) == set(base)
+
+          for mode in sorted(base):
+              b = base[mode]
+              h = head[mode]
+              for field in ["alloc_calls", "alloc_bytes", "realloc_calls", "realloc_new_bytes"]:
+                  if b[field] != h[field]:
+                      raise SystemExit(
+                          f"{mode} allocation regression {field}: base={b[field]} head={h[field]}"
+                      )
+              base_s = float(b["seconds"])
+              head_s = float(h["seconds"])
+              ratio = head_s / base_s
+              if ratio > 1.15:
+                  raise SystemExit(
+                      f"{mode} model backend overhead too high: head/base={ratio:.4f}"
+                  )
+              print(
+                  f"backend_model_eval_gate | mode={mode} "
+                  f"seconds_ratio={ratio:.4f} alloc_calls={h['alloc_calls']} "
+                  f"alloc_bytes={h['alloc_bytes']}"
+              )
+
+          def soak(path):
+              line = next(
+                  line for line in open(path, encoding="utf-8")
+                  if line.startswith("engine_soak_summary |")
+              )
+              return kv(line)
+
+          sb = soak("/tmp/backend-base-soak.txt")
+          sh = soak("/tmp/backend-head-soak.txt")
+          for row, name in [(sb, "base"), (sh, "head")]:
+              if row["exact_state"] != "true" or row["checkpoint_bytes_exact"] != "true":
+                  raise SystemExit(f"{name} soak lost internal exactness")
+              if row["finite_loss"] != "true":
+                  raise SystemExit(f"{name} soak has non-finite loss")
+
+          for field in ["continuous_fingerprint", "split_fingerprint"]:
+              if sb[field] != sh[field]:
+                  raise SystemExit(
+                      f"training state changed across backend integration: "
+                      f"{field} base={sb[field]} head={sh[field]}"
+                  )
+
+          print(
+              "backend_model_state_gate | "
+              f"continuous_fingerprint={sh['continuous_fingerprint']} "
+              f"split_fingerprint={sh['split_fingerprint']} exact=true"
+          )
+          PY
+
+      - name: Publish comparison summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Engine backend Phase B"
+            echo
+            grep '^eval_profile |' /tmp/backend-base-eval.txt 2>/dev/null || true
+            grep '^eval_profile |' /tmp/backend-head-eval.txt 2>/dev/null || true
+            grep '^engine_soak_summary |' /tmp/backend-base-soak.txt 2>/dev/null || true
+            grep '^engine_soak_summary |' /tmp/backend-head-soak.txt 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
