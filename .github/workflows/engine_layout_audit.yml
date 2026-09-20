@@ -1,0 +1,84 @@
+name: Engine Layout Audit
+
+on:
+  pull_request:
+    paths:
+      - "src/bin/auralis_layout_audit.rs"
+      - "docs/ENGINE_LAYOUT.md"
+      - "src/docs_check.rs"
+      - ".github/workflows/engine_layout_audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Layout audit benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_layout_audit -- 5 100 7             | tee /tmp/layout-audit.txt
+
+          test "$(grep -c '^layout_audit_summary |' /tmp/layout-audit.txt)" -eq 5
+          test "$(grep -c '^layout_audit_record |' /tmp/layout-audit.txt)" -eq 15
+          test "$(grep -c '^layout_audit_run |' /tmp/layout-audit.txt)" -eq 35
+
+          python3 - <<'PY'
+          import json
+
+          lines = open("/tmp/layout-audit.txt", encoding="utf-8").read().splitlines()
+          summaries = [line for line in lines if line.startswith("layout_audit_summary |")]
+          records = [
+              json.loads(line.split(" | ", 1)[1])
+              for line in lines
+              if line.startswith("layout_audit_record |")
+          ]
+
+          expected_cases = {"qkv", "ffn_up", "ffn_down", "logits", "short_qkv"}
+          seen = set()
+          for line in summaries:
+              fields = dict(token.split("=", 1) for token in line.split() if "=" in token)
+              case = fields["case"]
+              seen.add(case)
+              assert fields["exact"] == "true"
+              kernel = float(fields["packed_kernel_over_rowslices"])
+              e2e = float(fields["packed_e2e_over_rowslices"])
+              assert kernel > 0 and e2e > 0
+              assert float(fields["rowslices_ns_per_mac"]) > 0
+              print(
+                  f"layout_audit_gate | case={case} "
+                  f"packed_kernel_over_rowslices={kernel:.4f} "
+                  f"packed_e2e_over_rowslices={e2e:.4f} "
+                  f"promotion_candidate={fields['promotion_candidate']}"
+              )
+          assert seen == expected_cases
+
+          assert len(records) == 15
+          for case in expected_cases:
+              rows = [r for r in records if r["benchmark_id"] == f"layout/{case}"]
+              assert len(rows) == 3
+              assert {r["backend"] for r in rows} == {
+                  "row_slices", "packed_bt_persistent", "packed_bt_dynamic"
+              }
+              assert all(len(r["raw_ns"]) == 7 for r in rows)
+              assert len({r["config_fingerprint"] for r in rows}) == 1
+          PY
+
+      - name: Layout documentation contract
+        run: cargo test --lib docs_check::tests::engine_layout_doc_names_current_layout -- --nocapture
+
+      - name: Publish audit
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Engine layout audit"
+            echo
+            grep '^layout_audit_summary |' /tmp/layout-audit.txt 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"

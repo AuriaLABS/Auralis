@@ -146,6 +146,7 @@ mod tests {
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
             "ENGINE_ARCHITECTURE.md",
+            "ENGINE_LAYOUT.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -193,6 +194,29 @@ mod tests {
         let roadmap =
             fs::read_to_string(root().join("ROADMAP.md")).expect("ROADMAP.md");
         assert!(roadmap.contains("docs/ENGINE_ARCHITECTURE.md"));
+    }
+
+    #[test]
+    fn engine_layout_doc_names_current_layout() {
+        let text = docs("ENGINE_LAYOUT.md");
+        for needle in [
+            "# Engine tensor layout audit",
+            "Canonical layout today",
+            "Physical transpose inventory",
+            "packed_bt_persistent",
+            "packed_bt_dynamic",
+            "32x32x32",
+            "32x32x96",
+            "32x96x32",
+            "32x32x100",
+            "9x32x32",
+            "not a cache-miss measurement",
+            "RowSlices remains canonical",
+            "Adam updates weights every training step",
+            "auralis_layout_audit",
+        ] {
+            assert!(text.contains(needle), "docs/ENGINE_LAYOUT.md missing {needle}");
+        }
     }
 
     #[test]
