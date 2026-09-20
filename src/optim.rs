@@ -318,9 +318,17 @@ impl Adam {
         })
     }
 
+    /// Historical unchecked constructor retained for deterministic fault fixtures.
+    ///
+    /// Untrusted checkpoint loading must use try_from_legacy_state instead.
     pub fn from_state(learning_rate: f32, t: i32, m: Vec<f32>, v: Vec<f32>) -> Self {
-        Self::try_from_legacy_state(learning_rate, t, m, v)
-            .expect("Adam::from_state received invalid state")
+        Self {
+            learning_rate,
+            config: AdamConfig::default(),
+            t,
+            m,
+            v,
+        }
     }
 
     pub fn try_from_legacy_state(
