@@ -1,0 +1,95 @@
+name: Engine Step Timing
+
+on:
+  pull_request:
+    paths:
+      - "src/metrics.rs"
+      - "src/training.rs"
+      - "src/bin/auralis_engine_step_timing_bench.rs"
+      - ".github/workflows/engine_step_timing.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  timing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Timing unit and equivalence tests
+        run: |
+          cargo test metrics::tests::engine_step_timing_formats_absent_fields_as_null -- --nocapture
+          cargo test training::tests::timing_off_wrapper_delegates_to_exact_reuse_path -- --nocapture
+          cargo test training::tests::timed_path_preserves_clean_training_state_exactly -- --nocapture
+
+      - name: Benchmark timing off/on
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_engine_step_timing_bench -- 5 60 5             | tee /tmp/engine-step-timing.txt
+
+          test "$(grep -c '^engine_step_timing_run |' /tmp/engine-step-timing.txt)" -eq 5
+          test "$(grep -c '^engine_step_timing |' /tmp/engine-step-timing.txt)" -eq 1
+          test "$(grep -c '^engine_step_timing_json |' /tmp/engine-step-timing.txt)" -eq 1
+          test "$(grep -c '^engine_step_timing_bench |' /tmp/engine-step-timing.txt)" -eq 1
+
+          python3 - <<'PY'
+          import json
+          import re
+
+          text = open("/tmp/engine-step-timing.txt", encoding="utf-8").read()
+          bench = next(line for line in text.splitlines() if line.startswith("engine_step_timing_bench |"))
+          off_ratio = float(re.search(r"off_over_baseline=([0-9.]+)", bench).group(1))
+          timed_ratio = float(re.search(r"timed_over_baseline=([0-9.]+)", bench).group(1))
+          known_share = float(re.search(r"median_known_share=([0-9.]+)", bench).group(1))
+
+          if off_ratio > 1.10:
+              raise SystemExit(f"timing-off wrapper overhead too high: {off_ratio:.4f}")
+          if timed_ratio <= 0:
+              raise SystemExit("invalid timed overhead ratio")
+          if not (0.0 <= known_share <= 1.0):
+              raise SystemExit(f"invalid known phase share: {known_share:.4f}")
+
+          payload_line = next(line for line in text.splitlines() if line.startswith("engine_step_timing_json |"))
+          payload = json.loads(payload_line.split(" | ", 1)[1])
+          expected = {
+              "schema_version", "global_step", "tokens", "total_ns",
+              "backward_accum_ns", "grad_process_ns", "optimizer_ns",
+              "writeback_ns", "unattributed_ns", "data_ns", "checkpoint_ns",
+              "rss_kib", "alloc_calls", "alloc_bytes",
+          }
+          if set(payload) != expected:
+              raise SystemExit(f"timing schema drift: {sorted(payload)}")
+          if payload["schema_version"] != 1:
+              raise SystemExit("unexpected timing schema version")
+          if payload["data_ns"] is not None or payload["checkpoint_ns"] is not None:
+              raise SystemExit("unavailable phase fields must be null")
+          if payload["alloc_calls"] is not None or payload["alloc_bytes"] is not None:
+              raise SystemExit("inactive allocation profiler fields must be null")
+
+          known = (
+              payload["backward_accum_ns"]
+              + payload["grad_process_ns"]
+              + payload["optimizer_ns"]
+              + payload["writeback_ns"]
+          )
+          if known > payload["total_ns"]:
+              raise SystemExit("known phase time exceeds total")
+          print(
+              f"engine_step_timing_gate | off_over_baseline={off_ratio:.4f} "
+              f"timed_over_baseline={timed_ratio:.4f} known_share={known_share:.4f}"
+          )
+          PY
+
+      - name: Publish timing summary
+        shell: bash
+        run: |
+          {
+            echo "## Engine step timing"
+            echo
+            grep '^engine_step_timing_bench |' /tmp/engine-step-timing.txt
+            grep '^engine_step_timing |' /tmp/engine-step-timing.txt
+          } >> "$GITHUB_STEP_SUMMARY"

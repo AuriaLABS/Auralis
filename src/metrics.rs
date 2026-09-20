@@ -50,6 +50,92 @@ impl Throughput {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EngineStepTiming {
+    pub schema_version: u32,
+    pub global_step: u64,
+    pub tokens: usize,
+    pub total_ns: u64,
+    pub backward_accum_ns: u64,
+    pub grad_process_ns: u64,
+    pub optimizer_ns: u64,
+    pub writeback_ns: u64,
+    pub data_ns: Option<u64>,
+    pub checkpoint_ns: Option<u64>,
+    pub rss_kib: Option<u64>,
+    pub alloc_calls: Option<u64>,
+    pub alloc_bytes: Option<u64>,
+}
+
+impl EngineStepTiming {
+    pub const SCHEMA_VERSION: u32 = 1;
+
+    pub fn known_phase_ns(&self) -> u64 {
+        self.backward_accum_ns
+            .saturating_add(self.grad_process_ns)
+            .saturating_add(self.optimizer_ns)
+            .saturating_add(self.writeback_ns)
+    }
+
+    pub fn unattributed_ns(&self) -> u64 {
+        self.total_ns.saturating_sub(self.known_phase_ns())
+    }
+
+    fn opt_json(value: Option<u64>) -> String {
+        value.map(|v| v.to_string()).unwrap_or_else(|| "null".into())
+    }
+
+    pub fn human(&self) -> String {
+        format!(
+            concat!(
+                "engine_step_timing | schema={} global_step={} tokens={} total_ns={} ",
+                "backward_accum_ns={} grad_process_ns={} optimizer_ns={} writeback_ns={} ",
+                "unattributed_ns={} data_ns={:?} checkpoint_ns={:?} rss_kib={:?} ",
+                "alloc_calls={:?} alloc_bytes={:?}"
+            ),
+            self.schema_version,
+            self.global_step,
+            self.tokens,
+            self.total_ns,
+            self.backward_accum_ns,
+            self.grad_process_ns,
+            self.optimizer_ns,
+            self.writeback_ns,
+            self.unattributed_ns(),
+            self.data_ns,
+            self.checkpoint_ns,
+            self.rss_kib,
+            self.alloc_calls,
+            self.alloc_bytes,
+        )
+    }
+
+    pub fn json(&self) -> String {
+        format!(
+            concat!(
+                "{{\"schema_version\":{},\"global_step\":{},\"tokens\":{},",
+                "\"total_ns\":{},\"backward_accum_ns\":{},\"grad_process_ns\":{},",
+                "\"optimizer_ns\":{},\"writeback_ns\":{},\"unattributed_ns\":{},",
+                "\"data_ns\":{},\"checkpoint_ns\":{},\"rss_kib\":{},",
+                "\"alloc_calls\":{},\"alloc_bytes\":{}}}"
+            ),
+            self.schema_version,
+            self.global_step,
+            self.tokens,
+            self.total_ns,
+            self.backward_accum_ns,
+            self.grad_process_ns,
+            self.optimizer_ns,
+            self.writeback_ns,
+            self.unattributed_ns(),
+            Self::opt_json(self.data_ns),
+            Self::opt_json(self.checkpoint_ns),
+            Self::opt_json(self.rss_kib),
+            Self::opt_json(self.alloc_calls),
+            Self::opt_json(self.alloc_bytes),
+        )
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +160,32 @@ mod tests {
         let t = Throughput::from_duration(2_000, Duration::from_millis(500));
         assert_eq!(t.tokens, 2_000);
         assert!((t.tokens_per_second - 4_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn engine_step_timing_formats_absent_fields_as_null() {
+        let t = EngineStepTiming {
+            schema_version: EngineStepTiming::SCHEMA_VERSION,
+            global_step: 7,
+            tokens: 128,
+            total_ns: 100,
+            backward_accum_ns: 60,
+            grad_process_ns: 10,
+            optimizer_ns: 15,
+            writeback_ns: 5,
+            data_ns: None,
+            checkpoint_ns: None,
+            rss_kib: Some(4096),
+            alloc_calls: None,
+            alloc_bytes: None,
+        };
+        assert_eq!(t.known_phase_ns(), 90);
+        assert_eq!(t.unattributed_ns(), 10);
+        let json = t.json();
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"data_ns\":null"));
+        assert!(json.contains("\"checkpoint_ns\":null"));
+        assert!(json.contains("\"rss_kib\":4096"));
+        assert!(t.human().contains("engine_step_timing |"));
     }
 }
