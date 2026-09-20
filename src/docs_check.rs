@@ -452,7 +452,7 @@ mod tests {
     fn example_config_loads_and_matches_schema() {
         let cfg = crate::run_config::RunConfig::load(root().join("examples/tiny.cfg"))
             .expect("examples/tiny.cfg");
-        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(cfg.seed, 659_918);
         assert_eq!(cfg.batch_size, 4);
         assert_eq!(cfg.gradient_accumulation_steps, 1);
