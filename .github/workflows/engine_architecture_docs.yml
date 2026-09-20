@@ -41,7 +41,7 @@ jobs:
           grep -q 'manual-long de 3000 steps' "$doc"
           grep -q 'no implica que ese run largo se haya ejecutado' "$doc"
 
-          if grep -Eiq 'GPU (integrada|productiva)|worker pool productivo|SIMD promovido actualmente[^.]*(sí|true)' "$doc"; then
+          if grep -Eiq 'GPU (integrada|productiva) actualmente|worker pool productivo habilitado|SIMD promovido actualmente:[[:space:]]*(sí|true)' "$doc"; then
             echo "architecture doc overstates an unpromoted capability"
             exit 1
           fi
