@@ -141,6 +141,7 @@ mod tests {
             "sec-unsafe.md",
             "scheduler.md",
             "optimizer-boundary.md",
+            "optimizer-variants.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -315,6 +316,25 @@ mod tests {
         }
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn optimizer_variants_doc_matches_contract() {
+        let text = docs("optimizer-variants.md");
+        for needle in [
+            "AdamW",
+            "Lion",
+            "weight_decay=0",
+            "decoupled weight decay",
+            "AdamWState",
+            "LionState",
+            "auralis_optimizer_variant_bench",
+            "does **not** measure model quality",
+        ] {
+            assert!(text.contains(needle), "optimizer-variants.md missing {needle}");
+        }
+        assert_eq!(crate::optim::ADAMW_STATE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::optim::LION_STATE_SCHEMA_VERSION, 1);
     }
 
     #[test]
