@@ -1,4 +1,5 @@
 use auralis::agent::Agent;
+use auralis::architecture::ArchitectureConfig;
 use auralis::bench;
 use auralis::bench_format::{self, CatalogFormat};
 use auralis::bench_runner::{self, BenchProtocol};
@@ -65,11 +66,16 @@ fn sample_prompt(
     tok.decode(&out)
 }
 
-fn new_model(train_text: &str, run: &RunConfig) -> (Gpt, AnyTok) {
+fn new_model(
+    train_text: &str,
+    run: &RunConfig,
+    architecture: ArchitectureConfig,
+) -> Result<(Gpt, AnyTok), String> {
     let tok = AnyTok::Bpe(BpeTokenizer::fit(train_text, run.bpe_merges));
     let mut rng = StdRng::seed_from_u64(run.seed);
-    let gpt = Gpt::new(Config::tiny(tok.vocab_size()), &mut rng);
-    (gpt, tok)
+    let cfg = architecture.model_config(tok.vocab_size())?;
+    let gpt = Gpt::new(cfg, &mut rng);
+    Ok((gpt, tok))
 }
 
 fn encode_split(tok: &AnyTok, raw: &auralis::experiment::TextSplit) -> TokenSplit {
@@ -131,6 +137,7 @@ fn train(
     fresh: bool,
     run: RunConfig,
     diagnostics: bool,
+    architecture: Option<ArchitectureConfig>,
 ) -> Result<(), String> {
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
@@ -150,10 +157,26 @@ fn train(
                 "checkpoint incompatible ({e}); abortado para evitar sobrescribir un experimento. Usa train-fresh para empezar de cero"
             )
         })?;
+        if let Some(expected) = architecture {
+            if !expected.matches_model(g.cfg) {
+                return Err(format!(
+                    "architecture mismatch on resume: checkpoint={} requested={}",
+                    ArchitectureConfig {
+                        n_embd: g.cfg.n_embd,
+                        n_head: g.cfg.n_head,
+                        n_layer: g.cfg.n_layer,
+                        block: g.cfg.block,
+                        n_ff: g.cfg.n_ff,
+                    }.line(),
+                    expected.line(),
+                ));
+            }
+        }
         println!("reanuda {} adam={}", ckpt.display(), a.is_some());
         (g, t, a, true)
     } else {
-        let (g, t) = new_model(&raw_split.train, &run);
+        let selected = architecture.unwrap_or_default();
+        let (g, t) = new_model(&raw_split.train, &run, selected)?;
         (g, t, None, false)
     };
 
@@ -180,6 +203,17 @@ fn train(
         run.bpe_merges,
     );
     println!("experiment | {}", identity.line());
+    println!(
+        "{}",
+        ArchitectureConfig {
+            n_embd: gpt.cfg.n_embd,
+            n_head: gpt.cfg.n_head,
+            n_layer: gpt.cfg.n_layer,
+            block: gpt.cfg.block,
+            n_ff: gpt.cfg.n_ff,
+        }
+        .line()
+    );
 
     if resumed {
         validate_resume_manifest(
@@ -345,8 +379,9 @@ fn run_train_or_exit(
     fresh: bool,
     run: RunConfig,
     diagnostics: bool,
+    architecture: Option<ArchitectureConfig>,
 ) {
-    if let Err(e) = train(steps, ckpt, fresh, run, diagnostics) {
+    if let Err(e) = train(steps, ckpt, fresh, run, diagnostics, architecture) {
         eprintln!("error: {e}");
         std::process::exit(2);
     }
@@ -690,6 +725,7 @@ fn run_bench(args: &[String]) {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct TrainCliOptions {
     diagnostics: bool,
+    architecture: Option<ArchitectureConfig>,
 }
 
 fn parse_token_ids(spec: &str) -> Result<Vec<usize>, String> {
@@ -806,6 +842,7 @@ fn parse_train_args(
     args: &[String],
 ) -> Result<(usize, PathBuf, RunConfig, TrainCliOptions), String> {
     let mut config_path: Option<&str> = None;
+    let mut model_config_path: Option<&str> = None;
     let mut diagnostics = false;
     let mut positional: Vec<&str> = Vec::new();
     let mut i = 2;
@@ -813,6 +850,12 @@ fn parse_train_args(
         if args[i] == "--config" {
             let path = args.get(i + 1).ok_or("--config requires a path")?;
             config_path = Some(path.as_str());
+            i += 2;
+            continue;
+        }
+        if args[i] == "--model-config" {
+            let path = args.get(i + 1).ok_or("--model-config requires a path")?;
+            model_config_path = Some(path.as_str());
             i += 2;
             continue;
         }
@@ -858,12 +901,24 @@ fn parse_train_args(
     }
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
-    Ok((steps, ckpt, run, TrainCliOptions { diagnostics }))
+    let architecture = match model_config_path {
+        Some(path) => Some(ArchitectureConfig::load(path)?),
+        None => None,
+    };
+    Ok((
+        steps,
+        ckpt,
+        run,
+        TrainCliOptions {
+            diagnostics,
+            architecture,
+        },
+    ))
 }
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -873,7 +928,14 @@ fn main() {
     match args.get(1).map(|s| s.as_str()) {
         Some("train") => match parse_train_args(&args) {
             Ok((steps, ckpt, run, options)) => {
-                run_train_or_exit(steps, &ckpt, false, run, options.diagnostics)
+                run_train_or_exit(
+                    steps,
+                    &ckpt,
+                    false,
+                    run,
+                    options.diagnostics,
+                    options.architecture,
+                )
             },
             Err(e) => {
                 eprintln!("error: {e}");
@@ -882,7 +944,14 @@ fn main() {
         },
         Some("train-fresh") => match parse_train_args(&args) {
             Ok((steps, ckpt, run, options)) => {
-                run_train_or_exit(steps, &ckpt, true, run, options.diagnostics)
+                run_train_or_exit(
+                    steps,
+                    &ckpt,
+                    true,
+                    run,
+                    options.diagnostics,
+                    options.architecture,
+                )
             },
             Err(e) => {
                 eprintln!("error: {e}");
@@ -907,8 +976,9 @@ fn main() {
             false,
             RunConfig::default(),
             false,
+            None,
         ),
-        None => run_train_or_exit(80, ckpt_default, false, RunConfig::default(), false),
+        None => run_train_or_exit(80, ckpt_default, false, RunConfig::default(), false, None),
         _ => usage(),
     }
 }
@@ -941,6 +1011,7 @@ mod cli_tests {
         assert_eq!(run.batch_size, 2);
         assert_eq!(run.gradient_accumulation_steps, 4);
         assert!(options.diagnostics);
+        assert!(options.architecture.is_none());
     }
 
     #[test]
@@ -948,6 +1019,7 @@ mod cli_tests {
         let args = strings(&["auralis", "train", "3", "out.bin"]);
         let (_, _, _, options) = parse_train_args(&args).unwrap();
         assert!(!options.diagnostics);
+        assert!(options.architecture.is_none());
     }
 
     #[test]
