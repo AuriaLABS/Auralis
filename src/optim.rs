@@ -242,6 +242,18 @@ pub trait Optimizer {
     fn state_fingerprint(&self) -> u64;
     fn diagnostics(&self) -> OptimizerDiagnostics<'_>;
 
+    fn state_vector_bytes(&self) -> usize {
+        0
+    }
+
+    fn canonical_state_text(&self) -> Result<String, String> {
+        Err("optimizer does not expose canonical serialized state".into())
+    }
+
+    fn legacy_adam(&self) -> Option<&Adam> {
+        None
+    }
+
     fn update(
         &mut self,
         parameters: &mut [f32],
@@ -550,6 +562,18 @@ impl Optimizer for Adam {
         }
     }
 
+    fn state_vector_bytes(&self) -> usize {
+        (self.m.len() + self.v.len()).saturating_mul(std::mem::size_of::<f32>())
+    }
+
+    fn canonical_state_text(&self) -> Result<String, String> {
+        self.state().encode()
+    }
+
+    fn legacy_adam(&self) -> Option<&Adam> {
+        Some(self)
+    }
+
     fn update(
         &mut self,
         parameters: &mut [f32],
@@ -796,6 +820,14 @@ impl Optimizer for AdamW {
         }
     }
 
+    fn state_vector_bytes(&self) -> usize {
+        (self.m.len() + self.v.len()).saturating_mul(std::mem::size_of::<f32>())
+    }
+
+    fn canonical_state_text(&self) -> Result<String, String> {
+        self.state().encode()
+    }
+
     fn update(
         &mut self,
         parameters: &mut [f32],
@@ -1026,6 +1058,14 @@ impl Optimizer for Lion {
             second_name: "lion_unused",
             second: &[],
         }
+    }
+
+    fn state_vector_bytes(&self) -> usize {
+        self.m.len().saturating_mul(std::mem::size_of::<f32>())
+    }
+
+    fn canonical_state_text(&self) -> Result<String, String> {
+        self.state().encode()
     }
 
     fn update(
