@@ -11,7 +11,7 @@ use crate::metrics::EngineStepTiming;
 use crate::model::{BackwardWorkspace, Gpt};
 use crate::numeric::{explain, Diagnostics, Scan, Stage};
 use crate::numeric_state::{fault_context, summarize_training_state, TrainingStateSummary};
-use crate::optim::Adam;
+use crate::optim::Optimizer;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,7 +128,7 @@ pub fn global_l2_norm(values: &[f32]) -> f32 {
 /// against a simple implementation.
 pub fn train_step(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     train_tokens: &[usize],
     cfg: TrainConfig,
     global_step: u64,
@@ -166,7 +166,7 @@ pub fn train_step(
 
     finish_step(
         gpt,
-        adam,
+        optimizer,
         cfg,
         global_step,
         effective_batch_size,
@@ -178,13 +178,13 @@ pub fn train_step(
 /// Engine optimizer step with reusable data/gradient/parameter buffers.
 ///
 /// Data selection, example order, gradient accumulation order, clipping and
-/// Adam updates are identical to `train_step`. The only difference is memory
+/// optimizer updates are identical to `train_step`. The only difference is memory
 /// behavior: deterministic windows are borrowed directly from the token stream,
 /// flat buffers are reused, model-structured gradients are reset in place, and
-/// Adam updates a persistent flat parameter mirror.
+/// the optimizer updates a persistent flat parameter mirror.
 pub fn train_step_reuse(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     train_tokens: &[usize],
     cfg: TrainConfig,
     global_step: u64,
@@ -223,7 +223,7 @@ pub fn train_step_reuse(
 
     finish_step_with_params(
         gpt,
-        adam,
+        optimizer,
         cfg,
         global_step,
         effective_batch_size,
@@ -235,7 +235,7 @@ pub fn train_step_reuse(
 
 pub fn train_step_reuse_timing(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     train_tokens: &[usize],
     cfg: TrainConfig,
     global_step: u64,
@@ -245,12 +245,12 @@ pub fn train_step_reuse_timing(
 ) -> Result<(StepMetrics, Option<EngineStepTiming>), &'static str> {
     if !enabled {
         return train_step_reuse(
-            gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+            gpt, optimizer, train_tokens, cfg, global_step, grads, workspace,
         )
         .map(|metrics| (metrics, None));
     }
     train_step_reuse_timed(
-        gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+        gpt, optimizer, train_tokens, cfg, global_step, grads, workspace,
     )
     .map(|(metrics, timing)| (metrics, Some(timing)))
 }
@@ -275,7 +275,7 @@ fn current_rss_kib() -> Option<u64> {
 /// train_step_reuse and is intentionally unchanged.
 pub fn train_step_reuse_timed(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     train_tokens: &[usize],
     cfg: TrainConfig,
     global_step: u64,
@@ -320,7 +320,7 @@ pub fn train_step_reuse_timed(
     let grad_process_ns = grad_start.elapsed().as_nanos() as u64;
 
     let optimizer_start = Instant::now();
-    adam.step(&mut workspace.params, grads);
+    optimizer.update(&mut workspace.params, grads)?;
     if workspace.params.iter().any(|x| !x.is_finite()) {
         return Err("optimizer produced non-finite parameters");
     }
@@ -364,12 +364,12 @@ pub fn train_step_reuse_timed(
 ///
 /// The existing `train_step_reuse` remains the production diagnostics-off path
 /// unchanged. Passing `Diagnostics::off()` here delegates directly to that
-/// path. Enabled mode checks loss first, then gradients/parameters/Adam state
+/// path. Enabled mode checks loss first, then gradients/parameters/optimizer state
 /// before and after the optimizer update, and returns contextual first-fault
 /// errors without changing arithmetic on clean runs.
 pub fn train_step_reuse_diagnostics(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     train_tokens: &[usize],
     cfg: TrainConfig,
     global_step: u64,
@@ -380,7 +380,7 @@ pub fn train_step_reuse_diagnostics(
     if !diagnostics.enabled {
         let metrics = train_step_reuse(
             gpt,
-            adam,
+            optimizer,
             train_tokens,
             cfg,
             global_step,
@@ -431,13 +431,13 @@ pub fn train_step_reuse_diagnostics(
         return Err(explain(Stage::Loss, "loss", &loss_scan));
     }
 
-    let (_, _, adam_m_before, adam_v_before) = adam.export();
+    let optimizer_before = optimizer.diagnostics();
     let pre_optimizer = summarize_training_state(
         diagnostics,
         grads,
         &workspace.params,
-        adam_m_before,
-        adam_v_before,
+        optimizer_before.first,
+        optimizer_before.second,
     )
     .expect("enabled diagnostics must summarize state");
     if let Some(context) = fault_context(&pre_optimizer) {
@@ -447,15 +447,15 @@ pub fn train_step_reuse_diagnostics(
     let (loss, grad_norm, grad_scale) =
         prepare_grads(cfg, grads, loss_sum).map_err(str::to_string)?;
 
-    adam.step(&mut workspace.params, grads);
+    optimizer.update(&mut workspace.params, grads)?;
 
-    let (_, _, adam_m_after, adam_v_after) = adam.export();
+    let optimizer_after = optimizer.diagnostics();
     let post_optimizer = summarize_training_state(
         diagnostics,
         grads,
         &workspace.params,
-        adam_m_after,
-        adam_v_after,
+        optimizer_after.first,
+        optimizer_after.second,
     )
     .expect("enabled diagnostics must summarize state");
     if let Some(context) = fault_context(&post_optimizer) {
@@ -539,7 +539,7 @@ fn make_metrics(
 
 fn finish_step(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     cfg: TrainConfig,
     global_step: u64,
     effective_batch_size: usize,
@@ -549,7 +549,7 @@ fn finish_step(
     let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
 
     let mut params = gpt.collect_params();
-    adam.step(&mut params, grads);
+    optimizer.update(&mut params, grads)?;
     if params.iter().any(|x| !x.is_finite()) {
         return Err("optimizer produced non-finite parameters");
     }
@@ -568,7 +568,7 @@ fn finish_step(
 
 fn finish_step_with_params(
     gpt: &mut Gpt,
-    adam: &mut Adam,
+    optimizer: &mut dyn Optimizer,
     cfg: TrainConfig,
     global_step: u64,
     effective_batch_size: usize,
@@ -578,7 +578,7 @@ fn finish_step_with_params(
 ) -> Result<StepMetrics, &'static str> {
     let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
 
-    adam.step(params, grads);
+    optimizer.update(params, grads)?;
     if params.iter().any(|x| !x.is_finite()) {
         return Err("optimizer produced non-finite parameters");
     }
@@ -599,8 +599,103 @@ fn finish_step_with_params(
 mod tests {
     use super::*;
     use crate::model::Config;
+    use crate::optim::{Adam, OptimizerDiagnostics, OptimizerId};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    struct RecordingOptimizer {
+        learning_rate: f32,
+        updates: u64,
+        parameter_count: usize,
+        empty: Vec<f32>,
+    }
+
+    impl RecordingOptimizer {
+        fn new(parameter_count: usize, learning_rate: f32) -> Self {
+            Self {
+                learning_rate,
+                updates: 0,
+                parameter_count,
+                empty: Vec::new(),
+            }
+        }
+    }
+
+    impl Optimizer for RecordingOptimizer {
+        fn id(&self) -> OptimizerId {
+            OptimizerId::Adam
+        }
+
+        fn learning_rate(&self) -> f32 {
+            self.learning_rate
+        }
+
+        fn set_learning_rate(&mut self, learning_rate: f32) -> Result<(), &'static str> {
+            self.learning_rate = learning_rate;
+            Ok(())
+        }
+
+        fn global_step(&self) -> u64 {
+            self.updates
+        }
+
+        fn parameter_count(&self) -> usize {
+            self.parameter_count
+        }
+
+        fn config_fingerprint(&self) -> u64 {
+            0xfeed
+        }
+
+        fn state_fingerprint(&self) -> u64 {
+            self.updates
+        }
+
+        fn diagnostics(&self) -> OptimizerDiagnostics<'_> {
+            OptimizerDiagnostics {
+                first_name: "mock_state_1",
+                first: &self.empty,
+                second_name: "mock_state_2",
+                second: &self.empty,
+            }
+        }
+
+        fn update(
+            &mut self,
+            parameters: &mut [f32],
+            gradients: &[f32],
+        ) -> Result<(), &'static str> {
+            if parameters.len() != gradients.len() || parameters.len() != self.parameter_count {
+                return Err("mock optimizer size mismatch");
+            }
+            for (parameter, gradient) in parameters.iter_mut().zip(gradients) {
+                *parameter -= self.learning_rate * gradient;
+            }
+            self.updates += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reference_training_accepts_non_adam_optimizer_through_boundary() {
+        let mut gpt = model(6001);
+        let n = gpt.collect_params().len();
+        let mut optimizer = RecordingOptimizer::new(n, 1e-3);
+        let mut grads = vec![0.0; n];
+        let tokens: Vec<usize> = (0..256).map(|i| i % gpt.cfg.vocab).collect();
+        let cfg = TrainConfig {
+            seed: 44,
+            batch_size: 1,
+            gradient_accumulation_steps: 1,
+            grad_clip_norm: 1.0,
+        };
+
+        let metrics =
+            train_step(&mut gpt, &mut optimizer, &tokens, cfg, 0, &mut grads).unwrap();
+        assert_eq!(optimizer.global_step(), 1);
+        assert_eq!(metrics.global_step, 0);
+        assert!(metrics.loss.is_finite());
+    }
 
     fn model(seed: u64) -> Gpt {
         let cfg = Config {
@@ -824,7 +919,11 @@ mod tests {
 
         assert!(error.contains("adam_m"));
         assert!(error.contains("NaN"));
-        assert_eq!(adam.t, 0, "pre-optimizer fault must stop before Adam step");
+        assert_eq!(
+            adam.global_step(),
+            0,
+            "pre-optimizer fault must stop before optimizer update"
+        );
     }
 
     #[test]
@@ -939,8 +1038,8 @@ mod tests {
         {
             assert!((*x - y).abs() < 1e-5);
         }
-        assert_eq!(adam_acc.t, 1);
-        assert_eq!(adam_ref.t, 1);
+        assert_eq!(adam_acc.global_step(), 1);
+        assert_eq!(adam_ref.global_step(), 1);
     }
 
     #[test]

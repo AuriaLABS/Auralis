@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use crate::bpe::BpeTokenizer;
     use crate::model::{Config, Gpt};
-    use crate::optim::Adam;
+    use crate::optim::{Adam, Optimizer};
     use crate::run_config::RunConfig;
     use crate::tokenizer::AnyTok;
     use rand::rngs::StdRng;
@@ -250,7 +250,7 @@ mod tests {
         let _ = fs::remove_file(manifest::manifest_path(&path));
 
         assert!(report.has_adam);
-        assert_eq!(report.adam_t, Some(adam.t));
+        assert_eq!(report.adam_t, Some(adam.global_step() as i32));
         assert!(report.manifest_ok);
         assert_eq!(report.weights_match_manifest, Some(true));
         assert!(report.human().contains("inspect |"));

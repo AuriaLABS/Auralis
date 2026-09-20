@@ -7,7 +7,7 @@ use crate::checkpoint;
 use crate::eval::evaluate_tokens_reference;
 use crate::manifest::{build_revision, fingerprint_params};
 use crate::model::{Config, Gpt};
-use crate::optim::Adam;
+use crate::optim::{Adam, Optimizer};
 use crate::tokenizer::{AnyTok, CharTokenizer};
 use crate::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -333,7 +333,7 @@ fn run_variant(
     let mut final_train_loss = f32::NAN;
 
     for _ in 0..protocol.steps {
-        let global_step = adam.t.max(0) as u64;
+        let global_step = adam.global_step();
         let metrics = train_step_reuse(
             &mut gpt,
             &mut adam,
