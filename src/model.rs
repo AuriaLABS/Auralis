@@ -5,6 +5,9 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
+use crate::backend::{
+    Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
+};
 use crate::numeric::{explain, scan_f32, Scan, Stage};
 use rand::Rng;
 
@@ -39,6 +42,24 @@ impl Config {
             0,
             "embedding width must be divisible by number of heads"
         );
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CpuBackend {
+    Optimized,
+    Scalar,
+}
+
+static OPTIMIZED_CPU_BACKEND: OptimizedCpuBackend = OptimizedCpuBackend;
+static SCALAR_CPU_BACKEND: ScalarCpuBackend = ScalarCpuBackend;
+
+impl CpuBackend {
+    pub fn id(self) -> BackendId {
+        match self {
+            Self::Optimized => BackendId::OptimizedCpu,
+            Self::Scalar => BackendId::ScalarCpu,
+        }
     }
 }
 
@@ -347,7 +368,19 @@ impl Gpt {
     /// Compute vocabulary logits for every input position without constructing
     /// backward-only caches. The returned tensor is row-major `[tokens, vocab]`.
     pub fn logits(&self, tokens: &[usize]) -> Vec<f32> {
-        self.forward_eval(tokens)
+        self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+    }
+
+    /// Explicit CPU backend selection for verification/benchmarking.
+    ///
+    /// This choice is ephemeral and is not part of RunConfig/checkpoints.
+    pub fn logits_with_cpu_backend(&self, tokens: &[usize], backend: CpuBackend) -> Vec<f32> {
+        match backend {
+            CpuBackend::Optimized => {
+                self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+            }
+            CpuBackend::Scalar => self.forward_eval_with_backend(tokens, &SCALAR_CPU_BACKEND),
+        }
     }
 
     /// Debug-only forward pass with compact numerical summaries for cached
@@ -444,6 +477,36 @@ impl Gpt {
             loss -= p.ln();
         }
 
+        loss / t as f32
+    }
+
+    /// Evaluation loss through an explicit CPU backend, used for equivalence
+    /// checks without changing the persistent experiment configuration.
+    pub fn loss_with_cpu_backend(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        backend: CpuBackend,
+    ) -> f32 {
+        assert_eq!(x.len(), y.len());
+        assert!(!x.is_empty() && x.len() <= self.cfg.block);
+        assert!(x.iter().all(|&t| t < self.cfg.vocab));
+        assert!(y.iter().all(|&t| t < self.cfg.vocab));
+
+        let logits = self.logits_with_cpu_backend(x, backend);
+        let t = x.len();
+        let v = self.cfg.vocab;
+        let mut loss = 0.0f32;
+        for i in 0..t {
+            let row = &logits[i * v..(i + 1) * v];
+            let maxv = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum = 0.0f32;
+            for &logit in row {
+                sum += (logit - maxv).exp();
+            }
+            let p = ((row[y[i]] - maxv).exp() / sum.max(1e-20)).max(1e-20);
+            loss -= p.ln();
+        }
         loss / t as f32
     }
 
@@ -653,6 +716,14 @@ impl Gpt {
     /// Forward path for evaluation/inference. It preserves the training-forward
     /// arithmetic order but does not materialize caches used only by backward.
     fn forward_eval(&self, tokens: &[usize]) -> Vec<f32> {
+        self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+    }
+
+    fn forward_eval_with_backend<B: Backend>(
+        &self,
+        tokens: &[usize],
+        backend: &B,
+    ) -> Vec<f32> {
         assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
         let d = self.cfg.n_embd;
@@ -667,19 +738,19 @@ impl Gpt {
 
         for b in &self.blocks {
             let h1 = layernorm_eval(&x, t, d, &b.ln1_g, &b.ln1_b);
-            let q = matmul(&h1, t, d, &b.wq, d);
-            let k = matmul(&h1, t, d, &b.wk, d);
-            let v = matmul(&h1, t, d, &b.wv, d);
+            let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+            let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
             let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head);
-            let mut proj = matmul(&att, t, d, &b.wo, d);
+            let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
             let h2 = layernorm_eval(&r1, t, d, &b.ln2_g, &b.ln2_b);
-            let mut ff_pre = matmul(&h2, t, d, &b.w1, self.cfg.n_ff);
+            let mut ff_pre = matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
             add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
             let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
-            matmul_into(&ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
+            matmul_into_with_backend(backend, &ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
             add_bias_inplace(&mut proj, t, d, &b.b2);
             let mut out = r1;
             add_inplace(&mut out, &proj);
@@ -687,12 +758,20 @@ impl Gpt {
         }
 
         let h_final = layernorm_eval(&x, t, d, &self.ln_f_g, &self.ln_f_b);
-        let mut logits = matmul(&h_final, t, d, &self.w_out, self.cfg.vocab);
+        let mut logits = matmul_with_backend(backend, &h_final, t, d, &self.w_out, self.cfg.vocab);
         add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
         logits
     }
 
     fn forward_internal(&self, tokens: &[usize]) -> (Vec<f32>, ForwardCache) {
+        self.forward_internal_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+    }
+
+    fn forward_internal_with_backend<B: Backend>(
+        &self,
+        tokens: &[usize],
+        backend: &B,
+    ) -> (Vec<f32>, ForwardCache) {
         assert!(!tokens.is_empty() && tokens.len() <= self.cfg.block);
         let t = tokens.len();
         let d = self.cfg.n_embd;
@@ -708,19 +787,19 @@ impl Gpt {
         let mut layer_caches = Vec::with_capacity(self.blocks.len());
         for b in &self.blocks {
             let (h1, ln1) = layernorm_forward(&x, t, d, &b.ln1_g, &b.ln1_b);
-            let q = matmul(&h1, t, d, &b.wq, d);
-            let k = matmul(&h1, t, d, &b.wk, d);
-            let v = matmul(&h1, t, d, &b.wv, d);
+            let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+            let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
             let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
-            let mut proj = matmul(&att, t, d, &b.wo, d);
+            let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
             let (h2, ln2) = layernorm_forward(&r1, t, d, &b.ln2_g, &b.ln2_b);
-            let mut ff_pre = matmul(&h2, t, d, &b.w1, self.cfg.n_ff);
+            let mut ff_pre = matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
             add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
             let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
-            matmul_into(&ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
+            matmul_into_with_backend(backend, &ff_act, t, self.cfg.n_ff, &b.w2, d, &mut proj);
             add_bias_inplace(&mut proj, t, d, &b.b2);
             let mut out = r1;
             add_inplace(&mut out, &proj);
@@ -742,7 +821,7 @@ impl Gpt {
         }
 
         let (h_final, ln_f) = layernorm_forward(&x, t, d, &self.ln_f_g, &self.ln_f_b);
-        let mut logits = matmul(&h_final, t, d, &self.w_out, self.cfg.vocab);
+        let mut logits = matmul_with_backend(backend, &h_final, t, d, &self.w_out, self.cfg.vocab);
         add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
 
         (
@@ -850,15 +929,21 @@ fn sum_rows_into(x: &[f32], rows: usize, cols: usize, out: &mut [f32]) {
     }
 }
 
-fn matmul(a: &[f32], rows: usize, inner: usize, b: &[f32], cols: usize) -> Vec<f32> {
-    assert_eq!(a.len(), rows * inner);
-    assert_eq!(b.len(), inner * cols);
+fn matmul_with_backend<B: Backend>(
+    backend: &B,
+    a: &[f32],
+    rows: usize,
+    inner: usize,
+    b: &[f32],
+    cols: usize,
+) -> Vec<f32> {
     let mut out = vec![0.0; rows * cols];
-    matmul_into(a, rows, inner, b, cols, &mut out);
+    matmul_into_with_backend(backend, a, rows, inner, b, cols, &mut out);
     out
 }
 
-fn matmul_into(
+fn matmul_into_with_backend<B: Backend>(
+    backend: &B,
     a: &[f32],
     rows: usize,
     inner: usize,
@@ -866,7 +951,16 @@ fn matmul_into(
     cols: usize,
     out: &mut [f32],
 ) {
-    crate::kernels::matmul_row_slices_into(a, rows, inner, b, cols, out);
+    backend
+        .matmul(
+            MatrixRef::new(a, rows, inner, backend.device())
+                .expect("model A shape/device invariant"),
+            MatrixRef::new(b, inner, cols, backend.device())
+                .expect("model B shape/device invariant"),
+            MatrixMut::new(out, rows, cols, backend.device())
+                .expect("model output shape/device invariant"),
+        )
+        .expect("model backend matmul invariant");
 }
 
 fn matmul_grad_b(
@@ -1149,7 +1243,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 
 #[cfg(test)]
 mod tests {
-    use super::{BackwardWorkspace, Config, Gpt};
+    use super::{BackendId, BackwardWorkspace, Config, CpuBackend, Gpt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -1437,6 +1531,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cpu_backends_are_exact_for_logits_and_loss_across_contexts() {
+        for (seed, cfg) in [
+            (
+                0x2381,
+                Config {
+                    vocab: 11,
+                    n_embd: 8,
+                    n_head: 2,
+                    n_layer: 1,
+                    block: 5,
+                    n_ff: 16,
+                },
+            ),
+            (
+                0x2382,
+                Config {
+                    vocab: 13,
+                    n_embd: 12,
+                    n_head: 3,
+                    n_layer: 2,
+                    block: 7,
+                    n_ff: 20,
+                },
+            ),
+        ] {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let gpt = Gpt::new(cfg, &mut rng);
+            let tokens: Vec<usize> = (0..cfg.block)
+                .map(|i| (i * 5 + 2) % cfg.vocab)
+                .collect();
+            let targets: Vec<usize> = (0..cfg.block)
+                .map(|i| (i * 7 + 3) % cfg.vocab)
+                .collect();
+
+            for len in 1..=cfg.block {
+                let x = &tokens[..len];
+                let y = &targets[..len];
+                let optimized = gpt.logits_with_cpu_backend(x, CpuBackend::Optimized);
+                let scalar = gpt.logits_with_cpu_backend(x, CpuBackend::Scalar);
+                assert_eq!(optimized, scalar, "logits backend mismatch len={len}");
+                assert_eq!(gpt.logits(x), optimized, "default backend is not optimized");
+                assert_eq!(
+                    gpt.loss_with_cpu_backend(x, y, CpuBackend::Optimized),
+                    gpt.loss_with_cpu_backend(x, y, CpuBackend::Scalar),
+                    "loss backend mismatch len={len}"
+                );
+            }
+        }
+        assert_eq!(CpuBackend::Optimized.id(), BackendId::OptimizedCpu);
+        assert_eq!(CpuBackend::Scalar.id(), BackendId::ScalarCpu);
     }
 
     #[test]
