@@ -52,6 +52,33 @@ impl Config {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NormalizationKind {
+    LayerNorm,
+    RmsNorm,
+}
+
+impl NormalizationKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LayerNorm => "layernorm",
+            Self::RmsNorm => "rmsnorm",
+        }
+    }
+}
+
+impl std::str::FromStr for NormalizationKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "layernorm" => Ok(Self::LayerNorm),
+            "rmsnorm" => Ok(Self::RmsNorm),
+            other => Err(format!("unknown normalization kind {other}")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuBackend {
     Optimized,
     Scalar,
@@ -89,6 +116,7 @@ struct Block {
 #[derive(Clone)]
 pub struct Gpt {
     pub cfg: Config,
+    normalization: NormalizationKind,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -106,15 +134,28 @@ struct LnCache {
     cols: usize,
 }
 
+#[derive(Clone)]
+struct RmsCache {
+    xhat: Vec<f32>,
+    inv_rms: Vec<f32>,
+    rows: usize,
+    cols: usize,
+}
+
+enum NormCache {
+    LayerNorm(LnCache),
+    RmsNorm(RmsCache),
+}
+
 struct LayerCache {
-    ln1: LnCache,
+    ln1: NormCache,
     h1: Vec<f32>,
     q: Vec<f32>,
     k: Vec<f32>,
     v: Vec<f32>,
     probs: Vec<f32>,
     att: Vec<f32>,
-    ln2: LnCache,
+    ln2: NormCache,
     h2: Vec<f32>,
     ff_pre: Vec<f32>,
     ff_act: Vec<f32>,
@@ -122,7 +163,7 @@ struct LayerCache {
 
 struct ForwardCache {
     layers: Vec<LayerCache>,
-    ln_f: LnCache,
+    ln_f: NormCache,
     h_final: Vec<f32>,
 }
 
@@ -290,6 +331,14 @@ impl BackwardWorkspace {
 
 impl Gpt {
     pub fn new(cfg: Config, rng: &mut impl Rng) -> Self {
+        Self::new_with_normalization(cfg, NormalizationKind::LayerNorm, rng)
+    }
+
+    pub fn new_with_normalization(
+        cfg: Config,
+        normalization: NormalizationKind,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
         let d = cfg.n_embd;
         let mut blocks = Vec::with_capacity(cfg.n_layer);
@@ -311,6 +360,7 @@ impl Gpt {
         }
         Self {
             cfg,
+            normalization,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -319,6 +369,14 @@ impl Gpt {
             w_out: init_vec(rng, d * cfg.vocab, 0.02),
             b_out: vec![0.0; cfg.vocab],
         }
+    }
+
+    pub fn normalization(&self) -> NormalizationKind {
+        self.normalization
+    }
+
+    pub fn set_normalization(&mut self, normalization: NormalizationKind) {
+        self.normalization = normalization;
     }
 
     fn embed_tokens_with_positions(&self, tokens: &[usize]) -> Vec<f32> {
@@ -698,7 +756,7 @@ impl Gpt {
         {
             let (dx_ln, dgamma, dbeta) =
                 scratch.get3_mut(dx_ln_slot, dgamma_slot, dbeta_slot);
-            layernorm_backward_into(dx, &cache.ln_f, &self.ln_f_g, dx_ln, dgamma, dbeta);
+            normalization_backward_into(dx, &cache.ln_f, &self.ln_f_g, dx_ln, dgamma, dbeta);
             add_inplace(&mut gg.ln_f_g, dgamma);
             add_inplace(&mut gg.ln_f_b, dbeta);
             dx.copy_from_slice(dx_ln);
@@ -733,7 +791,7 @@ impl Gpt {
             let db2_slot = scratch.alloc(d);
             {
                 let (dln2, dg2, db2) = scratch.get3_mut(dln2_slot, dg2_slot, db2_slot);
-                layernorm_backward_into(residual, &c.ln2, &b.ln2_g, dln2, dg2, db2);
+                normalization_backward_into(residual, &c.ln2, &b.ln2_g, dln2, dg2, db2);
                 add_inplace(&mut bg.ln2_g, dg2);
                 add_inplace(&mut bg.ln2_b, db2);
                 for i in 0..td {
@@ -782,7 +840,7 @@ impl Gpt {
             let db1_slot = scratch.alloc(d);
             {
                 let (dln1, dg1, db1) = scratch.get3_mut(dln1_slot, dg1_slot, db1_slot);
-                layernorm_backward_into(dx, &c.ln1, &b.ln1_g, dln1, dg1, db1);
+                normalization_backward_into(dx, &c.ln1, &b.ln1_g, dln1, dg1, db1);
                 add_inplace(&mut bg.ln1_g, dg1);
                 add_inplace(&mut bg.ln1_b, db1);
                 for i in 0..td {
@@ -845,7 +903,7 @@ impl Gpt {
         let mut x = self.embed_tokens_with_positions(tokens);
 
         for b in &self.blocks {
-            let h1 = layernorm_eval(&x, t, d, &b.ln1_g, &b.ln1_b);
+            let h1 = normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
             let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
@@ -854,7 +912,7 @@ impl Gpt {
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
-            let h2 = layernorm_eval(&r1, t, d, &b.ln2_g, &b.ln2_b);
+            let h2 = normalization_eval(self.normalization, &r1, t, d, &b.ln2_g, &b.ln2_b);
             let mut ff_pre = matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
             add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
             let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
@@ -865,7 +923,7 @@ impl Gpt {
             x = out;
         }
 
-        let h_final = layernorm_eval(&x, t, d, &self.ln_f_g, &self.ln_f_b);
+        let h_final = normalization_eval(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b);
         let mut logits = matmul_with_backend(backend, &h_final, t, d, &self.w_out, self.cfg.vocab);
         add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
         logits
@@ -886,7 +944,7 @@ impl Gpt {
 
         let mut layer_caches = Vec::with_capacity(self.blocks.len());
         for b in &self.blocks {
-            let (h1, ln1) = layernorm_forward(&x, t, d, &b.ln1_g, &b.ln1_b);
+            let (h1, ln1) = normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
             let k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
@@ -895,7 +953,7 @@ impl Gpt {
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
 
-            let (h2, ln2) = layernorm_forward(&r1, t, d, &b.ln2_g, &b.ln2_b);
+            let (h2, ln2) = normalization_forward(self.normalization, &r1, t, d, &b.ln2_g, &b.ln2_b);
             let mut ff_pre = matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
             add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
             let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
@@ -920,7 +978,7 @@ impl Gpt {
             x = out;
         }
 
-        let (h_final, ln_f) = layernorm_forward(&x, t, d, &self.ln_f_g, &self.ln_f_b);
+        let (h_final, ln_f) = normalization_forward(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b);
         let mut logits = matmul_with_backend(backend, &h_final, t, d, &self.w_out, self.cfg.vocab);
         add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
 
@@ -1101,6 +1159,149 @@ fn matmul_b_t_add_into(
     out: &mut [f32],
 ) {
     crate::kernels::matmul_b_t_row_slices_add_into(dy, rows, out_cols, b, result_cols, out);
+}
+
+fn normalization_eval(
+    kind: NormalizationKind,
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    gamma: &[f32],
+    beta: &[f32],
+) -> Vec<f32> {
+    match kind {
+        NormalizationKind::LayerNorm => layernorm_eval(x, rows, cols, gamma, beta),
+        NormalizationKind::RmsNorm => rmsnorm_eval(x, rows, cols, gamma),
+    }
+}
+
+fn normalization_forward(
+    kind: NormalizationKind,
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    gamma: &[f32],
+    beta: &[f32],
+) -> (Vec<f32>, NormCache) {
+    match kind {
+        NormalizationKind::LayerNorm => {
+            let (y, cache) = layernorm_forward(x, rows, cols, gamma, beta);
+            (y, NormCache::LayerNorm(cache))
+        }
+        NormalizationKind::RmsNorm => {
+            let (y, cache) = rmsnorm_forward(x, rows, cols, gamma);
+            (y, NormCache::RmsNorm(cache))
+        }
+    }
+}
+
+fn normalization_backward_into(
+    dy: &[f32],
+    cache: &NormCache,
+    gamma: &[f32],
+    dx: &mut [f32],
+    dgamma: &mut [f32],
+    dbeta: &mut [f32],
+) {
+    match cache {
+        NormCache::LayerNorm(cache) => {
+            layernorm_backward_into(dy, cache, gamma, dx, dgamma, dbeta)
+        }
+        NormCache::RmsNorm(cache) => {
+            rmsnorm_backward_into(dy, cache, gamma, dx, dgamma, dbeta)
+        }
+    }
+}
+
+fn rmsnorm_eval(
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    gamma: &[f32],
+) -> Vec<f32> {
+    const EPS: f32 = 1e-5;
+    assert_eq!(x.len(), rows * cols);
+    assert_eq!(gamma.len(), cols);
+    let mut y = vec![0.0; x.len()];
+    for i in 0..rows {
+        let row = &x[i * cols..(i + 1) * cols];
+        let mean_sq = row.iter().map(|v| *v * *v).sum::<f32>() / cols as f32;
+        let inv = 1.0 / (mean_sq + EPS).sqrt();
+        for j in 0..cols {
+            y[i * cols + j] = x[i * cols + j] * inv * gamma[j];
+        }
+    }
+    y
+}
+
+fn rmsnorm_forward(
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    gamma: &[f32],
+) -> (Vec<f32>, RmsCache) {
+    const EPS: f32 = 1e-5;
+    assert_eq!(x.len(), rows * cols);
+    assert_eq!(gamma.len(), cols);
+    let mut y = vec![0.0; x.len()];
+    let mut xhat = vec![0.0; x.len()];
+    let mut inv_rms = vec![0.0; rows];
+    for i in 0..rows {
+        let row = &x[i * cols..(i + 1) * cols];
+        let mean_sq = row.iter().map(|v| *v * *v).sum::<f32>() / cols as f32;
+        let inv = 1.0 / (mean_sq + EPS).sqrt();
+        inv_rms[i] = inv;
+        for j in 0..cols {
+            let idx = i * cols + j;
+            let h = x[idx] * inv;
+            xhat[idx] = h;
+            y[idx] = h * gamma[j];
+        }
+    }
+    (
+        y,
+        RmsCache {
+            xhat,
+            inv_rms,
+            rows,
+            cols,
+        },
+    )
+}
+
+fn rmsnorm_backward_into(
+    dy: &[f32],
+    cache: &RmsCache,
+    gamma: &[f32],
+    dx: &mut [f32],
+    dgamma: &mut [f32],
+    dbeta: &mut [f32],
+) {
+    let rows = cache.rows;
+    let cols = cache.cols;
+    assert_eq!(dy.len(), rows * cols);
+    assert_eq!(gamma.len(), cols);
+    assert_eq!(dx.len(), dy.len());
+    assert_eq!(dgamma.len(), cols);
+    assert_eq!(dbeta.len(), cols);
+    dgamma.fill(0.0);
+    // beta slots are retained only to preserve the historical parameter layout.
+    dbeta.fill(0.0);
+
+    for i in 0..rows {
+        let mut sum_gxh = 0.0f32;
+        for j in 0..cols {
+            let idx = i * cols + j;
+            dgamma[j] += dy[idx] * cache.xhat[idx];
+            sum_gxh += dy[idx] * gamma[j] * cache.xhat[idx];
+        }
+        let mean_gxh = sum_gxh / cols as f32;
+        for j in 0..cols {
+            let idx = i * cols + j;
+            let z = dy[idx] * gamma[j];
+            dx[idx] = cache.inv_rms[i] * (z - cache.xhat[idx] * mean_gxh);
+        }
+    }
 }
 
 fn layernorm_eval(
