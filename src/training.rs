@@ -11,7 +11,7 @@ use crate::metrics::EngineStepTiming;
 use crate::model::{BackwardWorkspace, Gpt};
 use crate::numeric::{explain, Diagnostics, Scan, Stage};
 use crate::numeric_state::{fault_context, summarize_training_state, TrainingStateSummary};
-use crate::optim::{Adam, Optimizer};
+use crate::optim::Optimizer;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -599,7 +599,7 @@ fn finish_step_with_params(
 mod tests {
     use super::*;
     use crate::model::Config;
-    use crate::optim::{OptimizerDiagnostics, OptimizerId};
+    use crate::optim::{Adam, OptimizerDiagnostics, OptimizerId};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -1038,8 +1038,8 @@ mod tests {
         {
             assert!((*x - y).abs() < 1e-5);
         }
-        assert_eq!(adam_acc.t, 1);
-        assert_eq!(adam_ref.t, 1);
+        assert_eq!(adam_acc.global_step(), 1);
+        assert_eq!(adam_ref.global_step(), 1);
     }
 
     #[test]
