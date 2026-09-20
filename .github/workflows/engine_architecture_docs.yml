@@ -34,8 +34,14 @@ jobs:
         run: |
           set -euo pipefail
           doc="docs/ENGINE_ARCHITECTURE.md"
-          grep -q 'Phase A está integrada' "$doc"
-          grep -q 'integración model-wide es Phase B' "$doc"
+          grep -q 'Phase A y Phase B están integradas' "$doc"
+          grep -q 'OptimizedCpuBackend.*default productivo fijo' "$doc"
+          grep -q 'Scalar CPU queda como ruta explícita de verificación' "$doc"
+          grep -q 'backend no se persiste todavía en RunConfig/checkpoint' "$doc"
+          if grep -q 'integración model-wide es Phase B' "$doc"; then
+            echo "architecture doc still describes integrated Phase B as pending"
+            exit 1
+          fi
           grep -q 'no existe SIMD promovido' "$doc"
           grep -q 'no hay worker pool CPU productivo promovido' "$doc"
           grep -q 'manual-long de 3000 steps' "$doc"
