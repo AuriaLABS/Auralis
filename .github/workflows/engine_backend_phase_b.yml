@@ -44,28 +44,50 @@ jobs:
             exit 1
           fi
 
-      - name: Base eval profile and training fingerprint
+      - name: Build base and head profiler binaries
         shell: bash
         run: |
           set -euo pipefail
+
           git checkout --detach "$BASE_SHA"
+          cargo build --release --bin auralis_eval_profile --bin auralis_engine_soak
+          cp target/release/auralis_eval_profile /tmp/backend-base-eval
+          cp target/release/auralis_engine_soak /tmp/backend-base-soak
 
-          cargo run --release --bin auralis_eval_profile -- 12             | tee /tmp/backend-base-eval.txt
-          cargo run --release --bin auralis_engine_soak -- 20 10             | tee /tmp/backend-base-soak.txt
+          git checkout --detach "$HEAD_SHA"
+          cargo build --release --bin auralis_eval_profile --bin auralis_engine_soak
+          cp target/release/auralis_eval_profile /tmp/backend-head-eval
+          cp target/release/auralis_engine_soak /tmp/backend-head-soak
 
-          test "$(grep -c '^eval_profile |' /tmp/backend-base-eval.txt)" -eq 2
-          test "$(grep -c '^engine_soak_summary |' /tmp/backend-base-soak.txt)" -eq 1
-
-      - name: Head eval profile and training fingerprint
+      - name: Alternating eval profile measurements
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach "$HEAD_SHA"
+          : > /tmp/backend-base-eval.txt
+          : > /tmp/backend-head-eval.txt
 
-          cargo run --release --bin auralis_eval_profile -- 12             | tee /tmp/backend-head-eval.txt
-          cargo run --release --bin auralis_engine_soak -- 20 10             | tee /tmp/backend-head-soak.txt
+          for rep in 1 2 3 4 5; do
+            if (( rep % 2 == 1 )); then
+              /tmp/backend-base-eval 80 >> /tmp/backend-base-eval.txt
+              /tmp/backend-head-eval 80 >> /tmp/backend-head-eval.txt
+            else
+              /tmp/backend-head-eval 80 >> /tmp/backend-head-eval.txt
+              /tmp/backend-base-eval 80 >> /tmp/backend-base-eval.txt
+            fi
+          done
 
-          test "$(grep -c '^eval_profile |' /tmp/backend-head-eval.txt)" -eq 2
+          test "$(grep -c '^eval_profile | mode=loss ' /tmp/backend-base-eval.txt)" -eq 5
+          test "$(grep -c '^eval_profile | mode=loss ' /tmp/backend-head-eval.txt)" -eq 5
+          test "$(grep -c '^eval_profile | mode=generate_one ' /tmp/backend-base-eval.txt)" -eq 5
+          test "$(grep -c '^eval_profile | mode=generate_one ' /tmp/backend-head-eval.txt)" -eq 5
+
+      - name: Base/head training fingerprints
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/backend-base-soak 20 10 | tee /tmp/backend-base-soak.txt
+          /tmp/backend-head-soak 20 10 | tee /tmp/backend-head-soak.txt
+          test "$(grep -c '^engine_soak_summary |' /tmp/backend-base-soak.txt)" -eq 1
           test "$(grep -c '^engine_soak_summary |' /tmp/backend-head-soak.txt)" -eq 1
 
       - name: Compare pre-boundary and Phase B
@@ -73,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import re
+          import statistics
 
           def kv(line):
               out = {}
@@ -84,37 +106,62 @@ jobs:
               return out
 
           def profiles(path):
-              rows = {}
+              rows = {"loss": [], "generate_one": []}
               for line in open(path, encoding="utf-8"):
                   if line.startswith("eval_profile |"):
                       row = kv(line)
-                      rows[row["mode"]] = row
+                      rows[row["mode"]].append(row)
               return rows
 
           base = profiles("/tmp/backend-base-eval.txt")
           head = profiles("/tmp/backend-head-eval.txt")
-          assert set(base) == {"loss", "generate_one"}
-          assert set(head) == set(base)
 
-          for mode in sorted(base):
-              b = base[mode]
-              h = head[mode]
-              for field in ["alloc_calls", "alloc_bytes", "realloc_calls", "realloc_new_bytes"]:
-                  if b[field] != h[field]:
-                      raise SystemExit(
-                          f"{mode} allocation regression {field}: base={b[field]} head={h[field]}"
+          for mode in ["loss", "generate_one"]:
+              assert len(base[mode]) == 5 and len(head[mode]) == 5
+              for rows, name in [(base[mode], "base"), (head[mode], "head")]:
+                  alloc_signatures = {
+                      (
+                          r["alloc_calls"],
+                          r["alloc_bytes"],
+                          r["realloc_calls"],
+                          r["realloc_new_bytes"],
                       )
-              base_s = float(b["seconds"])
-              head_s = float(h["seconds"])
-              ratio = head_s / base_s
-              if ratio > 1.15:
+                      for r in rows
+                  }
+                  if len(alloc_signatures) != 1:
+                      raise SystemExit(f"{mode} {name} allocation counts are unstable: {alloc_signatures}")
+
+              base_sig = (
+                  base[mode][0]["alloc_calls"],
+                  base[mode][0]["alloc_bytes"],
+                  base[mode][0]["realloc_calls"],
+                  base[mode][0]["realloc_new_bytes"],
+              )
+              head_sig = (
+                  head[mode][0]["alloc_calls"],
+                  head[mode][0]["alloc_bytes"],
+                  head[mode][0]["realloc_calls"],
+                  head[mode][0]["realloc_new_bytes"],
+              )
+              if base_sig != head_sig:
                   raise SystemExit(
-                      f"{mode} model backend overhead too high: head/base={ratio:.4f}"
+                      f"{mode} allocation regression: base={base_sig} head={head_sig}"
+                  )
+
+              base_seconds = [float(r["seconds"]) for r in base[mode]]
+              head_seconds = [float(r["seconds"]) for r in head[mode]]
+              base_med = statistics.median(base_seconds)
+              head_med = statistics.median(head_seconds)
+              ratio = head_med / base_med
+              if ratio > 1.10:
+                  raise SystemExit(
+                      f"{mode} median model backend overhead too high: head/base={ratio:.4f}"
                   )
               print(
                   f"backend_model_eval_gate | mode={mode} "
-                  f"seconds_ratio={ratio:.4f} alloc_calls={h['alloc_calls']} "
-                  f"alloc_bytes={h['alloc_bytes']}"
+                  f"base_median_s={base_med:.6f} head_median_s={head_med:.6f} "
+                  f"median_ratio={ratio:.4f} alloc_calls={head_sig[0]} "
+                  f"alloc_bytes={head_sig[1]}"
               )
 
           def soak(path):
@@ -153,8 +200,12 @@ jobs:
           {
             echo "## Engine backend Phase B"
             echo
-            grep '^eval_profile |' /tmp/backend-base-eval.txt 2>/dev/null || true
-            grep '^eval_profile |' /tmp/backend-head-eval.txt 2>/dev/null || true
+            echo "### Base eval profile"
+            cat /tmp/backend-base-eval.txt 2>/dev/null || true
+            echo
+            echo "### Head eval profile"
+            cat /tmp/backend-head-eval.txt 2>/dev/null || true
+            echo
             grep '^engine_soak_summary |' /tmp/backend-base-soak.txt 2>/dev/null || true
             grep '^engine_soak_summary |' /tmp/backend-head-soak.txt 2>/dev/null || true
           } >> "$GITHUB_STEP_SUMMARY"
