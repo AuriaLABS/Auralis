@@ -1,5 +1,5 @@
 use auralis::agent::Agent;
-use auralis::architecture::ArchitectureConfig;
+use auralis::architecture::{architecture_path, ArchitectureConfig};
 use auralis::bench;
 use auralis::bench_format::{self, CatalogFormat};
 use auralis::bench_runner::{self, BenchProtocol};
@@ -75,7 +75,64 @@ fn new_model(
     let tok = AnyTok::Bpe(BpeTokenizer::fit(train_text, run.bpe_merges));
     let mut rng = StdRng::seed_from_u64(run.seed);
     let cfg = architecture.model_config(tok.vocab_size())?;
-    let gpt = Gpt::new(cfg, &mut rng);
+    let gpt = Gpt::new_with_normalization(cfg, architecture.normalization, &mut rng);
+    Ok((gpt, tok))
+}
+
+fn resolve_model_architecture(
+    ckpt: &Path,
+    gpt: &mut Gpt,
+    requested: Option<ArchitectureConfig>,
+) -> Result<(ArchitectureConfig, bool), String> {
+    let sidecar = architecture_path(ckpt);
+    let selected = if sidecar.exists() {
+        let persisted = ArchitectureConfig::load(&sidecar)?;
+        if !persisted.matches_model(gpt.cfg) {
+            return Err(format!(
+                "architecture metadata/model mismatch: metadata={} checkpoint={}",
+                persisted.line(),
+                ArchitectureConfig::from_model(gpt.cfg, gpt.normalization()).line(),
+            ));
+        }
+        if let Some(requested) = requested {
+            if requested != persisted {
+                return Err(format!(
+                    "architecture mismatch on resume: persisted={} requested={}",
+                    persisted.line(),
+                    requested.line(),
+                ));
+            }
+        }
+        persisted
+    } else {
+        let legacy = ArchitectureConfig::from_model(gpt.cfg, gpt.normalization());
+        if let Some(requested) = requested {
+            if !requested.matches_model(gpt.cfg) {
+                return Err(format!(
+                    "architecture mismatch on resume: checkpoint={} requested={}",
+                    legacy.line(),
+                    requested.line(),
+                ));
+            }
+            if requested.normalization != legacy.normalization {
+                return Err(
+                    "checkpoint has no architecture metadata; non-LayerNorm normalization cannot be inferred safely"
+                        .into(),
+                );
+            }
+            requested
+        } else {
+            legacy
+        }
+    };
+    gpt.set_normalization(selected.normalization);
+    Ok((selected, sidecar.exists() || requested.is_some()))
+}
+
+fn load_checkpoint_with_architecture(ckpt: &Path) -> Result<(Gpt, AnyTok), String> {
+    let (mut gpt, tok) = checkpoint::load(ckpt)
+        .map_err(|e| format!("cannot load checkpoint {}: {e}", ckpt.display()))?;
+    let _ = resolve_model_architecture(ckpt, &mut gpt, None)?;
     Ok((gpt, tok))
 }
 
@@ -192,34 +249,21 @@ fn train(
     let raw_split = split_text(&text, run.split_config())
         .map_err(|e| format!("dataset inválido: {e}"))?;
 
-    let (mut gpt, tok, saved_adam, resumed) = if !fresh && ckpt.exists() {
-        let (g, t, a) = checkpoint::load_full(ckpt).map_err(|e| {
-            format!(
-                "checkpoint incompatible ({e}); abortado para evitar sobrescribir un experimento. Usa train-fresh para empezar de cero"
-            )
-        })?;
-        if let Some(expected) = architecture {
-            if !expected.matches_model(g.cfg) {
-                return Err(format!(
-                    "architecture mismatch on resume: checkpoint={} requested={}",
-                    ArchitectureConfig {
-                        n_embd: g.cfg.n_embd,
-                        n_head: g.cfg.n_head,
-                        n_layer: g.cfg.n_layer,
-                        block: g.cfg.block,
-                        n_ff: g.cfg.n_ff,
-                    }.line(),
-                    expected.line(),
-                ));
-            }
-        }
-        println!("reanuda {} adam={}", ckpt.display(), a.is_some());
-        (g, t, a, true)
-    } else {
-        let selected = architecture.unwrap_or_default();
-        let (g, t) = new_model(&raw_split.train, &run, selected)?;
-        (g, t, None, false)
-    };
+    let (mut gpt, tok, saved_adam, resumed, selected_architecture, persist_architecture) =
+        if !fresh && ckpt.exists() {
+            let (mut g, t, a) = checkpoint::load_full(ckpt).map_err(|e| {
+                format!(
+                    "checkpoint incompatible ({e}); abortado para evitar sobrescribir un experimento. Usa train-fresh para empezar de cero"
+                )
+            })?;
+            let (selected, persist) = resolve_model_architecture(ckpt, &mut g, architecture)?;
+            println!("reanuda {} adam={}", ckpt.display(), a.is_some());
+            (g, t, a, true, selected, persist)
+        } else {
+            let selected = architecture.unwrap_or_default();
+            let (g, t) = new_model(&raw_split.train, &run, selected)?;
+            (g, t, None, false, selected, architecture.is_some())
+        };
 
     let split = encode_split(&tok, &raw_split);
     let identity = ExperimentIdentity::from_raw(run.seed, &text, &split);
@@ -244,17 +288,7 @@ fn train(
         run.bpe_merges,
     );
     println!("experiment | {}", identity.line());
-    println!(
-        "{}",
-        ArchitectureConfig {
-            n_embd: gpt.cfg.n_embd,
-            n_head: gpt.cfg.n_head,
-            n_layer: gpt.cfg.n_layer,
-            block: gpt.cfg.block,
-            n_ff: gpt.cfg.n_ff,
-        }
-        .line()
-    );
+    println!("{}", selected_architecture.line());
 
     if resumed {
         validate_resume_manifest(
@@ -406,6 +440,16 @@ fn train(
         fs::remove_file(&scheduler_sidecar)
             .map_err(|e| format!("no se pudo limpiar scheduler metadata obsoleta: {e}"))?;
     }
+
+    let architecture_sidecar = architecture_path(ckpt);
+    if persist_architecture {
+        selected_architecture
+            .save(&architecture_sidecar)
+            .map_err(|e| format!("checkpoint guardado pero falló architecture metadata: {e}"))?;
+    } else if fresh && architecture_sidecar.exists() {
+        fs::remove_file(&architecture_sidecar)
+            .map_err(|e| format!("no se pudo limpiar architecture metadata obsoleta: {e}"))?;
+    }
     let checkpoint_bytes = fs::metadata(ckpt)
         .map_err(|e| format!("no se pudo medir checkpoint {}: {e}", ckpt.display()))?
         .len();
@@ -421,11 +465,16 @@ fn train(
     if persist_scheduler {
         println!("scheduler_metadata → {}", scheduler_sidecar.display());
     }
+    if persist_architecture {
+        println!("architecture_metadata → {}", architecture_sidecar.display());
+    }
     println!("{}", adam.state_identity().line());
     println!(
-        "run_summary | params={} optimizer_steps={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
+        "run_summary | params={} optimizer_steps={} normalization={} architecture_fingerprint={:016x} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
         n_params,
         adam.global_step(),
+        selected_architecture.normalization.as_str(),
+        selected_architecture.fingerprint(),
         run.batch_size,
         run.gradient_accumulation_steps,
         effective_batch,
@@ -466,7 +515,7 @@ fn run_train_or_exit(
 }
 
 fn eval_ckpt(ckpt: &Path) {
-    let (gpt, tok) = match checkpoint::load(ckpt) {
+    let (gpt, tok) = match load_checkpoint_with_architecture(ckpt) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("carga {ckpt:?}: {e}");
@@ -484,7 +533,7 @@ fn eval_ckpt(ckpt: &Path) {
 }
 
 fn chat(ckpt: &Path) {
-    let (gpt, tok) = match checkpoint::load(ckpt) {
+    let (gpt, tok) = match load_checkpoint_with_architecture(ckpt) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("carga {ckpt:?}: {e}\nEntrena antes: auralis train 80");
@@ -843,8 +892,8 @@ fn numeric_forward(rest: &[String]) -> Result<(), String> {
         }
     }
     let tokens = parse_token_ids(token_spec.ok_or("numeric forward requires --tokens IDS")?)?;
-    let (gpt, _) = checkpoint::load(checkpoint_path)
-        .map_err(|e| format!("cannot load checkpoint {checkpoint_path}: {e}"))?;
+    let checkpoint = Path::new(checkpoint_path);
+    let (gpt, _) = load_checkpoint_with_architecture(checkpoint)?;
     if tokens.len() > gpt.cfg.block {
         return Err(format!(
             "token count {} exceeds model block {}",

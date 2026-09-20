@@ -1,44 +1,57 @@
 # Model architecture configuration
 
-Brain experiments can select model depth/head/width without changing the historical `RunConfig` training schema.
+Brain experiments select model depth/head/width and normalization without changing the training/optimizer RunConfig contract.
 
 ## Contract
 
-Architecture files use schema 1:
+New architecture files use schema 2:
 
 ```text
-auralis_architecture=1
+auralis_architecture=2
 n_embd=32
 n_head=4
 n_layer=2
 block=32
 n_ff=96
+normalization=layernorm
 ```
 
-The historical default is [`../examples/architecture-tiny.cfg`](../examples/architecture-tiny.cfg) and is exactly equivalent to `Config::tiny(vocab)`.
+Supported normalization policies:
+
+- `layernorm` — historical Auralis baseline;
+- `rmsnorm` — RMS normalization with learnable gamma. Historical beta slots remain reserved/inert so parameter layout and AURLIS03 tensor storage stay unchanged.
+
+Schema 1 files remain valid and migrate deterministically to `normalization=layernorm`. Future/unknown schemas and normalization values fail closed.
+
+The historical default is [`../examples/architecture-tiny.cfg`](../examples/architecture-tiny.cfg) and remains exactly equivalent to `Config::tiny(vocab)` + LayerNorm.
 
 Examples:
 
 - [`../examples/architecture-small-1x1.cfg`](../examples/architecture-small-1x1.cfg)
 - [`../examples/architecture-small-3x2.cfg`](../examples/architecture-small-3x2.cfg)
+- [`../examples/architecture-rmsnorm.cfg`](../examples/architecture-rmsnorm.cfg)
 
 ## Training
 
 ```bash
-cargo run --release -- train-fresh 20 auralis.bin --model-config examples/architecture-small-3x2.cfg
+cargo run --release -- train-fresh 20 auralis.bin --model-config examples/architecture-rmsnorm.cfg
 ```
 
-Without `--model-config`, training keeps the historical tiny architecture.
+Without `--model-config`, training keeps the historical tiny LayerNorm architecture.
 
-For a new/fresh checkpoint, the selected architecture controls model construction. For resume, the checkpoint remains authoritative. Supplying `--model-config` during resume acts as a compatibility assertion: a mismatch aborts before training and before overwriting the checkpoint or manifest.
+For explicit architecture configs, Auralis writes `CHECKPOINT.architecture`. Resume, eval, chat and numeric-forward restore that metadata before executing the model. A mismatch aborts before overwriting checkpoint or manifest.
+
+Legacy checkpoints without an architecture sidecar are interpreted as LayerNorm only. Requesting RMSNorm for such a checkpoint is rejected because the normalization policy cannot be inferred safely.
 
 ## Invariants
 
 - `n_embd` must be divisible by `n_head`;
-- all dimensions are positive and bounded by the same safety limits used by checkpoint loading;
-- unknown/duplicate fields and future schema versions fail closed;
-- checkpoints AURLIS02/AURLIS03 already persist vocab, embedding width, heads, layers, block and FF width;
-- manifests already record the complete architecture and validate it on resume;
-- `RunConfig` remains schema 1 and keeps optimizer/data/training semantics separate from model architecture.
+- all dimensions are positive and bounded by checkpoint safety limits;
+- LayerNorm remains the exact default path;
+- RMSNorm keeps the same flat parameter layout and checkpoint tensor count;
+- unknown/duplicate fields and future schemas fail closed;
+- AURLIS02/AURLIS03 checkpoint magic is unchanged;
+- normalization identity is persisted/fingerprinted in the architecture sidecar;
+- `RunConfig` keeps optimizer/data/training semantics separate from model architecture.
 
-Changing architecture is an experiment, not a compatible resume of an existing checkpoint.
+Changing normalization is an architecture experiment, not a compatible silent reinterpretation of an existing checkpoint.

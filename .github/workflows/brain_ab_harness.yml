@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "src/brain_ab.rs"
+      - "src/model.rs"
+      - "src/architecture.rs"
       - "src/lib.rs"
       - "src/bin/auralis_brain_ab.rs"
       - "docs/brain-ab.md"
@@ -33,24 +35,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --release --bin auralis_brain_ab -- 3 3 same --json             | tee /tmp/ab-same.json
-
+          cargo run --quiet --release --bin auralis_brain_ab -- 3 3 same --json | tee /tmp/ab-same.json
           python3 - <<'PY'
-          import json, math, os
+          import json, os
           data = json.load(open("/tmp/ab-same.json", encoding="utf-8"))
-          assert data["schema_version"] == 1
+          assert data["schema_version"] == 2
           assert data["code_revision"] == os.environ["AURALIS_COMMIT_SHA"]
           assert data["a_vs_a_reproducible"] is True
           assert data["protocol"]["steps"] == 3
           assert data["protocol"]["repeats"] == 3
           assert data["a"]["config"] == data["b"]["config"]
+          assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
           a = data["a"]["measurements"]
           b = data["b"]["measurements"]
           assert len(a) == len(b) == 3
-          fingerprints = {m["state_fingerprint"] for m in a + b}
-          assert len(fingerprints) == 1, fingerprints
-          checkpoints = {m["checkpoint_bytes"] for m in a + b}
-          assert len(checkpoints) == 1, checkpoints
+          assert len({m["state_fingerprint"] for m in a + b}) == 1
+          assert len({m["checkpoint_bytes"] for m in a + b}) == 1
           for left, right in zip(a, b):
               assert left["final_train_loss"] == right["final_train_loss"]
               assert left["eval_loss"] == right["eval_loss"]
@@ -67,34 +67,67 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --release --bin auralis_brain_ab -- 3 3 depth --json             | tee /tmp/ab-depth.json
-          cargo run --release --bin auralis_brain_ab -- 2 3 depth             | tee /tmp/ab-depth.txt
-
+          cargo run --quiet --release --bin auralis_brain_ab -- 3 3 depth --json | tee /tmp/ab-depth.json
+          cargo run --quiet --release --bin auralis_brain_ab -- 2 3 depth | tee /tmp/ab-depth.txt
           python3 - <<'PY'
           import json
           data = json.load(open("/tmp/ab-depth.json", encoding="utf-8"))
           assert data["a_vs_a_reproducible"] is False
+          assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
           assert data["a"]["config"]["n_layer"] == 1
           assert data["b"]["config"]["n_layer"] == 2
           assert data["a"]["config"]["n_embd"] == data["b"]["config"]["n_embd"]
           assert data["a"]["config"]["n_head"] == data["b"]["config"]["n_head"]
           assert data["protocol"]["steps"] == 3
           assert data["protocol"]["repeats"] == 3
-          assert len(data["a"]["measurements"]) == 3
-          assert len(data["b"]["measurements"]) == 3
           for side in ["a", "b"]:
+              assert len(data[side]["measurements"]) == 3
               for m in data[side]["measurements"]:
                   assert m["final_train_loss"] > 0
                   assert m["eval_loss"] > 0
                   assert m["eval_perplexity"] >= 1
                   assert m["tokens_per_second"] > 0
-                  assert m["parameter_count"] > 0
                   assert m["parameter_bytes"] == 4 * m["parameter_count"]
                   assert m["optimizer_state_bytes"] == 8 * m["parameter_count"]
                   assert m["checkpoint_bytes"] > 0
           print("brain_ab_depth_gate | comparable_budget=true records_complete=true")
           PY
-
-          grep -q '^brain_ab | schema=1 ' /tmp/ab-depth.txt
+          grep -q '^brain_ab | schema=2 ' /tmp/ab-depth.txt
           test "$(grep -c '^brain_ab_run |' /tmp/ab-depth.txt)" -eq 6
           grep -q '^brain_ab_summary | a=1-layer b=2-layer a_vs_a_reproducible=false comparable_budget=true$' /tmp/ab-depth.txt
+
+      - name: LayerNorm vs RMSNorm uses identical architecture and budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --release --bin auralis_brain_ab -- 3 3 normalization --json | tee /tmp/ab-normalization.json
+          cargo run --quiet --release --bin auralis_brain_ab -- 2 3 normalization | tee /tmp/ab-normalization.txt
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/ab-normalization.json", encoding="utf-8"))
+          assert data["schema_version"] == 2
+          assert data["a"]["config"] == data["b"]["config"]
+          assert data["a"]["normalization"] == "layernorm"
+          assert data["b"]["normalization"] == "rmsnorm"
+          assert data["a_vs_a_reproducible"] is False
+          assert data["protocol"]["steps"] == 3
+          assert data["protocol"]["repeats"] == 3
+          for left, right in zip(data["a"]["measurements"], data["b"]["measurements"]):
+              assert left["parameter_count"] == right["parameter_count"]
+              assert left["parameter_bytes"] == right["parameter_bytes"]
+              assert left["optimizer_state_bytes"] == right["optimizer_state_bytes"]
+              assert left["checkpoint_bytes"] == right["checkpoint_bytes"]
+              assert left["final_train_loss"] > 0
+              assert right["final_train_loss"] > 0
+              assert left["eval_loss"] > 0
+              assert right["eval_loss"] > 0
+              assert left["eval_perplexity"] >= 1
+              assert right["eval_perplexity"] >= 1
+              assert left["tokens_per_second"] > 0
+              assert right["tokens_per_second"] > 0
+              assert left["state_fingerprint"] != right["state_fingerprint"]
+          print("brain_ab_normalization_gate | same_architecture=true same_budget=true layout_equal=true")
+          PY
+          grep -q 'normalization=layernorm' /tmp/ab-normalization.txt
+          grep -q 'normalization=rmsnorm' /tmp/ab-normalization.txt
+          test "$(grep -c '^brain_ab_run |' /tmp/ab-normalization.txt)" -eq 6
