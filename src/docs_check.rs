@@ -141,6 +141,7 @@ mod tests {
             "sec-unsafe.md",
             "scheduler.md",
             "optimizer-boundary.md",
+            "gradient-clipping.md",
             "verify.md",
             "cli.md",
             "versions.md",
@@ -317,12 +318,38 @@ mod tests {
     }
 
     #[test]
+    fn gradient_clipping_docs_and_examples_match_code() {
+        let text = docs("gradient-clipping.md");
+        for needle in [
+            "RunConfig schema 2",
+            "grad_clip_enabled=true",
+            "clipping-off.cfg",
+            "grad_norm_before_clip",
+            "grad_norm_after_clip",
+            "clip_applied",
+            "schema 1 migrates explicitly",
+            "resume only with clipping enabled",
+        ] {
+            assert!(text.contains(needle), "gradient-clipping.md missing {needle}");
+        }
+
+        let on = crate::run_config::RunConfig::load(root().join("examples/tiny.cfg"))
+            .expect("examples/tiny.cfg");
+        assert!(on.grad_clip_enabled);
+
+        let off = crate::run_config::RunConfig::load(root().join("examples/clipping-off.cfg"))
+            .expect("examples/clipping-off.cfg");
+        assert!(!off.grad_clip_enabled);
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
         assert!(cargo.contains("edition = \"2021\""));
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
-        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 2);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
@@ -334,7 +361,7 @@ mod tests {
         for needle in [
             "`0.1.0`",
             "`2021`",
-            "RUN_CONFIG_SCHEMA_VERSION = 1",
+            "RUN_CONFIG_SCHEMA_VERSION = 2",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 2",
             "BRAIN_AB_SCHEMA_VERSION = 2",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
@@ -425,7 +452,7 @@ mod tests {
     fn example_config_loads_and_matches_schema() {
         let cfg = crate::run_config::RunConfig::load(root().join("examples/tiny.cfg"))
             .expect("examples/tiny.cfg");
-        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(cfg.seed, 659_918);
         assert_eq!(cfg.batch_size, 4);
         assert_eq!(cfg.gradient_accumulation_steps, 1);

@@ -1,0 +1,91 @@
+name: Training Gradient Clipping
+
+on:
+  pull_request:
+    paths:
+      - "src/run_config.rs"
+      - "src/training.rs"
+      - "src/main.rs"
+      - "src/manifest.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_clipping_bench.rs"
+      - "examples/tiny.cfg"
+      - "examples/clipping-off.cfg"
+      - "docs/gradient-clipping.md"
+      - "docs/cli.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/training_gradient_clipping.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  clipping:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Policy and migration tests
+        run: |
+          cargo test --lib run_config::tests -- --nocapture
+          cargo test --lib manifest::tests::legacy_run_config_v1_manifest_resumes_only_with_clipping_enabled -- --nocapture
+          cargo test --lib training::tests::clipping_ -- --nocapture
+          cargo test --lib docs_check::tests::gradient_clipping_docs_and_examples_match_code -- --nocapture
+
+      - name: Historical v1 equals v2 enabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed 's/auralis_run_config=2/auralis_run_config=1/;/grad_clip_enabled=/d'             examples/tiny.cfg > /tmp/run-v1.cfg
+
+          cargo run --release -- train-fresh 3 /tmp/clip-v1.bin 659918 4 1             --config /tmp/run-v1.cfg | tee /tmp/clip-v1.txt
+          cargo run --release -- train-fresh 3 /tmp/clip-v2.bin 659918 4 1             --config examples/tiny.cfg | tee /tmp/clip-v2.txt
+
+          cmp /tmp/clip-v1.bin /tmp/clip-v2.bin
+          grep -q 'clip_enabled=true' /tmp/clip-v1.txt
+          grep -q 'clip_enabled=true' /tmp/clip-v2.txt
+          echo "clipping_v1_migration_gate | checkpoint_exact=true historical_policy_enabled=true"
+
+      - name: Clipping off split-resume is exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release -- train-fresh 3 /tmp/clip-off-full.bin 659918 4 1             --config examples/clipping-off.cfg | tee /tmp/clip-off-full.txt
+          cargo run --release -- train-fresh 2 /tmp/clip-off-split.bin 659918 4 1             --config examples/clipping-off.cfg > /tmp/clip-off-a.txt
+          cargo run --release -- train 1 /tmp/clip-off-split.bin 659918 4 1             --config examples/clipping-off.cfg | tee /tmp/clip-off-b.txt
+
+          cmp /tmp/clip-off-full.bin /tmp/clip-off-split.bin
+          cmp /tmp/clip-off-full.bin.manifest /tmp/clip-off-split.bin.manifest
+          grep -q 'clip_enabled=false' /tmp/clip-off-full.txt
+          grep -q 'clip_enabled=false' /tmp/clip-off-b.txt
+          grep -q 'clip_applied=false' /tmp/clip-off-full.txt
+          echo "clipping_off_resume_gate | checkpoint_exact=true manifest_exact=true clip_enabled=false"
+
+      - name: Isolated clipping overhead
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_clipping_bench -- 3 30 5             | tee /tmp/clipping-bench.txt
+          test "$(grep -c '^clipping_bench_run |' /tmp/clipping-bench.txt)" -eq 5
+          summary="$(grep '^clipping_bench_summary |' /tmp/clipping-bench.txt)"
+          grep -q 'params_exact=true' <<< "$summary"
+
+          python3 - <<'PY'
+          import re
+          text = open("/tmp/clipping-bench.txt", encoding="utf-8").read()
+          line = next(x for x in text.splitlines() if x.startswith("clipping_bench_summary |"))
+          ratio = float(re.search(r"forced_over_off=([0-9.]+)", line).group(1))
+          pre = float(re.search(r"forced_first_pre=([0-9.]+)", line).group(1))
+          post = float(re.search(r"forced_first_post=([0-9.]+)", line).group(1))
+          if ratio > 1.20:
+              raise SystemExit(f"forced clipping overhead too high: {ratio:.4f}")
+          if not (post < pre):
+              raise SystemExit(f"forced clipping did not reduce norm: pre={pre} post={post}")
+          print(f"clipping_overhead_gate | forced_over_off={ratio:.4f} pre={pre:.6f} post={post:.6f}")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

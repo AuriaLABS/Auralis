@@ -59,10 +59,21 @@ pub struct StepMetrics {
     pub global_step: u64,
     pub loss: f32,
     pub grad_norm_before_clip: f32,
+    pub grad_norm_after_clip: f32,
     pub grad_scale: f32,
+    pub clip_applied: bool,
     pub tokens: usize,
     pub microbatches: usize,
     pub effective_batch_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PreparedGrads {
+    loss: f32,
+    norm_before: f32,
+    norm_after: f32,
+    scale: f32,
+    clip_applied: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -316,7 +327,7 @@ pub fn train_step_reuse_timed(
     let backward_accum_ns = backward_start.elapsed().as_nanos() as u64;
 
     let grad_start = Instant::now();
-    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+    let prepared = prepare_grads(cfg, grads, loss_sum)?;
     let grad_process_ns = grad_start.elapsed().as_nanos() as u64;
 
     let optimizer_start = Instant::now();
@@ -335,9 +346,7 @@ pub fn train_step_reuse_timed(
         cfg,
         global_step,
         effective_batch_size,
-        loss,
-        grad_norm,
-        grad_scale,
+        prepared,
     )?;
     let total_ns = total_start.elapsed().as_nanos() as u64;
 
@@ -444,8 +453,7 @@ pub fn train_step_reuse_diagnostics(
         return Err(context);
     }
 
-    let (loss, grad_norm, grad_scale) =
-        prepare_grads(cfg, grads, loss_sum).map_err(str::to_string)?;
+    let prepared = prepare_grads(cfg, grads, loss_sum).map_err(str::to_string)?;
 
     optimizer.update(&mut workspace.params, grads)?;
 
@@ -468,9 +476,7 @@ pub fn train_step_reuse_diagnostics(
         cfg,
         global_step,
         effective_batch_size,
-        loss,
-        grad_norm,
-        grad_scale,
+        prepared,
     )
     .map_err(str::to_string)?;
 
@@ -488,29 +494,45 @@ fn prepare_grads(
     cfg: TrainConfig,
     grads: &mut [f32],
     loss_sum: f32,
-) -> Result<(f32, f32, f32), &'static str> {
+) -> Result<PreparedGrads, &'static str> {
     let inv_accum = 1.0 / cfg.gradient_accumulation_steps as f32;
     for g in grads.iter_mut() {
         *g *= inv_accum;
     }
     let loss = loss_sum * inv_accum;
 
-    let grad_norm = global_l2_norm(grads);
-    if !loss.is_finite() || !grad_norm.is_finite() {
+    let norm_before = global_l2_norm(grads);
+    if !loss.is_finite() || !norm_before.is_finite() {
         return Err("non-finite training state");
     }
 
-    let grad_scale = if grad_norm > cfg.grad_clip_norm {
-        cfg.grad_clip_norm / grad_norm
+    let scale = if norm_before > cfg.grad_clip_norm {
+        cfg.grad_clip_norm / norm_before
     } else {
         1.0
     };
-    if grad_scale < 1.0 {
+    let clip_applied = scale < 1.0;
+    if clip_applied {
         for g in grads.iter_mut() {
-            *g *= grad_scale;
+            *g *= scale;
         }
     }
-    Ok((loss, grad_norm, grad_scale))
+    let norm_after = if clip_applied {
+        global_l2_norm(grads)
+    } else {
+        norm_before
+    };
+    if !norm_after.is_finite() {
+        return Err("non-finite clipped gradients");
+    }
+
+    Ok(PreparedGrads {
+        loss,
+        norm_before,
+        norm_after,
+        scale,
+        clip_applied,
+    })
 }
 
 fn make_metrics(
@@ -518,9 +540,7 @@ fn make_metrics(
     cfg: TrainConfig,
     global_step: u64,
     effective_batch_size: usize,
-    loss: f32,
-    grad_norm: f32,
-    grad_scale: f32,
+    prepared: PreparedGrads,
 ) -> Result<StepMetrics, &'static str> {
     let tokens = effective_batch_size
         .checked_mul(gpt.cfg.block)
@@ -528,9 +548,11 @@ fn make_metrics(
 
     Ok(StepMetrics {
         global_step,
-        loss,
-        grad_norm_before_clip: grad_norm,
-        grad_scale,
+        loss: prepared.loss,
+        grad_norm_before_clip: prepared.norm_before,
+        grad_norm_after_clip: prepared.norm_after,
+        grad_scale: prepared.scale,
+        clip_applied: prepared.clip_applied,
         tokens,
         microbatches: cfg.gradient_accumulation_steps,
         effective_batch_size,
@@ -546,7 +568,7 @@ fn finish_step(
     grads: &mut [f32],
     loss_sum: f32,
 ) -> Result<StepMetrics, &'static str> {
-    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+    let prepared = prepare_grads(cfg, grads, loss_sum)?;
 
     let mut params = gpt.collect_params();
     optimizer.update(&mut params, grads)?;
@@ -560,9 +582,7 @@ fn finish_step(
         cfg,
         global_step,
         effective_batch_size,
-        loss,
-        grad_norm,
-        grad_scale,
+        prepared,
     )
 }
 
@@ -576,7 +596,7 @@ fn finish_step_with_params(
     loss_sum: f32,
     params: &mut [f32],
 ) -> Result<StepMetrics, &'static str> {
-    let (loss, grad_norm, grad_scale) = prepare_grads(cfg, grads, loss_sum)?;
+    let prepared = prepare_grads(cfg, grads, loss_sum)?;
 
     optimizer.update(params, grads)?;
     if params.iter().any(|x| !x.is_finite()) {
@@ -589,9 +609,7 @@ fn finish_step_with_params(
         cfg,
         global_step,
         effective_batch_size,
-        loss,
-        grad_norm,
-        grad_scale,
+        prepared,
     )
 }
 
@@ -961,6 +979,52 @@ mod tests {
         train_step(&mut b, &mut adam_b, &tokens, cfg, 1, &mut gb).unwrap();
         assert_ne!(ga, gb);
         assert_ne!(a.collect_params(), b.collect_params());
+    }
+
+    #[test]
+    fn clipping_disabled_threshold_preserves_normalized_gradients() {
+        let cfg = TrainConfig {
+            seed: 1,
+            batch_size: 1,
+            gradient_accumulation_steps: 2,
+            grad_clip_norm: f32::MAX,
+        };
+        let mut grads = vec![6.0, 8.0];
+        let prepared = prepare_grads(cfg, &mut grads, 4.0).unwrap();
+        assert_eq!(prepared.loss, 2.0);
+        assert_eq!(grads, vec![3.0, 4.0]);
+        assert_eq!(prepared.norm_before, 5.0);
+        assert_eq!(prepared.norm_after, 5.0);
+        assert_eq!(prepared.scale, 1.0);
+        assert!(!prepared.clip_applied);
+    }
+
+    #[test]
+    fn clipping_reports_pre_post_norm_and_applied_scale() {
+        let cfg = TrainConfig {
+            seed: 1,
+            batch_size: 1,
+            gradient_accumulation_steps: 1,
+            grad_clip_norm: 2.5,
+        };
+        let mut grads = vec![3.0, 4.0];
+        let prepared = prepare_grads(cfg, &mut grads, 1.0).unwrap();
+        assert!((prepared.norm_before - 5.0).abs() < 1e-6);
+        assert!((prepared.norm_after - 2.5).abs() < 1e-5);
+        assert!((prepared.scale - 0.5).abs() < 1e-6);
+        assert!(prepared.clip_applied);
+        assert!((grads[0] - 1.5).abs() < 1e-6);
+        assert!((grads[1] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn clipping_rejects_non_finite_before_update() {
+        let cfg = TrainConfig::default();
+        let mut grads = vec![1.0, f32::INFINITY];
+        assert_eq!(
+            prepare_grads(cfg, &mut grads, 1.0),
+            Err("non-finite training state")
+        );
     }
 
     #[test]

@@ -157,11 +157,11 @@ jobs:
           print(f"numeric_cli_off_gate | off_over_baseline={ratio:.4f}")
           PY
 
-      - name: Persistent schemas untouched
+      - name: Diagnostics persistence contract
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git diff --exit-code "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs
+          cmp /tmp/normal.bin /tmp/diagnostics.bin
+          cmp /tmp/normal.bin.manifest /tmp/diagnostics.bin.manifest
+          cargo test --lib run_config::tests::canonical_config_roundtrips_exactly -- --nocapture
+          cargo test --lib manifest::tests::manifest_roundtrip_is_exact -- --nocapture

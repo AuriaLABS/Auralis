@@ -29,10 +29,12 @@ Binario auxiliar (no está en `fn usage()`): `cargo run --release --bin auralis_
 
 `--json` y `--csv` son exclusivos en `bench`.
 
-Config de ejemplo (schema 1): [`examples/tiny.cfg`](../examples/tiny.cfg).
+Config de ejemplo (schema 2): [`examples/tiny.cfg`](../examples/tiny.cfg). Clipping OFF: [`examples/clipping-off.cfg`](../examples/clipping-off.cfg).
 
 Cómo ejecutarlos: [verify.md](verify.md).
 
 Model architecture config (schema 1): [architecture-config.md](architecture-config.md).
 
 Learning-rate scheduler (schema 1): [scheduler.md](scheduler.md).
+
+Gradient clipping policy (RunConfig schema 2): [gradient-clipping.md](gradient-clipping.md).

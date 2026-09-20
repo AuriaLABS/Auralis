@@ -270,7 +270,7 @@ fn train(
     let total_tokens = split.total_len();
 
     println!(
-        "Auralis train | tok={} vocab={} tokens={} chars={} steps={} batch={} accum={} effective_batch={} seed={} lr={} clip={} split={:.3}/{:.3}/{:.3} bpe_merges={}",
+        "Auralis train | tok={} vocab={} tokens={} chars={} steps={} batch={} accum={} effective_batch={} seed={} lr={} clip_enabled={} clip_threshold={} split={:.3}/{:.3}/{:.3} bpe_merges={}",
         tok.kind(),
         tok.vocab_size(),
         total_tokens,
@@ -281,6 +281,7 @@ fn train(
         effective_batch,
         run.seed,
         run.learning_rate,
+        run.grad_clip_enabled,
         run.grad_clip_norm,
         run.train_fraction,
         run.validation_fraction,
@@ -393,12 +394,14 @@ fn train(
             );
             let sample = sample_prompt(&gpt, &tok, "Auralis es", 24, 0.2, &mut eval_rng);
             println!(
-                "step {:4} global={} loss {:.4} grad {:.4} clip {:.3} lr={:.8} microbatches={} effective_batch={} sample={}",
+                "step {:4} global={} loss {:.4} grad_pre {:.4} grad_post {:.4} clip_scale {:.3} clip_applied={} lr={:.8} microbatches={} effective_batch={} sample={}",
                 local_step,
                 metrics.global_step,
                 metrics.loss,
                 metrics.grad_norm_before_clip,
+                metrics.grad_norm_after_clip,
                 metrics.grad_scale,
+                metrics.clip_applied,
                 adam.learning_rate(),
                 metrics.microbatches,
                 metrics.effective_batch_size,
@@ -470,11 +473,13 @@ fn train(
     }
     println!("{}", adam.state_identity().line());
     println!(
-        "run_summary | params={} optimizer_steps={} normalization={} architecture_fingerprint={:016x} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
+        "run_summary | params={} optimizer_steps={} normalization={} architecture_fingerprint={:016x} clip_enabled={} clip_threshold={} batch={} accum={} effective_batch={} train_tokens={} train_seconds={:.6} tok_per_s={:.3} validation_loss={:.6} validation_ppl={:.6} test_loss={:.6} test_ppl={:.6} checkpoint_bytes={} manifest_bytes={}",
         n_params,
         adam.global_step(),
         selected_architecture.normalization.as_str(),
         selected_architecture.fingerprint(),
+        run.grad_clip_enabled,
+        run.grad_clip_norm,
         run.batch_size,
         run.gradient_accumulation_steps,
         effective_batch,
