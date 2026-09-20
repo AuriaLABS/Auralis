@@ -1,0 +1,138 @@
+name: Library Benchmark Runner
+
+on:
+  pull_request:
+    paths:
+      - "src/bench.rs"
+      - "src/bench_format.rs"
+      - "src/bench_result.rs"
+      - "src/bench_runner.rs"
+      - "src/lib.rs"
+      - "src/main.rs"
+      - "src/bin/auralis_matmul_bench.rs"
+      - "src/bin/auralis_engine_bench.rs"
+      - ".github/workflows/library_benchmark_runner.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Library runner tests
+        run: |
+          cargo test --lib bench::tests -- --nocapture
+          cargo test --lib bench_runner::tests -- --nocapture
+          cargo test --lib bench_result::tests -- --nocapture
+
+      - name: Legacy wrapper compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          matmul="$(cargo run --release --bin auralis_matmul_bench -- 1 2 3)"
+          printf '%s\n' "$matmul"
+          test "$(grep -c '^matmul_bench_run |' <<< "$matmul")" -eq 3
+          matmul_summary="$(grep '^matmul_bench_summary |' <<< "$matmul")"
+          grep -q 'repeats=3' <<< "$matmul_summary"
+          grep -q 'exact_output=true' <<< "$matmul_summary"
+
+          engine="$(cargo run --release --bin auralis_engine_bench -- 1 2 3)"
+          printf '%s\n' "$engine"
+          test "$(grep -c '^engine_bench_run |' <<< "$engine")" -eq 3
+          engine_summary="$(grep '^engine_bench_summary |' <<< "$engine")"
+          grep -q 'repeats=3' <<< "$engine_summary"
+          grep -q 'exact_state=true' <<< "$engine_summary"
+
+      - name: Packaged CLI text mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --bin auralis
+          target/release/auralis bench run matmul --warmup 1 --iterations 2 --repeats 3             | tee /tmp/bench-text.txt
+          grep -q '^bench-run | id=matmul records=2 ' /tmp/bench-text.txt
+          test "$(grep -c '^bench-result |' /tmp/bench-text.txt)" -eq 2
+          grep -q '^bench-comparison | id=matmul ' /tmp/bench-text.txt
+
+      - name: JSON uses BenchRunRecord
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/auralis bench run matmul --warmup 1 --iterations 2 --repeats 3 --json             > /tmp/bench.jsonl
+          target/release/auralis bench run engine --warmup 1 --iterations 2 --repeats 3 --json             > /tmp/engine.jsonl
+
+          python3 - <<'PY'
+          import json
+
+          for path, expected in [("/tmp/bench.jsonl", "matmul"), ("/tmp/engine.jsonl", "engine")]:
+              rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+              assert len(rows) == 3, rows
+              reference, candidate, comparison = rows
+              assert reference["benchmark_id"] == expected
+              assert candidate["benchmark_id"] == expected
+              assert comparison["benchmark_id"] == expected
+              assert len(reference["raw_ns"]) == 3
+              assert len(candidate["raw_ns"]) == 3
+              assert reference["repetitions"] == 3
+              assert candidate["repetitions"] == 3
+              assert reference["hardware"]
+              assert reference["toolchain"]
+              assert reference["config_fingerprint"] == candidate["config_fingerprint"]
+              assert comparison["candidate_over_reference"] > 0
+          print("library_bench_json | records=ok comparison=ok raw_ns=ok")
+          PY
+
+      - name: CSV uses BenchRunRecord
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/auralis bench run matmul --warmup 1 --iterations 2 --repeats 3 --csv             > /tmp/bench.csv
+
+          python3 - <<'PY'
+          import csv
+          rows = list(csv.reader(open("/tmp/bench.csv", newline="", encoding="utf-8")))
+          assert len(rows) == 3, rows
+          assert rows[0][0] == "benchmark_id"
+          assert rows[1][0] == "matmul"
+          assert rows[2][0] == "matmul"
+          assert rows[1][6] == "3"
+          assert len(rows[1][8].split(";")) == 3
+          print("library_bench_csv | records=ok raw_ns=ok")
+          PY
+
+      - name: Stable input errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          target/release/auralis bench run nope >/tmp/unknown.txt 2>&1
+          unknown=$?
+          target/release/auralis bench run attention >/tmp/catalog-only.txt 2>&1
+          catalog_only=$?
+          target/release/auralis bench run matmul --repeats 0 >/tmp/invalid.txt 2>&1
+          invalid=$?
+          set -e
+
+          test "$unknown" -eq 2
+          test "$catalog_only" -eq 2
+          test "$invalid" -eq 2
+          grep -q 'unknown bench nope' /tmp/unknown.txt
+          grep -q 'catalog-only' /tmp/catalog-only.txt
+          grep -q 'repetitions must be positive' /tmp/invalid.txt
+
+      - name: No Cargo subprocess dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -F 'Command::new("cargo")' src/bench_runner.rs; then
+            echo "library runner must not spawn Cargo"
+            exit 1
+          fi
+          desc="$(target/release/auralis bench describe engine)"
+          grep -q '^library_runner=true$' <<< "$desc"
+          grep -q '^invoke=auralis bench run engine$' <<< "$desc"
