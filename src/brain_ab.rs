@@ -8,7 +8,7 @@ use crate::eval::evaluate_tokens_reference;
 use crate::manifest::{build_revision, fingerprint_params};
 use crate::model::{Config, Gpt, NormalizationKind};
 use crate::position::PositionKind;
-use crate::optim::{Adam, AdamW, AdamWState, Lion, LionState, Optimizer, OptimizerId};
+use crate::optim::{Adam, AdamW, Lion, Optimizer, OptimizerId};
 use crate::tokenizer::{AnyTok, CharTokenizer};
 use crate::training::{train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
@@ -516,6 +516,7 @@ fn escape_json(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optim::{AdamWState, LionState};
 
     fn tiny() -> Config {
         Config {
