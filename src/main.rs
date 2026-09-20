@@ -10,12 +10,15 @@ use auralis::inspect::inspect_checkpoint;
 use auralis::manifest::{self, ExperimentManifest};
 use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
+use auralis::numeric::{self, Diagnostics};
 use auralis::optim::Adam;
 use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
 use auralis::sec::scan_tree;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
-use auralis::training::{train_step_reuse, TrainWorkspace};
+use auralis::training::{
+    train_step_reuse, train_step_reuse_diagnostics, TrainWorkspace,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -121,7 +124,13 @@ fn validate_resume_manifest(
     Ok(())
 }
 
-fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), String> {
+fn train(
+    steps: usize,
+    ckpt: &Path,
+    fresh: bool,
+    run: RunConfig,
+    diagnostics: bool,
+) -> Result<(), String> {
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
     print!("{}", run.effective_report());
@@ -210,18 +219,48 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     let t0 = Instant::now();
     let mut processed_tokens = 0u64;
 
+    if diagnostics {
+        println!("numeric | training_diagnostics=on");
+    }
+
     for local_step in 1..=steps {
         let global_step = adam.t.max(0) as u64;
-        let metrics = train_step_reuse(
-            &mut gpt,
-            &mut adam,
-            &split.train,
-            train_cfg,
-            global_step,
-            &mut grads,
-            &mut workspace,
-        )
-        .map_err(|e| format!("entrenamiento abortado en step {global_step}: {e}"))?;
+        let metrics = if diagnostics {
+            let (metrics, report) = train_step_reuse_diagnostics(
+                &mut gpt,
+                &mut adam,
+                &split.train,
+                train_cfg,
+                global_step,
+                &mut grads,
+                &mut workspace,
+                Diagnostics::on(),
+            )
+            .map_err(|e| format!("diagnóstico numérico abortó step {global_step}: {e}"))?;
+            if let Some(report) = report {
+                println!(
+                    "numeric_train | global_step={} loss_max_abs={:.6} grad_l2={:.6} grad_max_abs={:.6} pre_slices={} post_slices={}",
+                    metrics.global_step,
+                    report.loss.max_abs,
+                    report.pre_optimizer.gradient.l2.unwrap_or(f32::NAN),
+                    report.pre_optimizer.gradient.max_abs,
+                    report.pre_optimizer.slices.len(),
+                    report.post_optimizer.slices.len(),
+                );
+            }
+            metrics
+        } else {
+            train_step_reuse(
+                &mut gpt,
+                &mut adam,
+                &split.train,
+                train_cfg,
+                global_step,
+                &mut grads,
+                &mut workspace,
+            )
+            .map_err(|e| format!("entrenamiento abortado en step {global_step}: {e}"))?
+        };
         processed_tokens += metrics.tokens as u64;
 
         if local_step == 1 || local_step % 20 == 0 || local_step == steps {
@@ -299,8 +338,14 @@ fn train(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) -> Result<(), S
     Ok(())
 }
 
-fn run_train_or_exit(steps: usize, ckpt: &Path, fresh: bool, run: RunConfig) {
-    if let Err(e) = train(steps, ckpt, fresh, run) {
+fn run_train_or_exit(
+    steps: usize,
+    ckpt: &Path,
+    fresh: bool,
+    run: RunConfig,
+    diagnostics: bool,
+) {
+    if let Err(e) = train(steps, ckpt, fresh, run, diagnostics) {
         eprintln!("error: {e}");
         std::process::exit(2);
     }
@@ -589,8 +634,127 @@ fn run_bench(args: &[String]) {
     }
 }
 
-fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), String> {
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TrainCliOptions {
+    diagnostics: bool,
+}
+
+fn parse_token_ids(spec: &str) -> Result<Vec<usize>, String> {
+    if spec.trim().is_empty() {
+        return Err("--tokens requires at least one token id".into());
+    }
+    spec.split(',')
+        .map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return Err("empty token id in --tokens".into());
+            }
+            part.parse::<usize>()
+                .map_err(|_| format!("invalid token id {part:?}"))
+        })
+        .collect()
+}
+
+fn numeric_forward(rest: &[String]) -> Result<(), String> {
+    let checkpoint_path = rest
+        .first()
+        .ok_or("numeric forward requires CHECKPOINT")?;
+    let mut token_spec: Option<&str> = None;
+    let mut i = 1usize;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--tokens" => {
+                token_spec = Some(
+                    rest.get(i + 1)
+                        .ok_or("--tokens requires a comma-separated value")?
+                        .as_str(),
+                );
+                i += 2;
+            }
+            other => return Err(format!("unknown numeric forward option {other}")),
+        }
+    }
+    let tokens = parse_token_ids(token_spec.ok_or("numeric forward requires --tokens IDS")?)?;
+    let (gpt, _) = checkpoint::load(checkpoint_path)
+        .map_err(|e| format!("cannot load checkpoint {checkpoint_path}: {e}"))?;
+    if tokens.len() > gpt.cfg.block {
+        return Err(format!(
+            "token count {} exceeds model block {}",
+            tokens.len(),
+            gpt.cfg.block
+        ));
+    }
+    if let Some((index, token)) = tokens
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, token)| *token >= gpt.cfg.vocab)
+    {
+        return Err(format!(
+            "token id {token} at position {index} exceeds vocab {}",
+            gpt.cfg.vocab
+        ));
+    }
+
+    let (_, report) = gpt
+        .forward_diagnostics(&tokens)
+        .map_err(|e| format!("numerical fault: {e}"))?;
+    println!(
+        "numeric_forward | checkpoint={} tokens={} summaries={} finite=true",
+        checkpoint_path,
+        tokens.len(),
+        report.tensors.len()
+    );
+    for summary in report.tensors {
+        let layer = summary
+            .layer
+            .map(|layer| layer.to_string())
+            .unwrap_or_else(|| "-".into());
+        println!(
+            "numeric_tensor | layer={} name={} stage={:?} len={} nans={} infs={} max_abs={:.6}",
+            layer,
+            summary.name,
+            summary.stage,
+            summary.scan.len,
+            summary.scan.nans,
+            summary.scan.infs,
+            summary.scan.max_abs,
+        );
+    }
+    Ok(())
+}
+
+fn numeric_command(args: &[String]) -> Result<i32, String> {
+    let rest = &args[2..];
+    if rest.first().map(String::as_str) == Some("forward") {
+        return numeric_forward(&rest[1..]).map(|_| 0);
+    }
+    let out = numeric::cli(rest)?;
+    print!("{}", out.text);
+    Ok(if out.finite { 0 } else { 3 })
+}
+
+fn run_numeric(args: &[String]) {
+    match numeric_command(args) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(e) if e.starts_with("numerical fault:") => {
+            eprintln!("error: {e}");
+            std::process::exit(3);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn parse_train_args(
+    args: &[String],
+) -> Result<(usize, PathBuf, RunConfig, TrainCliOptions), String> {
     let mut config_path: Option<&str> = None;
+    let mut diagnostics = false;
     let mut positional: Vec<&str> = Vec::new();
     let mut i = 2;
     while i < args.len() {
@@ -600,8 +764,20 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
             i += 2;
             continue;
         }
+        if args[i] == "--diagnostics" {
+            diagnostics = true;
+            i += 1;
+            continue;
+        }
+        if args[i].starts_with("--") {
+            return Err(format!("unknown training option {}", args[i]));
+        }
         positional.push(args[i].as_str());
         i += 1;
+    }
+
+    if positional.len() > 5 {
+        return Err("too many positional training arguments".into());
     }
 
     let mut run = match config_path {
@@ -630,12 +806,12 @@ fn parse_train_args(args: &[String]) -> Result<(usize, PathBuf, RunConfig), Stri
     }
     run.validate()
         .map_err(|e| format!("configuración inválida: {e}"))?;
-    Ok((steps, ckpt, run))
+    Ok((steps, ckpt, run, TrainCliOptions { diagnostics }))
 }
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
@@ -644,14 +820,18 @@ fn main() {
     let ckpt_default = Path::new("auralis.bin");
     match args.get(1).map(|s| s.as_str()) {
         Some("train") => match parse_train_args(&args) {
-            Ok((steps, ckpt, run)) => run_train_or_exit(steps, &ckpt, false, run),
+            Ok((steps, ckpt, run, options)) => {
+                run_train_or_exit(steps, &ckpt, false, run, options.diagnostics)
+            },
             Err(e) => {
                 eprintln!("error: {e}");
                 std::process::exit(2);
             }
         },
         Some("train-fresh") => match parse_train_args(&args) {
-            Ok((steps, ckpt, run)) => run_train_or_exit(steps, &ckpt, true, run),
+            Ok((steps, ckpt, run, options)) => {
+                run_train_or_exit(steps, &ckpt, true, run, options.diagnostics)
+            },
             Err(e) => {
                 eprintln!("error: {e}");
                 std::process::exit(2);
@@ -663,6 +843,7 @@ fn main() {
         Some("release-manifest") => run_release_manifest(&args),
         Some("sec-audit") => run_sec_audit(&args),
         Some("bench") => run_bench(&args),
+        Some("numeric") => run_numeric(&args),
         Some("chat") => chat(args.get(2).map(Path::new).unwrap_or(ckpt_default)),
         Some("check") => run_check(),
         Some("bpe") => run_bpe(),
@@ -673,8 +854,61 @@ fn main() {
             ckpt_default,
             false,
             RunConfig::default(),
+            false,
         ),
-        None => run_train_or_exit(80, ckpt_default, false, RunConfig::default()),
+        None => run_train_or_exit(80, ckpt_default, false, RunConfig::default(), false),
         _ => usage(),
+    }
+}
+
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn diagnostics_flag_is_ephemeral_and_not_positional() {
+        let args = strings(&[
+            "auralis",
+            "train",
+            "3",
+            "out.bin",
+            "11",
+            "2",
+            "4",
+            "--diagnostics",
+        ]);
+        let (steps, ckpt, run, options) = parse_train_args(&args).unwrap();
+        assert_eq!(steps, 3);
+        assert_eq!(ckpt, PathBuf::from("out.bin"));
+        assert_eq!(run.seed, 11);
+        assert_eq!(run.batch_size, 2);
+        assert_eq!(run.gradient_accumulation_steps, 4);
+        assert!(options.diagnostics);
+    }
+
+    #[test]
+    fn normal_training_cli_keeps_diagnostics_off() {
+        let args = strings(&["auralis", "train", "3", "out.bin"]);
+        let (_, _, _, options) = parse_train_args(&args).unwrap();
+        assert!(!options.diagnostics);
+    }
+
+    #[test]
+    fn unknown_training_option_is_rejected() {
+        let args = strings(&["auralis", "train", "--unknown"]);
+        assert!(parse_train_args(&args).is_err());
+    }
+
+    #[test]
+    fn token_id_parser_is_strict() {
+        assert_eq!(parse_token_ids("1, 2,3").unwrap(), vec![1, 2, 3]);
+        assert!(parse_token_ids("").is_err());
+        assert!(parse_token_ids("1,,3").is_err());
+        assert!(parse_token_ids("1,x").is_err());
     }
 }
