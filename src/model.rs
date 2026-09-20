@@ -1524,9 +1524,106 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendId, BackwardWorkspace, Config, CpuBackend, Gpt};
+    use super::{
+        rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
+        CpuBackend, Gpt, NormalizationKind,
+    };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    #[test]
+    fn explicit_layernorm_policy_is_bit_exact_with_historical_default() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_9301);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_9301);
+        let a = Gpt::new(cfg, &mut rng_a);
+        let b = Gpt::new_with_normalization(cfg, NormalizationKind::LayerNorm, &mut rng_b);
+        assert_eq!(a.collect_params(), b.collect_params());
+        assert_eq!(a.normalization(), NormalizationKind::LayerNorm);
+        assert_eq!(b.normalization(), NormalizationKind::LayerNorm);
+
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        assert_eq!(a.logits(&x), b.logits(&x));
+        assert_eq!(a.loss(&x, &y).to_bits(), b.loss(&x, &y).to_bits());
+
+        let mut ga = vec![0.0; a.collect_params().len()];
+        let mut gb = vec![0.0; b.collect_params().len()];
+        let la = a.backward_into(&x, &y, &mut ga);
+        let lb = b.backward_into(&x, &y, &mut gb);
+        assert_eq!(la.to_bits(), lb.to_bits());
+        assert_eq!(ga, gb);
+    }
+
+    #[test]
+    fn rmsnorm_forward_and_backward_match_finite_differences() {
+        let x = vec![0.4f32, -0.7, 1.2, -0.3];
+        let gamma = vec![1.1f32, 0.8, 1.3, 0.9];
+        let dy = vec![0.2f32, -0.4, 0.7, 0.1];
+        let (forward, cache) = rmsnorm_forward(&x, 1, 4, &gamma);
+        assert_eq!(forward, rmsnorm_eval(&x, 1, 4, &gamma));
+
+        let mut dx = vec![0.0; 4];
+        let mut dgamma = vec![0.0; 4];
+        let mut dbeta = vec![f32::NAN; 4];
+        rmsnorm_backward_into(&dy, &cache, &gamma, &mut dx, &mut dgamma, &mut dbeta);
+        assert_eq!(dbeta, vec![0.0; 4]);
+
+        let objective = |xx: &[f32], gg: &[f32]| -> f32 {
+            rmsnorm_eval(xx, 1, 4, gg)
+                .iter()
+                .zip(&dy)
+                .map(|(a, b)| a * b)
+                .sum()
+        };
+        let h = 1e-3f32;
+        for i in 0..4 {
+            let mut plus = x.clone();
+            let mut minus = x.clone();
+            plus[i] += h;
+            minus[i] -= h;
+            let numeric = (objective(&plus, &gamma) - objective(&minus, &gamma)) / (2.0 * h);
+            assert!((dx[i] - numeric).abs() < 2e-3, "dx[{i}] analytic={} numeric={numeric}", dx[i]);
+        }
+        for i in 0..4 {
+            let mut plus = gamma.clone();
+            let mut minus = gamma.clone();
+            plus[i] += h;
+            minus[i] -= h;
+            let numeric = (objective(&x, &plus) - objective(&x, &minus)) / (2.0 * h);
+            assert!((dgamma[i] - numeric).abs() < 2e-3, "dgamma[{i}] analytic={} numeric={numeric}", dgamma[i]);
+        }
+    }
+
+    #[test]
+    fn rmsnorm_model_backward_is_finite_and_keeps_parameter_layout() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_9302);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_9302);
+        let layer = Gpt::new(cfg, &mut rng_a);
+        let rms = Gpt::new_with_normalization(cfg, NormalizationKind::RmsNorm, &mut rng_b);
+        assert_eq!(layer.collect_params(), rms.collect_params());
+
+        let mut grads = vec![0.0; rms.collect_params().len()];
+        let loss = rms.backward_into(&[0, 1, 2, 3], &[1, 2, 3, 4], &mut grads);
+        assert!(loss.is_finite());
+        assert!(grads.iter().all(|g| g.is_finite()));
+        assert_eq!(rms.normalization(), NormalizationKind::RmsNorm);
+    }
 
     #[test]
     fn params_roundtrip() {
