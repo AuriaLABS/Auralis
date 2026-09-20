@@ -350,7 +350,8 @@ fn run_variant(
     let elapsed = started.elapsed().as_secs_f64().max(f64::MIN_POSITIVE);
     let eval = evaluate_tokens_reference(&gpt, tokens)
         .map_err(|e| format!("A/B eval failed for {}: {e}", variant.label))?;
-    let state_fingerprint = fingerprint_params(&gpt.collect_params());
+    let params = gpt.collect_params();
+    let state_fingerprint = training_state_fingerprint(&params, &adam);
 
     let tok = synthetic_tokenizer(variant.config.vocab)?;
     let path = temporary_checkpoint_path(&variant.label, repetition);
@@ -373,6 +374,28 @@ fn run_variant(
         checkpoint_bytes,
         state_fingerprint,
     })
+}
+
+fn training_state_fingerprint(params: &[f32], adam: &Adam) -> u64 {
+    let mut h = fingerprint_params(params);
+    let (lr, t, m, v) = adam.export();
+    for byte in lr.to_bits().to_le_bytes() {
+        h ^= byte as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    for byte in t.to_le_bytes() {
+        h ^= byte as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    for values in [m, v] {
+        for &value in values {
+            for byte in value.to_bits().to_le_bytes() {
+                h ^= byte as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    h
 }
 
 fn token_stream(vocab: usize, count: usize) -> Vec<usize> {
