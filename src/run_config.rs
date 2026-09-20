@@ -84,8 +84,11 @@ impl RunConfig {
             seed: self.seed,
             batch_size: self.batch_size,
             gradient_accumulation_steps: self.gradient_accumulation_steps,
-            grad_clip_norm: self.grad_clip_norm,
-            grad_clip_enabled: self.grad_clip_enabled,
+            grad_clip_norm: if self.grad_clip_enabled {
+                self.grad_clip_norm
+            } else {
+                f32::MAX
+            },
         }
     }
 
@@ -327,7 +330,6 @@ mod tests {
             cfg.gradient_accumulation_steps
         );
         assert_eq!(train.grad_clip_norm, cfg.grad_clip_norm);
-        assert_eq!(train.grad_clip_enabled, cfg.grad_clip_enabled);
         assert_eq!(cfg.effective_batch_size().unwrap(), 4);
     }
 
@@ -395,6 +397,20 @@ mod tests {
             fingerprint_bytes(v1.as_bytes())
         );
         assert_ne!(migrated.fingerprint(), migrated.fingerprint_for_schema(1).unwrap());
+    }
+
+    #[test]
+    fn clipping_disabled_maps_to_non_triggering_train_threshold() {
+        let mut cfg = RunConfig::default();
+        cfg.grad_clip_enabled = false;
+        let train = cfg.train_config();
+        assert_eq!(train.grad_clip_norm, f32::MAX);
+        assert_eq!(train.seed, cfg.seed);
+        assert_eq!(train.batch_size, cfg.batch_size);
+        assert_eq!(
+            train.gradient_accumulation_steps,
+            cfg.gradient_accumulation_steps
+        );
     }
 
     #[test]
