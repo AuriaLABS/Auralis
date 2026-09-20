@@ -1,6 +1,7 @@
 use auralis::agent::Agent;
 use auralis::bench;
 use auralis::bench_format::{self, CatalogFormat};
+use auralis::bench_runner::{self, BenchProtocol};
 use auralis::bpe::BpeTokenizer;
 use auralis::checkpoint;
 use auralis::eval::{evaluate_tokens_reference, EvalMetrics};
@@ -607,6 +608,27 @@ fn run_sec_audit(args: &[String]) {
     }
 }
 
+fn parse_bench_run_protocol(rest: &[&str], id: &str) -> Result<BenchProtocol, String> {
+    let mut protocol = bench_runner::default_protocol(id)?;
+    let mut i = 2usize;
+    while i < rest.len() {
+        let flag = rest[i];
+        let value = rest
+            .get(i + 1)
+            .ok_or_else(|| format!("{flag} requires an integer value"))?
+            .parse::<usize>()
+            .map_err(|_| format!("{flag} requires an integer value"))?;
+        match flag {
+            "--warmup" => protocol.warmup = value,
+            "--iterations" | "--steps" => protocol.iterations = value,
+            "--repeats" => protocol.repetitions = value,
+            other => return Err(format!("unknown bench run option {other}")),
+        }
+        i += 2;
+    }
+    protocol.validate()
+}
+
 fn run_bench(args: &[String]) {
     let json = args.iter().any(|a| a == "--json");
     let csv = args.iter().any(|a| a == "--csv");
@@ -624,6 +646,36 @@ fn run_bench(args: &[String]) {
         .filter(|s| *s != "--json" && *s != "--csv")
         .collect();
     let command = rest.first().copied().unwrap_or("list");
+
+    if command == "run" {
+        let Some(id) = rest.get(1).copied() else {
+            eprintln!("error: bench run requires an id");
+            std::process::exit(2);
+        };
+        let protocol = match parse_bench_run_protocol(&rest, id) {
+            Ok(protocol) => protocol,
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        };
+        let execution = match bench_runner::run(id, protocol) {
+            Ok(execution) => execution,
+            Err(e) => {
+                eprintln!("benchmark failed: {e}");
+                std::process::exit(3);
+            }
+        };
+        match execution.render(fmt) {
+            Ok(out) => print!("{out}"),
+            Err(e) => {
+                eprintln!("benchmark output failed: {e}");
+                std::process::exit(3);
+            }
+        }
+        return;
+    }
+
     let id = rest.get(1).copied();
     match bench_format::render(command, id, fmt) {
         Ok(out) => print!("{out}"),
@@ -811,7 +863,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
