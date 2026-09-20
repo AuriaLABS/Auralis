@@ -111,15 +111,12 @@ impl ExperimentManifest {
             run.validation_fraction,
         )?;
         check("bpe_merges", self.bpe_merges, run.bpe_merges)?;
-        check(
-            "run_config_schema",
-            self.run_config_schema,
-            RUN_CONFIG_SCHEMA_VERSION,
-        )?;
+        let expected_run_config_fingerprint =
+            run.fingerprint_for_schema(self.run_config_schema)?;
         check(
             "run_config_fingerprint",
             self.run_config_fingerprint,
-            run.fingerprint(),
+            expected_run_config_fingerprint,
         )?;
         check("tokenizer_kind", self.tokenizer_kind.as_str(), tok.kind())?;
         check("vocab", self.vocab, gpt.cfg.vocab)?;
@@ -334,6 +331,24 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.run_config_schema, RUN_CONFIG_SCHEMA_VERSION);
         assert_eq!(a.run_config_fingerprint, run.fingerprint());
+    }
+
+    #[test]
+    fn legacy_run_config_v1_manifest_resumes_only_with_clipping_enabled() {
+        let (gpt, tok) = fixture(11);
+        let run = RunConfig::default();
+        let mut manifest = ExperimentManifest::capture(&gpt, &tok, &run, 123, 0);
+        manifest.run_config_schema = 1;
+        manifest.run_config_fingerprint = run.fingerprint_for_schema(1).unwrap();
+
+        assert!(manifest.validate_resume(&gpt, &tok, &run, 123).is_ok());
+
+        let mut clipping_off = run;
+        clipping_off.grad_clip_enabled = false;
+        let err = manifest
+            .validate_resume(&gpt, &tok, &clipping_off, 123)
+            .unwrap_err();
+        assert!(err.contains("RunConfig v1 cannot represent grad_clip_enabled=false"));
     }
 
     #[test]
