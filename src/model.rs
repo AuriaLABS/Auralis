@@ -134,28 +134,15 @@ struct LnCache {
     cols: usize,
 }
 
-#[derive(Clone)]
-struct RmsCache {
-    xhat: Vec<f32>,
-    inv_rms: Vec<f32>,
-    rows: usize,
-    cols: usize,
-}
-
-enum NormCache {
-    LayerNorm(LnCache),
-    RmsNorm(RmsCache),
-}
-
 struct LayerCache {
-    ln1: NormCache,
+    ln1: LnCache,
     h1: Vec<f32>,
     q: Vec<f32>,
     k: Vec<f32>,
     v: Vec<f32>,
     probs: Vec<f32>,
     att: Vec<f32>,
-    ln2: NormCache,
+    ln2: LnCache,
     h2: Vec<f32>,
     ff_pre: Vec<f32>,
     ff_act: Vec<f32>,
@@ -163,7 +150,7 @@ struct LayerCache {
 
 struct ForwardCache {
     layers: Vec<LayerCache>,
-    ln_f: NormCache,
+    ln_f: LnCache,
     h_final: Vec<f32>,
 }
 
@@ -756,7 +743,7 @@ impl Gpt {
         {
             let (dx_ln, dgamma, dbeta) =
                 scratch.get3_mut(dx_ln_slot, dgamma_slot, dbeta_slot);
-            normalization_backward_into(dx, &cache.ln_f, &self.ln_f_g, dx_ln, dgamma, dbeta);
+            normalization_backward_into(self.normalization, dx, &cache.ln_f, &self.ln_f_g, dx_ln, dgamma, dbeta);
             add_inplace(&mut gg.ln_f_g, dgamma);
             add_inplace(&mut gg.ln_f_b, dbeta);
             dx.copy_from_slice(dx_ln);
@@ -791,7 +778,7 @@ impl Gpt {
             let db2_slot = scratch.alloc(d);
             {
                 let (dln2, dg2, db2) = scratch.get3_mut(dln2_slot, dg2_slot, db2_slot);
-                normalization_backward_into(residual, &c.ln2, &b.ln2_g, dln2, dg2, db2);
+                normalization_backward_into(self.normalization, residual, &c.ln2, &b.ln2_g, dln2, dg2, db2);
                 add_inplace(&mut bg.ln2_g, dg2);
                 add_inplace(&mut bg.ln2_b, db2);
                 for i in 0..td {
@@ -840,7 +827,7 @@ impl Gpt {
             let db1_slot = scratch.alloc(d);
             {
                 let (dln1, dg1, db1) = scratch.get3_mut(dln1_slot, dg1_slot, db1_slot);
-                normalization_backward_into(dx, &c.ln1, &b.ln1_g, dln1, dg1, db1);
+                normalization_backward_into(self.normalization, dx, &c.ln1, &b.ln1_g, dln1, dg1, db1);
                 add_inplace(&mut bg.ln1_g, dg1);
                 add_inplace(&mut bg.ln1_b, db1);
                 for i in 0..td {
@@ -1182,32 +1169,27 @@ fn normalization_forward(
     cols: usize,
     gamma: &[f32],
     beta: &[f32],
-) -> (Vec<f32>, NormCache) {
+) -> (Vec<f32>, LnCache) {
     match kind {
-        NormalizationKind::LayerNorm => {
-            let (y, cache) = layernorm_forward(x, rows, cols, gamma, beta);
-            (y, NormCache::LayerNorm(cache))
-        }
-        NormalizationKind::RmsNorm => {
-            let (y, cache) = rmsnorm_forward(x, rows, cols, gamma);
-            (y, NormCache::RmsNorm(cache))
-        }
+        NormalizationKind::LayerNorm => layernorm_forward(x, rows, cols, gamma, beta),
+        NormalizationKind::RmsNorm => rmsnorm_forward(x, rows, cols, gamma),
     }
 }
 
 fn normalization_backward_into(
+    kind: NormalizationKind,
     dy: &[f32],
-    cache: &NormCache,
+    cache: &LnCache,
     gamma: &[f32],
     dx: &mut [f32],
     dgamma: &mut [f32],
     dbeta: &mut [f32],
 ) {
-    match cache {
-        NormCache::LayerNorm(cache) => {
+    match kind {
+        NormalizationKind::LayerNorm => {
             layernorm_backward_into(dy, cache, gamma, dx, dgamma, dbeta)
         }
-        NormCache::RmsNorm(cache) => {
+        NormalizationKind::RmsNorm => {
             rmsnorm_backward_into(dy, cache, gamma, dx, dgamma, dbeta)
         }
     }
@@ -1239,18 +1221,18 @@ fn rmsnorm_forward(
     rows: usize,
     cols: usize,
     gamma: &[f32],
-) -> (Vec<f32>, RmsCache) {
+) -> (Vec<f32>, LnCache) {
     const EPS: f32 = 1e-5;
     assert_eq!(x.len(), rows * cols);
     assert_eq!(gamma.len(), cols);
     let mut y = vec![0.0; x.len()];
     let mut xhat = vec![0.0; x.len()];
-    let mut inv_rms = vec![0.0; rows];
+    let mut inv_std = vec![0.0; rows];
     for i in 0..rows {
         let row = &x[i * cols..(i + 1) * cols];
         let mean_sq = row.iter().map(|v| *v * *v).sum::<f32>() / cols as f32;
         let inv = 1.0 / (mean_sq + EPS).sqrt();
-        inv_rms[i] = inv;
+        inv_std[i] = inv;
         for j in 0..cols {
             let idx = i * cols + j;
             let h = x[idx] * inv;
@@ -1260,9 +1242,9 @@ fn rmsnorm_forward(
     }
     (
         y,
-        RmsCache {
+        LnCache {
             xhat,
-            inv_rms,
+            inv_std,
             rows,
             cols,
         },
@@ -1271,7 +1253,7 @@ fn rmsnorm_forward(
 
 fn rmsnorm_backward_into(
     dy: &[f32],
-    cache: &RmsCache,
+    cache: &LnCache,
     gamma: &[f32],
     dx: &mut [f32],
     dgamma: &mut [f32],
@@ -1299,7 +1281,7 @@ fn rmsnorm_backward_into(
         for j in 0..cols {
             let idx = i * cols + j;
             let z = dy[idx] * gamma[j];
-            dx[idx] = cache.inv_rms[i] * (z - cache.xhat[idx] * mean_gxh);
+            dx[idx] = cache.inv_std[i] * (z - cache.xhat[idx] * mean_gxh);
         }
     }
 }
