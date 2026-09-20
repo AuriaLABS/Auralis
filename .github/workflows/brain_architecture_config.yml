@@ -41,8 +41,8 @@ jobs:
 
           cmp /tmp/implicit.bin /tmp/explicit.bin
           cmp /tmp/implicit.bin.manifest /tmp/explicit.bin.manifest
-          grep -q '^architecture | schema=1 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 ' /tmp/implicit.txt
-          grep -q '^architecture | schema=1 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 ' /tmp/explicit.txt
+          grep -q '^architecture | schema=2 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm ' /tmp/implicit.txt
+          grep -q '^architecture | schema=2 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm ' /tmp/explicit.txt
           echo "brain_arch_baseline | checkpoint_exact=true manifest_exact=true"
 
       - name: Train one-layer one-head architecture
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --release -- train-fresh 2 /tmp/arch-1x1.bin 659918 2 1             --model-config examples/architecture-small-1x1.cfg             | tee /tmp/arch-1x1.txt
-          grep -q '^architecture | schema=1 n_embd=8 n_head=1 n_layer=1 block=8 n_ff=16 ' /tmp/arch-1x1.txt
+          grep -q '^architecture | schema=2 n_embd=8 n_head=1 n_layer=1 block=8 n_ff=16 normalization=layernorm ' /tmp/arch-1x1.txt
           grep -q '^n_embd=8$' /tmp/arch-1x1.bin.manifest
           grep -q '^n_head=1$' /tmp/arch-1x1.bin.manifest
           grep -q '^n_layer=1$' /tmp/arch-1x1.bin.manifest
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --release -- train-fresh 2 /tmp/arch-3x2.bin 659918 2 1             --model-config examples/architecture-small-3x2.cfg             | tee /tmp/arch-3x2.txt
-          grep -q '^architecture | schema=1 n_embd=8 n_head=2 n_layer=3 block=8 n_ff=16 ' /tmp/arch-3x2.txt
+          grep -q '^architecture | schema=2 n_embd=8 n_head=2 n_layer=3 block=8 n_ff=16 normalization=layernorm ' /tmp/arch-3x2.txt
           grep -q '^n_head=2$' /tmp/arch-3x2.bin.manifest
           grep -q '^n_layer=3$' /tmp/arch-3x2.bin.manifest
           test -s /tmp/arch-3x2.bin
@@ -86,3 +86,20 @@ jobs:
           test "$before_ckpt" = "$after_ckpt"
           test "$before_manifest" = "$after_manifest"
           echo "brain_arch_resume | mismatch_rejected=true checkpoint_unchanged=true manifest_unchanged=true"
+
+      - name: RMSNorm metadata restores exact resume
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release -- train-fresh 3 /tmp/rms-full.bin 659918 2 1             --model-config examples/architecture-rmsnorm.cfg             | tee /tmp/rms-full.txt
+          cargo run --release -- train-fresh 2 /tmp/rms-split.bin 659918 2 1             --model-config examples/architecture-rmsnorm.cfg             | tee /tmp/rms-split-a.txt
+          cargo run --release -- train 1 /tmp/rms-split.bin 659918 2 1             | tee /tmp/rms-split-b.txt
+
+          cmp /tmp/rms-full.bin /tmp/rms-split.bin
+          cmp /tmp/rms-full.bin.manifest /tmp/rms-split.bin.manifest
+          cmp /tmp/rms-full.bin.architecture /tmp/rms-split.bin.architecture
+          grep -q '^normalization=rmsnorm /tmp/rms-full.bin.architecture
+          grep -q 'normalization=rmsnorm' /tmp/rms-full.txt
+          grep -q 'normalization=rmsnorm' /tmp/rms-split-b.txt
+          grep -q '^architecture_metadata → /tmp/rms-split.bin.architecture /tmp/rms-split-b.txt
+          echo "brain_arch_rms_resume | checkpoint_exact=true manifest_exact=true metadata_exact=true"
