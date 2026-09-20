@@ -274,6 +274,10 @@ mod tests {
             "normalization policy",
             "positional policy",
             "Learned absolute vs RoPE",
+            "Optimizer comparisons",
+            "optimizer-adamw",
+            "optimizer-lion",
+            "checkpoint_includes_optimizer",
             "does **not** declare a winner",
         ] {
             assert!(text.contains(needle), "docs/brain-ab.md missing {needle}");
@@ -389,7 +393,7 @@ mod tests {
             assert!(text.contains(needle), "rope-experiment.md missing {needle}");
         }
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
-        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
     }
 
     #[test]
@@ -400,7 +404,7 @@ mod tests {
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
-        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
@@ -412,7 +416,7 @@ mod tests {
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 2",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 3",
-            "BRAIN_AB_SCHEMA_VERSION = 3",
+            "BRAIN_AB_SCHEMA_VERSION = 4",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
