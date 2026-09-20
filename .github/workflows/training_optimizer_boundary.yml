@@ -1,0 +1,43 @@
+name: Training Optimizer Boundary
+
+on:
+  pull_request:
+    paths:
+      - "src/optim.rs"
+      - "src/training.rs"
+      - "src/main.rs"
+      - "src/checkpoint.rs"
+      - "src/docs_check.rs"
+      - "docs/optimizer-boundary.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/training_optimizer_boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  optimizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Optimizer contract tests
+        run: |
+          cargo test --lib optim::tests -- --nocapture
+          cargo test --lib training::tests::reference_training_accepts_non_adam_optimizer_through_boundary -- --nocapture
+          cargo test --lib docs_check::tests::optimizer_boundary_doc_matches_code -- --nocapture
+
+      - name: Full test suite
+        run: cargo test --all-targets
+
+      - name: Exact split resume
+        run: |
+          cargo run --release -- train-fresh 3 /tmp/optimizer-full.bin 659918 2 1
+          cargo run --release -- train-fresh 2 /tmp/optimizer-split.bin 659918 2 1
+          cargo run --release -- train 1 /tmp/optimizer-split.bin 659918 2 1
+          cmp /tmp/optimizer-full.bin /tmp/optimizer-split.bin
+          cmp /tmp/optimizer-full.bin.manifest /tmp/optimizer-split.bin.manifest
+          test "$(head -c 8 /tmp/optimizer-full.bin)" = "AURLIS03"
