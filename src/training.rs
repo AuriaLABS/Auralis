@@ -245,12 +245,12 @@ pub fn train_step_reuse_timing(
 ) -> Result<(StepMetrics, Option<EngineStepTiming>), &'static str> {
     if !enabled {
         return train_step_reuse(
-            gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+            gpt, optimizer, train_tokens, cfg, global_step, grads, workspace,
         )
         .map(|metrics| (metrics, None));
     }
     train_step_reuse_timed(
-        gpt, adam, train_tokens, cfg, global_step, grads, workspace,
+        gpt, optimizer, train_tokens, cfg, global_step, grads, workspace,
     )
     .map(|(metrics, timing)| (metrics, Some(timing)))
 }
@@ -449,13 +449,13 @@ pub fn train_step_reuse_diagnostics(
 
     optimizer.update(&mut workspace.params, grads)?;
 
-    let (_, _, adam_m_after, adam_v_after) = adam.export();
+    let optimizer_after = optimizer.diagnostics();
     let post_optimizer = summarize_training_state(
         diagnostics,
         grads,
         &workspace.params,
-        adam_m_after,
-        adam_v_after,
+        optimizer_after.first,
+        optimizer_after.second,
     )
     .expect("enabled diagnostics must summarize state");
     if let Some(context) = fault_context(&post_optimizer) {
