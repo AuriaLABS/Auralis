@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod arena;
 pub mod architecture;
+pub mod attention;
 pub mod batch;
 pub mod backend;
 pub mod bench;

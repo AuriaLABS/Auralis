@@ -5,6 +5,7 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
+use crate::attention::{Attention, AttentionShape, RowSlicesAttention};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
@@ -54,6 +55,7 @@ pub enum CpuBackend {
 
 static OPTIMIZED_CPU_BACKEND: OptimizedCpuBackend = OptimizedCpuBackend;
 static SCALAR_CPU_BACKEND: ScalarCpuBackend = ScalarCpuBackend;
+static OPTIMIZED_ATTENTION: RowSlicesAttention = RowSlicesAttention;
 
 impl CpuBackend {
     pub fn id(self) -> BackendId {
@@ -1127,50 +1129,16 @@ fn attention_eval(
     d: usize,
     n_head: usize,
 ) -> Vec<f32> {
-    assert_eq!(q.len(), t * d);
-    assert_eq!(k.len(), t * d);
-    assert_eq!(v.len(), t * d);
-    assert!(n_head > 0 && d % n_head == 0);
-
+    let shape = AttentionShape {
+        tokens: t,
+        width: d,
+        heads: n_head,
+    };
     let mut out = vec![0.0; t * d];
     let mut scores = vec![0.0; t];
-    let hd = d / n_head;
-    let scale = 1.0 / (hd as f32).sqrt();
-
-    for h in 0..n_head {
-        let hoff = h * hd;
-        for i in 0..t {
-            let q_head = &q[i * d + hoff..i * d + hoff + hd];
-            let mut max_score = f32::NEG_INFINITY;
-            for j in 0..=i {
-                let k_head = &k[j * d + hoff..j * d + hoff + hd];
-                let mut s = 0.0f32;
-                for (&qv, &kv) in q_head.iter().zip(k_head) {
-                    s += qv * kv;
-                }
-                s *= scale;
-                scores[j] = s;
-                max_score = max_score.max(s);
-            }
-
-            let mut sum = 0.0f32;
-            for score in &mut scores[..=i] {
-                let e = (*score - max_score).exp();
-                *score = e;
-                sum += e;
-            }
-            let inv = 1.0 / sum.max(1e-20);
-            let out_head = &mut out[i * d + hoff..i * d + hoff + hd];
-            for j in 0..=i {
-                scores[j] *= inv;
-                let p = scores[j];
-                let v_head = &v[j * d + hoff..j * d + hoff + hd];
-                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
-                    *dst += p * vv;
-                }
-            }
-        }
-    }
+    OPTIMIZED_ATTENTION
+        .forward_eval(q, k, v, shape, &mut out, &mut scores)
+        .expect("model attention shapes are validated by Config");
     out
 }
 
@@ -1182,11 +1150,16 @@ fn attention_forward(
     d: usize,
     n_head: usize,
 ) -> (Vec<f32>, Vec<f32>) {
+    let shape = AttentionShape {
+        tokens: t,
+        width: d,
+        heads: n_head,
+    };
     let mut probs = vec![0.0; n_head * t * t];
     let mut out = vec![0.0; t * d];
-    crate::kernels::attention_forward_row_slices_into(
-        q, k, v, t, d, n_head, &mut out, &mut probs,
-    );
+    OPTIMIZED_ATTENTION
+        .forward_cached(q, k, v, shape, &mut out, &mut probs)
+        .expect("model attention shapes are validated by Config");
     (out, probs)
 }
 
@@ -1204,9 +1177,14 @@ fn attention_backward_into(
     dv: &mut [f32],
     dp: &mut [f32],
 ) {
-    crate::kernels::attention_backward_row_slices_into(
-        dout, q, k, v, probs, t, d, n_head, dq, dk, dv, dp,
-    );
+    let shape = AttentionShape {
+        tokens: t,
+        width: d,
+        heads: n_head,
+    };
+    OPTIMIZED_ATTENTION
+        .backward(dout, q, k, v, probs, shape, dq, dk, dv, dp)
+        .expect("model attention workspace shapes match Config");
 }
 
 fn gelu(x: f32) -> f32 {

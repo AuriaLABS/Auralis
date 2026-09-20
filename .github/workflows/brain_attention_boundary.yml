@@ -1,0 +1,47 @@
+name: Brain Attention Boundary
+
+on:
+  pull_request:
+    paths:
+      - "src/attention.rs"
+      - "src/model.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_attention_boundary_bench.rs"
+      - "docs/attention-boundary.md"
+      - ".github/workflows/brain_attention_boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  attention:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Attention contract tests
+        run: cargo test --lib attention::tests -- --nocapture
+
+      - name: Boundary overhead
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_attention_boundary_bench -- 100 7 \
+            | tee /tmp/attention-boundary.txt
+          test "$(grep -c '^attention_boundary_run |' /tmp/attention-boundary.txt)" -eq 7
+          summary="$(grep '^attention_boundary_summary |' /tmp/attention-boundary.txt)"
+          grep -q 'exact=true' <<< "$summary"
+          python3 - <<'PY'
+          import re
+          text = open("/tmp/attention-boundary.txt", encoding="utf-8").read()
+          line = next(x for x in text.splitlines() if x.startswith("attention_boundary_summary |"))
+          f = float(re.search(r"forward_ratio=([0-9.]+)", line).group(1))
+          b = float(re.search(r"backward_ratio=([0-9.]+)", line).group(1))
+          if f > 1.15:
+              raise SystemExit(f"forward attention boundary overhead too high: {f:.4f}")
+          if b > 1.15:
+              raise SystemExit(f"backward attention boundary overhead too high: {b:.4f}")
+          print(f"brain_attention_gate | forward_ratio={f:.4f} backward_ratio={b:.4f}")
+          PY
