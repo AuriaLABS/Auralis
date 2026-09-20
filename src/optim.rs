@@ -1486,6 +1486,36 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_variant_failure_fixtures_fail_closed() {
+        assert!(AdamWConfig {
+            weight_decay: -0.01,
+            ..AdamWConfig::default()
+        }
+        .validate()
+        .is_err());
+        assert!(LionConfig {
+            beta1: f32::NAN,
+            ..LionConfig::default()
+        }
+        .validate()
+        .is_err());
+
+        let mut adamw_state = AdamW::new(2, 1e-3, 0.01).state();
+        adamw_state.m[0] = f32::NAN;
+        assert!(adamw_state.encode().is_err());
+
+        let mut lion_state = Lion::new(2, 1e-4, 0.01).state();
+        lion_state.m[1] = f32::INFINITY;
+        assert!(lion_state.encode().is_err());
+
+        let mut adamw = AdamW::new(2, 1e-3, 0.01);
+        assert!(adamw.update(&mut [1.0], &[0.1]).is_err());
+
+        let mut lion = Lion::new(2, 1e-4, 0.01);
+        assert!(lion.update(&mut [1.0, 2.0], &[0.1]).is_err());
+    }
+
+    #[test]
     fn variant_states_fail_closed_on_kind_version_and_fingerprint() {
         let adamw = AdamW::new(2, 1e-3, 0.01).state().encode().unwrap();
         assert!(AdamWState::decode(&adamw.replace("kind=adamw", "kind=lion")).is_err());
