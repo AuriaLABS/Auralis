@@ -91,6 +91,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/bench-registry.md](docs/bench-registry.md) — catálogo de benches.
 - [docs/brain-ab.md](docs/brain-ab.md) — harness A/B reproducible para experimentos Brain.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
+- [docs/gradient-clipping.md](docs/gradient-clipping.md) — clipping global-norm ON/OFF, métricas y migración RunConfig.
 - [docs/ENGINE_ARCHITECTURE.md](docs/ENGINE_ARCHITECTURE.md) — arquitectura, invariantes y evidencia actual de Engine 0.3.
 
 ## Licencia
