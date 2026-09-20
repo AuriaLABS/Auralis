@@ -139,6 +139,7 @@ mod tests {
             "brain-ab.md",
             "ci-pruebas.md",
             "sec-unsafe.md",
+            "scheduler.md",
             "verify.md",
             "cli.md",
             "versions.md",
@@ -265,6 +266,32 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_docs_and_examples_match_code() {
+        let text = docs("scheduler.md");
+        for needle in [
+            "auralis_scheduler=1",
+            "--scheduler-config",
+            "linear_warmup",
+            "cosine",
+            "CHECKPOINT.scheduler",
+            "global_step=0",
+            "Changing scheduler policy mid-run is rejected",
+        ] {
+            assert!(text.contains(needle), "docs/scheduler.md missing {needle}");
+        }
+        for example in [
+            "scheduler-constant.cfg",
+            "scheduler-warmup.cfg",
+            "scheduler-cosine.cfg",
+        ] {
+            let cfg = crate::scheduler::SchedulerConfig::load(
+                root().join("examples").join(example)
+            ).unwrap_or_else(|e| panic!("{example}: {e}"));
+            cfg.validate().unwrap();
+        }
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
@@ -272,6 +299,7 @@ mod tests {
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::manifest::MANIFEST_VERSION, 4);
         assert_eq!(crate::release::RELEASE_MANIFEST_VERSION, 1);
         let versions = docs("versions.md");
@@ -280,6 +308,7 @@ mod tests {
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 1",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 1",
+            "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "MANIFEST_VERSION = 4",
             "RELEASE_MANIFEST_VERSION = 1",
         ] {
@@ -407,7 +436,7 @@ mod tests {
             assert!(usage.contains(line), "fn usage() missing {line}");
             assert!(cli.contains(line.trim()), "docs/cli.md missing {line}");
         }
-        for flag in ["--config", "--model-config", "--diagnostics", "--json", "--csv", "--out", "--verify"] {
+        for flag in ["--config", "--model-config", "--scheduler-config", "--diagnostics", "--json", "--csv", "--out", "--verify"] {
             assert!(usage.contains(flag), "fn usage() missing {flag}");
             assert!(cli.contains(flag), "docs/cli.md missing {flag}");
         }
