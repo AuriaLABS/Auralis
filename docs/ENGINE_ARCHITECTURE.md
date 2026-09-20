@@ -62,7 +62,7 @@ Frontera Phase A integrada para matmul:
 - `MatrixRef` / `MatrixMut` prestados;
 - errores explícitos de shape/storage/device.
 
-**Importante:** esta frontera todavía no controla globalmente `model.rs`. La integración model-wide es Phase B.
+**Estado actual:** Phase A y Phase B están integradas. `model.rs` ejecuta sus matmul forward a través de la frontera Backend; `OptimizedCpuBackend` es el default productivo fijo y Scalar CPU queda como ruta explícita de verificación.
 
 ### `numeric` / `numeric_state`
 Escaneo de NaN/Inf, summaries numéricos y contexto de primera corrupción.
@@ -321,13 +321,28 @@ Por tanto:
 - RowSlices permanece como optimized path;
 - el resultado negativo se conserva como evidencia para evitar repetir la misma hipótesis sin nueva información.
 
+## 7.4 Layout audit
+
+El layout CPU canónico actual sigue siendo row-major con RowSlices.
+
+El audit reproducible está en [ENGINE_LAYOUT.md](ENGINE_LAYOUT.md). Se comparó RowSlices con un candidato packed-Bᵀ persistente y con packing dinámico sobre QKV, FFN up/down, logits y short-context.
+
+Tres ejecuciones independientes mantuvieron la misma conclusión: packed-Bᵀ fue materialmente más lento en todos los shapes y nunca alcanzó el umbral de promoción.
+
+Por tanto:
+
+- no se introduce transpose físico dinámico;
+- no se mantiene una copia packed-Bᵀ persistente;
+- no cambia el orden de parámetros/checkpoint;
+- RowSlices permanece como layout/kernel CPU canónico para estos workloads.
+
 ---
 
 ## 8. Backend boundary
 
-Phase A está integrada.
+Phase A y Phase B están integradas.
 
-La frontera actual cubre matmul y usa views prestadas.
+La frontera actual cubre el matmul forward del modelo con views prestadas y no introduce una copia intermedia.
 
 ```text
 MatrixRef(A) ─┐
@@ -338,6 +353,8 @@ MatrixMut(O) ─┘
      Backend
        ↓
 scalar CPU | optimized CPU | mock
+       ↓
+model forward / training-forward
 ```
 
 ### Backends actuales
@@ -346,25 +363,71 @@ scalar CPU | optimized CPU | mock
 - `OptimizedCpuBackend` → RowSlices;
 - `MockBackend` → reference math + traza/call count en un device mock.
 
-### Coste medido de la frontera
+### Phase A — contrato
 
-En 32×32×32, 7 repeticiones × 200 iteraciones:
+Phase A estableció:
+
+- `BackendId` / `DeviceId`;
+- `MatrixRef` / `MatrixMut`;
+- validación explícita de storage, shape y ownership de device;
+- scalar/optimized/mock exactos;
+- ninguna transferencia o copia host↔device implícita.
+
+Benchmark 32×32×32, 7 repeticiones × 200 iteraciones:
 
 - RowSlices directo median: **898,490 ns**;
-- `dyn Backend` + validación median: **883,593 ns**;
+- boundary + validación median: **883,593 ns**;
 - candidate/direct: **0.9834**.
 
-La lectura correcta es “no se observó overhead material en este protocolo”, no que el trait haga el kernel mágicamente más rápido.
+La lectura correcta es “no se observó overhead material en ese protocolo”.
 
-### Lo que Phase A NO hace
+### Phase B — integración del modelo
 
-- no selecciona backend globalmente desde `model.rs`;
-- no tiene GPU;
-- no tiene device allocator/memory pool;
-- no transfiere datos host↔device;
-- no modifica manifests/config para seleccionar backend.
+`Gpt::logits()` y el forward usado por training cruzan el contrato Backend para sus matmul forward.
 
-Eso pertenece a Phase B / Scale.
+La selección CPU es deliberadamente simple:
+
+- `OptimizedCpuBackend` es el default productivo fijo;
+- `CpuBackend::Scalar` existe solo como selección explícita de verificación/benchmark;
+- no existe autodetección que cambie silenciosamente la matemática por hardware;
+- no se añadió un campo backend a `Gpt`.
+
+El hot path usa dispatch genérico/monomorfizado `B: Backend`, no `dyn Backend`.
+
+Esto importa porque una primera implementación dinámica conservó exactitud pero mostró una muestra corta ruidosa de generación. Tras monomorfizar y endurecer el protocolo a 5 corridas alternadas × 80 iteraciones, la comparación base/head fue:
+
+- loss: **0.9958×** head/base;
+- generate_one: **0.9999×** head/base;
+- allocation calls/bytes/reallocs: **idénticos**;
+- training fingerprint continuous/split en el gate corto: **5d4f1613a12102f7** en base y head.
+
+El soak completo posterior de 300 steps mantuvo:
+
+- exact state: true;
+- checkpoint bytes exact: true;
+- final loss: **0.006636993**;
+- state fingerprint continuous/split: **e94cdec54c3d8c18**;
+- RSS bounded: true.
+
+### Persistencia y reproducibilidad
+
+El backend no se persiste todavía en RunConfig/checkpoint.
+
+Esto es intencional en Engine 0.3 porque existe un único default productivo fijo: optimized CPU / RowSlices. Scalar no es una alternativa productiva silenciosa, sino una ruta explícita de verificación.
+
+Si Auralis incorpora más de un backend productivo —por ejemplo GPU— la elección backend/device deberá versionarse como provenance/configuración antes de declarar experimentos o checkpoints comparables entre backends.
+
+### Lo que sigue siendo Scale
+
+La frontera CPU de Engine está integrada, pero #67 permanece abierto para:
+
+- GPU real;
+- device storage / allocator / memory pool;
+- transferencias host↔device explícitas;
+- ownership de buffers fuera de CPU borrowed views;
+- provenance backend/device persistente cuando existan múltiples backends productivos.
+
+Estos puntos ya no bloquean el criterio de salida CPU de Engine 0.3.
 
 ---
 
@@ -573,7 +636,7 @@ Engine 0.3 todavía no es un motor GPU ni un runtime final.
 
 Pendientes relevantes:
 
-- backend Phase B dentro de un boundary explícito del modelo;
+- expansión Scale del backend hacia GPU/device storage;
 - GPU/device memory real todavía pendiente;
 - mixed/low precision promovida;
 - pool persistente multihilo todavía pendiente;
@@ -582,7 +645,7 @@ Pendientes relevantes:
 - timers separados de data/checkpoint a nivel correcto;
 - auditoría adicional de layout/strides;
 - ruta autoregresiva más especializada;
-- documentación/validación de ownership y shapes seguirá evolucionando con Phase B.
+- documentación/validación de ownership y shapes seguirá evolucionando con Scale y nuevos backends.
 
 Estos puntos son deuda visible, no capacidades implícitas.
 
