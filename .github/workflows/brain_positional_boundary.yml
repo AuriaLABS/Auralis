@@ -1,0 +1,62 @@
+name: Brain Positional Boundary
+
+on:
+  pull_request:
+    paths:
+      - "src/position.rs"
+      - "src/model.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_position_context_bench.rs"
+      - "docs/position-baseline.md"
+      - ".github/workflows/brain_positional_boundary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  position:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Positional contract tests
+        run: cargo test --lib position::tests -- --nocapture
+
+      - name: Context baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_position_context_bench -- 30 5             | tee /tmp/position-context.txt
+
+          grep -q '^position_context_protocol |' /tmp/position-context.txt
+          test "$(grep -c '^position_context_child |' /tmp/position-context.txt)" -eq 4
+
+          python3 - <<'PY'
+          import math
+
+          rows = []
+          for line in open("/tmp/position-context.txt", encoding="utf-8"):
+              if not line.startswith("position_context_child |"):
+                  continue
+              fields = {}
+              for part in line.strip().split()[2:]:
+                  if "=" in part:
+                      k, v = part.split("=", 1)
+                      fields[k] = v
+              rows.append(fields)
+
+          assert [int(r["context"]) for r in rows] == [4, 8, 16, 32]
+          for r in rows:
+              context = int(r["context"])
+              assert int(r["block"]) == 32
+              assert int(r["input_bytes"]) == context * 32 * 4
+              assert int(r["logits_bytes"]) == context * 100 * 4
+              assert int(r["position_capacity_bytes"]) == 32 * 32 * 4
+              assert float(r["tok_per_s"]) > 0
+              assert float(r["eval_loss"]) > 0
+              assert float(r["ppl"]) >= 1
+              assert r["peak_rss_kib"] == "null" or int(r["peak_rss_kib"]) > 0
+          print("brain_position_gate | contexts=4,8,16,32 metrics=complete")
+          PY
