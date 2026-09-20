@@ -1,5 +1,6 @@
 use auralis::brain_ab::{run_experiment, AbProtocol, AbVariant};
 use auralis::model::{Config, NormalizationKind};
+use auralis::position::PositionKind;
 use std::env;
 
 fn parse_usize(index: usize, default: usize) -> usize {
@@ -28,19 +29,33 @@ fn main() {
 
     let (a, b) = match scenario.as_str() {
         "same" => (
-            AbVariant { label: "same-a".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
-            AbVariant { label: "same-b".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "same-a".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "same-b".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
         ),
         "depth" => (
-            AbVariant { label: "1-layer".into(), config: config(1), normalization: NormalizationKind::LayerNorm },
-            AbVariant { label: "2-layer".into(), config: config(2), normalization: NormalizationKind::LayerNorm },
+            AbVariant { label: "1-layer".into(), config: config(1), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "2-layer".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
         ),
         "normalization" => (
-            AbVariant { label: "layernorm".into(), config: config(2), normalization: NormalizationKind::LayerNorm },
-            AbVariant { label: "rmsnorm".into(), config: config(2), normalization: NormalizationKind::RmsNorm },
+            AbVariant { label: "layernorm".into(), config: config(2), normalization: NormalizationKind::LayerNorm, position: PositionKind::LearnedAbsolute },
+            AbVariant { label: "rmsnorm".into(), config: config(2), normalization: NormalizationKind::RmsNorm, position: PositionKind::LearnedAbsolute },
+        ),
+        "rope" => (
+            AbVariant {
+                label: "learned-absolute".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+            },
+            AbVariant {
+                label: "rope".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::Rope,
+            },
         ),
         other => {
-            eprintln!("unknown A/B scenario {other}; expected same|depth|normalization");
+            eprintln!("unknown A/B scenario {other}; expected same|depth|normalization|rope");
             std::process::exit(2);
         }
     };
