@@ -787,7 +787,7 @@ fn run_bench(args: &[String]) {
 }
 
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct TrainCliOptions {
     diagnostics: bool,
     architecture: Option<ArchitectureConfig>,
