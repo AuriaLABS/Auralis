@@ -8,7 +8,7 @@ use crate::bench_format::CatalogFormat;
 use crate::bench_result::{BenchComparison, BenchRunRecord};
 use crate::kernels::{matmul_reference_into, matmul_row_slices_into};
 use crate::model::{Config, Gpt};
-use crate::optim::Adam;
+use crate::optim::{Adam, Optimizer};
 use crate::training::{train_step, train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -464,7 +464,7 @@ fn engine_step(
     grads: &mut [f32],
     workspace: &mut TrainWorkspace,
 ) -> Result<usize, String> {
-    let global_step = adam.t.max(0) as u64;
+    let global_step = adam.global_step();
     let metrics = match mode {
         EngineMode::Reference => train_step(model, adam, tokens, cfg, global_step, grads),
         EngineMode::Reuse => train_step_reuse(
