@@ -1618,7 +1618,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 mod tests {
     use super::{
         rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
-        CpuBackend, Gpt, NormalizationKind,
+        CpuBackend, Gpt, NormalizationKind, PositionKind,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -1652,6 +1652,82 @@ mod tests {
         let lb = b.backward_into(&x, &y, &mut gb);
         assert_eq!(la.to_bits(), lb.to_bits());
         assert_eq!(ga, gb);
+    }
+
+    #[test]
+    fn explicit_learned_absolute_policy_is_bit_exact_with_default() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_3801);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_3801);
+        let a = Gpt::new(cfg, &mut rng_a);
+        let b = Gpt::new_with_policies(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            &mut rng_b,
+        );
+        assert_eq!(a.collect_params(), b.collect_params());
+        assert_eq!(b.position_kind(), PositionKind::LearnedAbsolute);
+
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        assert_eq!(a.logits(&x), b.logits(&x));
+        let mut ga = vec![0.0; a.collect_params().len()];
+        let mut gb = vec![0.0; b.collect_params().len()];
+        let la = a.backward_into(&x, &y, &mut ga);
+        let lb = b.backward_into(&x, &y, &mut gb);
+        assert_eq!(la.to_bits(), lb.to_bits());
+        assert_eq!(ga, gb);
+    }
+
+    #[test]
+    fn rope_keeps_parameter_layout_but_reserved_position_gradient_zero() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_3802);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_3802);
+        let learned = Gpt::new(cfg, &mut rng_a);
+        let rope = Gpt::new_with_policies(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::Rope,
+            &mut rng_b,
+        );
+        assert_eq!(learned.collect_params(), rope.collect_params());
+        assert_eq!(rope.position_kind(), PositionKind::Rope);
+
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        assert_ne!(learned.logits(&x), rope.logits(&x));
+
+        let mut grads = vec![0.0; rope.collect_params().len()];
+        let loss = rope.backward_into(&x, &y, &mut grads);
+        assert!(loss.is_finite());
+        assert!(grads.iter().all(|g| g.is_finite()));
+
+        let pos_start = cfg.vocab * cfg.n_embd;
+        let pos_end = pos_start + cfg.block * cfg.n_embd;
+        assert!(
+            grads[pos_start..pos_end].iter().all(|&g| g == 0.0),
+            "reserved learned-absolute position slots must remain inert under RoPE"
+        );
+        assert!(
+            grads[..pos_start].iter().any(|g| g.abs() > 0.0),
+            "token embeddings should still receive gradient"
+        );
     }
 
     #[test]
