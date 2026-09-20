@@ -7,7 +7,7 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | --- | --- |
 | crate (`Cargo.toml`) | `0.1.0` |
 | Rust edition | `2021` |
-| run config schema | `RUN_CONFIG_SCHEMA_VERSION = 1` |
+| run config schema | `RUN_CONFIG_SCHEMA_VERSION = 2` |
 | architecture config schema | `ARCHITECTURE_CONFIG_SCHEMA_VERSION = 2` |
 | scheduler config schema | `SCHEDULER_CONFIG_SCHEMA_VERSION = 1` |
 | optimizer config schema | `OPTIMIZER_CONFIG_SCHEMA_VERSION = 1` |
@@ -16,5 +16,5 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | experiment manifest | `MANIFEST_VERSION = 4` |
 | release manifest | `RELEASE_MANIFEST_VERSION = 1` |
 
-Un manifiesto v3 o un `auralis_run_config` distinto de 1 se rechaza. `auralis_architecture=1` migra explícitamente a LayerNorm; schemas de arquitectura distintos de 1/2 se rechazan (fail-closed).
+`auralis_run_config=1` migra explícitamente a schema 2 con `grad_clip_enabled=true`; schemas de run config distintos de 1/2 se rechazan. Un manifiesto v3 se rechaza. `auralis_architecture=1` migra explícitamente a LayerNorm; schemas de arquitectura distintos de 1/2 se rechazan (fail-closed).
 Gate local: [rc-gate.md](rc-gate.md).
