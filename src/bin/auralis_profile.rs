@@ -1,5 +1,5 @@
 use auralis::model::{Config, Gpt};
-use auralis::optim::Adam;
+use auralis::optim::{Adam, Optimizer};
 use auralis::training::{train_step, train_step_reuse, TrainConfig, TrainWorkspace};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -149,7 +149,7 @@ fn execute_step(
     grads: &mut [f32],
     workspace: &mut TrainWorkspace,
 ) -> usize {
-    let global_step = adam.t.max(0) as u64;
+    let global_step = adam.global_step();
     let metrics = match mode {
         ProfileMode::Reference => train_step(model, adam, tokens, cfg, global_step, grads),
         ProfileMode::Reuse => {
