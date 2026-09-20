@@ -141,6 +141,7 @@ mod tests {
             "sec-unsafe.md",
             "scheduler.md",
             "optimizer-boundary.md",
+            "rope-experiment.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -347,6 +348,26 @@ mod tests {
             .expect("examples/clipping-off.cfg");
         assert!(!off.grad_clip_enabled);
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
+    }
+
+    #[test]
+    fn rope_experiment_doc_matches_contract() {
+        let text = docs("rope-experiment.md");
+        for needle in [
+            "RoPE is **experimental**",
+            "position=learned_absolute",
+            "position=rope",
+            "zero gradient",
+            "auralis_brain_ab",
+            "auralis_rope_context_bench",
+            "contexts 4, 8, 16 and 32",
+            "does **not** evaluate context beyond",
+            "Changing the default requires a separate",
+        ] {
+            assert!(text.contains(needle), "rope-experiment.md missing {needle}");
+        }
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 3);
     }
 
     #[test]
