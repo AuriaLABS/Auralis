@@ -25,6 +25,7 @@ pub mod model;
 pub mod numeric;
 pub mod numeric_state;
 pub mod optim;
+pub mod position;
 pub mod release;
 pub mod run_config;
 pub mod sampling;
