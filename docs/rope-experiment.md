@@ -32,7 +32,7 @@ comparable with the learned-absolute baseline.
 
 ## Architecture metadata
 
-Architecture schema 3 records:
+Architecture schema 4 records:
 
 ```text
 position=learned_absolute

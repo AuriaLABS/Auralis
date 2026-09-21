@@ -26,7 +26,7 @@ This deliberately keeps flat parameter count, AURLIS03 tensor order and checkpoi
 
 ## Architecture metadata
 
-Architecture schema 3 records either:
+Architecture schema 4 records either:
 
 ```text
 position=learned_absolute

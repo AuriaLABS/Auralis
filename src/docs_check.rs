@@ -234,7 +234,8 @@ mod tests {
     fn architecture_config_docs_match_code() {
         let text = docs("architecture-config.md");
         for needle in [
-            "auralis_architecture=3",
+            "auralis_architecture=4",
+            "n_kv_head=4",
             "normalization=layernorm",
             "architecture-rmsnorm.cfg",
             "architecture-rope.cfg",
