@@ -34,17 +34,67 @@ jobs:
           cargo test --test engine_equivalence -- --nocapture
           cargo test --test engine_state_equivalence -- --nocapture
 
-      - name: Backend changes must not alter persistent schema
+      - name: Backend changes must preserve persistent schema
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/model.rs src/backend.rs; then
             echo "No backend/model diff in this PR; backend scope restriction does not apply."
-          elif ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs; then
-            echo "A backend/model change must not also change RunConfig/checkpoint schemas"
-            git diff "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs src/checkpoint.rs
+            exit 0
+          fi
+
+          if ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs; then
+            echo "A backend/model change must not also change RunConfig schema"
+            git diff "$BASE_SHA" "$HEAD_SHA" -- src/run_config.rs
             exit 1
           fi
+
+          cat >/tmp/auralis_checkpoint_schema_probe.rs <<'RS'
+          use auralis::checkpoint;
+          use auralis::model::{Config, Gpt};
+          use auralis::tokenizer::{AnyTok, CharTokenizer};
+          use rand::rngs::StdRng;
+          use rand::SeedableRng;
+
+          fn main() {
+              let tok = AnyTok::Char(CharTokenizer::fit("abc abc\n"));
+              let cfg = Config {
+                  vocab: tok.vocab_size(),
+                  n_embd: 8,
+                  n_head: 2,
+                  n_layer: 1,
+                  block: 4,
+                  n_ff: 16,
+              };
+              let mut rng = StdRng::seed_from_u64(0xA11CE_BA5E);
+              let gpt = Gpt::new(cfg, &mut rng);
+              let path = std::env::args().nth(1).expect("output path");
+              checkpoint::save(path, &gpt, &tok).expect("save checkpoint");
+          }
+          RS
+
+          probe_checkpoint() {
+            local sha="$1"
+            local out="$2"
+            git checkout --detach "$sha"
+            cp /tmp/auralis_checkpoint_schema_probe.rs src/bin/auralis_checkpoint_schema_probe.rs
+            cargo run --quiet --bin auralis_checkpoint_schema_probe -- "$out"
+            rm src/bin/auralis_checkpoint_schema_probe.rs
+          }
+
+          probe_checkpoint "$BASE_SHA" /tmp/backend-base-schema.bin
+          probe_checkpoint "$HEAD_SHA" /tmp/backend-head-schema.bin
+
+          if ! cmp -s /tmp/backend-base-schema.bin /tmp/backend-head-schema.bin; then
+            echo "Default MHA checkpoint bytes changed across backend/model integration"
+            cmp -l /tmp/backend-base-schema.bin /tmp/backend-head-schema.bin | head -40 || true
+            exit 1
+          fi
+
+          git checkout --detach "$HEAD_SHA"
+          cargo test --test genesis checkpoint_roundtrip_preserves_model_tokenizer_and_adam -- --nocapture
+          cargo test --test genesis incompatible_checkpoint_is_an_error_not_a_panic -- --nocapture
+          echo "persistent_schema_gate | run_config_unchanged=true default_mha_checkpoint_bytes_exact=true legacy_load_checks=true"
 
       - name: Build base and head profiler binaries
         shell: bash
