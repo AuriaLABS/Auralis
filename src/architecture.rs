@@ -354,8 +354,8 @@ mod tests {
     #[test]
     fn one_and_multi_layer_head_configs_validate() {
         for cfg in [
-            ArchitectureConfig { n_embd: 8, n_head: 1, n_layer: 1, block: 8, n_ff: 16, ..ArchitectureConfig::default() },
-            ArchitectureConfig { n_embd: 16, n_head: 2, n_layer: 3, block: 16, n_ff: 32, ..ArchitectureConfig::default() },
+            ArchitectureConfig { n_embd: 8, n_head: 1, n_kv_head: 1, n_layer: 1, block: 8, n_ff: 16, ..ArchitectureConfig::default() },
+            ArchitectureConfig { n_embd: 16, n_head: 2, n_kv_head: 2, n_layer: 3, block: 16, n_ff: 32, ..ArchitectureConfig::default() },
             ArchitectureConfig { n_embd: 32, n_head: 4, n_kv_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
         ] {
             cfg.validate().unwrap();
