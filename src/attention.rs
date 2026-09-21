@@ -6,7 +6,8 @@
 
 use crate::kernels::{
     attention_backward_reference_into, attention_backward_row_slices_into,
-    attention_forward_reference_into, attention_forward_row_slices_into,
+    attention_forward_reference_into, attention_forward_row_slices_alibi_into,
+    attention_forward_row_slices_into,
 };
 use std::fmt;
 
@@ -312,6 +313,97 @@ impl Attention for RowSlicesAttention {
     }
 }
 
+impl RowSlicesAttention {
+    pub fn forward_eval_alibi(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: AttentionShape,
+        head_slopes: &[f32],
+        out: &mut [f32],
+        scores: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let expected = validate_qkv(q, k, v, shape)?;
+        validate_len("out", out.len(), expected)?;
+        validate_len("scores", scores.len(), shape.tokens)?;
+        validate_len("head_slopes", head_slopes.len(), shape.heads)?;
+        out.fill(0.0);
+        scores.fill(0.0);
+
+        let t = shape.tokens;
+        let d = shape.width;
+        let hd = d / shape.heads;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        for h in 0..shape.heads {
+            let hoff = h * hd;
+            let slope = head_slopes[h];
+            for i in 0..t {
+                let q_head = &q[i * d + hoff..i * d + hoff + hd];
+                let mut max_score = f32::NEG_INFINITY;
+                for j in 0..=i {
+                    let k_head = &k[j * d + hoff..j * d + hoff + hd];
+                    let mut score = 0.0f32;
+                    for (&qv, &kv) in q_head.iter().zip(k_head) {
+                        score += qv * kv;
+                    }
+                    score *= scale;
+                    score += slope * (j as f32 - i as f32);
+                    scores[j] = score;
+                    max_score = max_score.max(score);
+                }
+
+                let mut sum = 0.0f32;
+                for score in &mut scores[..=i] {
+                    let e = (*score - max_score).exp();
+                    *score = e;
+                    sum += e;
+                }
+                let inv = 1.0 / sum.max(1e-20);
+                let out_head = &mut out[i * d + hoff..i * d + hoff + hd];
+                for j in 0..=i {
+                    scores[j] *= inv;
+                    let p = scores[j];
+                    let v_head = &v[j * d + hoff..j * d + hoff + hd];
+                    for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                        *dst += p * vv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn forward_cached_alibi(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: AttentionShape,
+        head_slopes: &[f32],
+        out: &mut [f32],
+        probs: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let expected = validate_qkv(q, k, v, shape)?;
+        validate_len("out", out.len(), expected)?;
+        validate_len("probs", probs.len(), shape.probs_len()?)?;
+        validate_len("head_slopes", head_slopes.len(), shape.heads)?;
+        attention_forward_row_slices_alibi_into(
+            q,
+            k,
+            v,
+            shape.tokens,
+            shape.width,
+            shape.heads,
+            head_slopes,
+            out,
+            probs,
+        );
+        Ok(())
+    }
+}
+
 fn validate_backward(
     dout: &[f32], q: &[f32], k: &[f32], v: &[f32], probs: &[f32],
     shape: AttentionShape, dq: &mut [f32], dk: &mut [f32], dv: &mut [f32],
@@ -388,6 +480,80 @@ mod tests {
         ReferenceAttention.forward_eval(&q, &k, &v, shape, &mut a, &mut sa).unwrap();
         RowSlicesAttention.forward_eval(&q, &k, &v, shape, &mut b, &mut sb).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn alibi_forward_is_causal_and_prefers_recent_keys_for_zero_qk() {
+        let shape = AttentionShape {
+            tokens: 4,
+            width: 8,
+            heads: 2,
+        };
+        let n = shape.activation_len().unwrap();
+        let q = vec![0.0; n];
+        let k = vec![0.0; n];
+        let v = data(n, 17);
+        let slopes = [0.25f32, 0.0625];
+        let mut out = vec![0.0; n];
+        let mut probs = vec![f32::NAN; shape.probs_len().unwrap()];
+
+        RowSlicesAttention
+            .forward_cached_alibi(&q, &k, &v, shape, &slopes, &mut out, &mut probs)
+            .unwrap();
+
+        for h in 0..shape.heads {
+            for i in 0..shape.tokens {
+                let row = &probs[(h * shape.tokens + i) * shape.tokens
+                    ..(h * shape.tokens + i + 1) * shape.tokens];
+                for &future in &row[i + 1..] {
+                    assert_eq!(future, 0.0);
+                }
+                if i >= 2 {
+                    assert!(row[i] > row[i - 1]);
+                    assert!(row[i - 1] > row[i - 2]);
+                }
+                let causal_sum: f32 = row[..=i].iter().sum();
+                assert!((causal_sum - 1.0).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn alibi_cached_and_eval_paths_match_and_validate_slope_shape() {
+        let shape = AttentionShape {
+            tokens: 5,
+            width: 8,
+            heads: 2,
+        };
+        let n = shape.activation_len().unwrap();
+        let q = data(n, 2);
+        let k = data(n, 5);
+        let v = data(n, 9);
+        let slopes = [0.25f32, 0.0625];
+        let mut eval = vec![0.0; n];
+        let mut cached = vec![0.0; n];
+        let mut scores = vec![0.0; shape.tokens];
+        let mut probs = vec![0.0; shape.probs_len().unwrap()];
+
+        RowSlicesAttention
+            .forward_eval_alibi(&q, &k, &v, shape, &slopes, &mut eval, &mut scores)
+            .unwrap();
+        RowSlicesAttention
+            .forward_cached_alibi(&q, &k, &v, shape, &slopes, &mut cached, &mut probs)
+            .unwrap();
+        assert_eq!(eval, cached);
+
+        let err = RowSlicesAttention
+            .forward_cached_alibi(&q, &k, &v, shape, &[0.25], &mut cached, &mut probs)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AttentionError::LengthMismatch {
+                tensor: "head_slopes",
+                expected: 2,
+                actual: 1
+            }
+        ));
     }
 
     #[test]
