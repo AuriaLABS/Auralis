@@ -109,6 +109,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "kv-cache",
+        bin: "auralis_kv_cache_bench",
+        kind: "brain-generation",
+        summary: "cached vs uncached autoregressive decode latency and memory",
+        default_args: "",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",

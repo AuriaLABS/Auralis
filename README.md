@@ -94,6 +94,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/external-memory.md](docs/external-memory.md) — contrato versionado y backend reference de memoria externa experimental.
 - [docs/memory-model-integration.md](docs/memory-model-integration.md) — integración opt-in retrieval/fusion de memoria en el modelo.
 - [docs/recurrent-reasoning.md](docs/recurrent-reasoning.md) — experimento de cómputo recurrente con pesos compartidos y presupuesto normalizado.
+- [docs/kv-cache.md](docs/kv-cache.md) — KV cache autoregresiva por sesión, equivalencia y benchmark de decode.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
 - [docs/gradient-clipping.md](docs/gradient-clipping.md) — clipping global-norm ON/OFF, métricas y migración RunConfig.

@@ -1,0 +1,93 @@
+name: Brain KV Cache
+
+on:
+  pull_request:
+    paths:
+      - "src/kv_cache.rs"
+      - "src/model.rs"
+      - "src/attention.rs"
+      - "src/position.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_kv_cache_bench.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "docs/kv-cache.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/brain_kv_cache.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  kv-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: KV-cache contract and exactness tests
+        run: |
+          cargo test --lib kv_cache::tests -- --nocapture
+          cargo test --lib attention::tests::decode_matches_full_eval_last_row_exactly -- --nocapture
+          cargo test --lib attention::tests::alibi_decode_matches_full_eval_last_row_exactly -- --nocapture
+          cargo test --lib position::tests::rope_single_position_matches_full_transform_row_exactly -- --nocapture
+          cargo test --lib model::tests::kv_cache_prefill_is_bit_exact_for_all_position_policies -- --nocapture
+          cargo test --lib model::tests::kv_cache_incremental_decode_reset_clone_and_failures_are_explicit -- --nocapture
+          cargo test --lib docs_check::tests::kv_cache_doc_matches_contract -- --nocapture
+
+      - name: Growing-prefix decode benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_kv_cache_bench | tee /tmp/kv-cache.txt
+
+          grep -q '^kv_cache_protocol | schema=1 ' /tmp/kv-cache.txt
+          test "$(grep -c '^kv_cache_curve |' /tmp/kv-cache.txt)" -eq 4
+
+          python3 - <<'PY'
+          import re
+
+          rows = []
+          for line in open("/tmp/kv-cache.txt", encoding="utf-8"):
+              if not line.startswith("kv_cache_curve |"):
+                  continue
+              fields = dict(
+                  token.split("=", 1)
+                  for token in line.split(" | ", 1)[1].split()
+                  if "=" in token
+              )
+              def integer(name):
+                  return int(fields[name])
+              def floating(name):
+                  return float(fields[name])
+              rows.append({
+                  "context": integer("context"),
+                  "uncached": integer("uncached_total_ns"),
+                  "cached": integer("cached_total_ns"),
+                  "logical": integer("logical_bytes"),
+                  "allocated": integer("allocated_bytes"),
+                  "params": integer("params"),
+                  "speedup": floating("speedup"),
+                  "exact": "exact=true" in line,
+              })
+
+          assert [r["context"] for r in rows] == [8, 16, 32, 64], rows
+          assert all(r["exact"] for r in rows)
+          assert all(r["uncached"] > 0 and r["cached"] > 0 for r in rows)
+          assert len({r["params"] for r in rows}) == 1
+          assert [r["logical"] for r in rows] == sorted(r["logical"] for r in rows)
+          assert all(r["logical"] > 0 and r["allocated"] >= r["logical"] for r in rows)
+          longest = rows[-1]
+          assert longest["cached"] < longest["uncached"], longest
+          assert longest["speedup"] > 1.0, longest
+          print(
+              "kv_cache_gate | exact=true context64_speedup="
+              f'{longest["speedup"]:.4f} logical_bytes={longest["logical"]}'
+          )
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

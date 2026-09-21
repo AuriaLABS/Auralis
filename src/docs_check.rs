@@ -146,6 +146,7 @@ mod tests {
             "external-memory.md",
             "memory-model-integration.md",
             "recurrent-reasoning.md",
+            "kv-cache.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -504,6 +505,32 @@ mod tests {
     }
 
     #[test]
+    fn kv_cache_doc_matches_contract() {
+        let text = docs("kv-cache.md");
+        for needle in [
+            "per-session key/value cache",
+            "KV_CACHE_SCHEMA_VERSION",
+            "prefill_kv_cache",
+            "decode_kv_cached",
+            "transactional across layers",
+            "learned absolute",
+            "RoPE",
+            "ALiBi",
+            "logical_bytes",
+            "auralis_kv_cache_bench",
+            "uncached",
+            "cached",
+            "not model state",
+        ] {
+            assert!(text.contains(needle), "kv-cache.md missing {needle}");
+        }
+        assert!(readme().contains("docs/kv-cache.md"));
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
+        let bench = crate::bench::find("kv-cache").expect("kv-cache benchmark");
+        assert_eq!(bench.bin, "auralis_kv_cache_bench");
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
@@ -513,6 +540,7 @@ mod tests {
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -532,6 +560,7 @@ mod tests {
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
+            "KV_CACHE_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
