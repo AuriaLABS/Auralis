@@ -4,10 +4,11 @@ Issue #40 adds an explicit, per-session key/value cache for autoregressive infer
 
 ## Contract
 
-`KvCache` uses `KV_CACHE_SCHEMA_VERSION = 1` and records only session metadata and derived K/V activations:
+`KvCache` uses `KV_CACHE_SCHEMA_VERSION = 2` and records only session metadata and derived K/V activations:
 
 - physical layer count;
-- model width;
+- compact K/V row width;
+- query-head count and KV-head count, so equal byte width cannot disguise an incompatible attention layout;
 - maximum context capacity;
 - active token count;
 - positional-policy identity;
@@ -48,7 +49,7 @@ The scalar accumulation and softmax order match the corresponding last causal ro
 
 ## Memory accounting
 
-`logical_bytes()` reports active K/V payload:
+`logical_bytes()` reports active K/V payload. For GQA/MQA the `width` term is the compact K/V row width:
 
 ```text
 tokens * layers * width * 2 * sizeof(f32)
