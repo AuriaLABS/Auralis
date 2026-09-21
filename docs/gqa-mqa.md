@@ -23,7 +23,7 @@ Initialization consumes the same RNG budget as MHA before compacting K/V columns
 
 Learned absolute and ALiBi do not transform compact K/V tensors. RoPE rotates all query heads and each compact KV head at the same absolute positions.
 
-The per-session KV cache stores compact K/V width, so GQA/MQA reduce active **KV-cache bytes** relative to MHA at the same layer count, head width and context. Cached decode remains transactional across layers.
+The per-session KV cache stores compact K/V width plus explicit query-head/KV-head identity, so GQA/MQA reduce active **KV-cache bytes** relative to MHA while incompatible layouts with the same byte width fail closed. Cached decode remains transactional across layers.
 
 ## Training and quality evidence
 
