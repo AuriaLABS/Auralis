@@ -14,7 +14,10 @@ use crate::layer_diagnostics::{
     LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
 };
 use crate::numeric::{explain, scan_f32, Scan, Stage};
-use crate::position::{LearnedAbsolute, PositionKind, PositionalEncoding, Rotary, TrainablePositionalEncoding};
+use crate::position::{
+    alibi_slopes, Alibi, LearnedAbsolute, PositionKind, PositionalEncoding, Rotary,
+    TrainablePositionalEncoding,
+};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -427,6 +430,13 @@ impl Gpt {
                     .add_forward(&mut x, t)
                     .expect("token length already validated against positional capacity");
             }
+            PositionKind::Alibi => {
+                let positional = Alibi::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model ALiBi shape matches config");
+                positional
+                    .add_forward(&mut x, t)
+                    .expect("token length already validated against positional capacity");
+            }
         }
         x
     }
@@ -451,6 +461,14 @@ impl Gpt {
                 positional
                     .apply_qk(q, k, positions, self.cfg.n_head)
                     .expect("model Q/K shapes match RoPE contract");
+            }
+            PositionKind::Alibi => {
+                let positional =
+                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                        .expect("model ALiBi shape matches config");
+                positional
+                    .apply_qk(q, k, positions, self.cfg.n_head)
+                    .expect("model Q/K shapes match ALiBi contract");
             }
         }
     }
@@ -480,6 +498,14 @@ impl Gpt {
                 positional
                     .backward_qk(dq, dk, positions, self.cfg.n_head)
                     .expect("model Q/K gradient shapes match RoPE contract");
+            }
+            PositionKind::Alibi => {
+                let positional =
+                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                        .expect("model ALiBi shape matches config");
+                positional
+                    .backward_qk(dq, dk, positions, self.cfg.n_head)
+                    .expect("model Q/K gradient shapes match ALiBi contract");
             }
         }
     }
@@ -956,6 +982,13 @@ impl Gpt {
                     .accumulate_backward(dx, t, &mut gg.pos_emb)
                     .expect("reserved positional gradient layout matches model");
             }
+            PositionKind::Alibi => {
+                let positional = Alibi::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model ALiBi shape matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("reserved positional gradient layout matches model");
+            }
         }
 
         copy_grads_into(gg, grads);
@@ -1003,7 +1036,7 @@ impl Gpt {
             let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head);
+            let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
@@ -1045,7 +1078,8 @@ impl Gpt {
             let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
             let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let (att, probs) = attention_forward(&q, &k, &v, t, d, self.cfg.n_head);
+            let (att, probs) =
+                attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
@@ -1511,6 +1545,7 @@ fn attention_eval(
     t: usize,
     d: usize,
     n_head: usize,
+    position: PositionKind,
 ) -> Vec<f32> {
     let shape = AttentionShape {
         tokens: t,
@@ -1519,9 +1554,16 @@ fn attention_eval(
     };
     let mut out = vec![0.0; t * d];
     let mut scores = vec![0.0; t];
-    OPTIMIZED_ATTENTION
-        .forward_eval(q, k, v, shape, &mut out, &mut scores)
-        .expect("model attention shapes are validated by Config");
+    if position == PositionKind::Alibi {
+        let slopes = alibi_slopes(n_head).expect("model ALiBi head count is positive");
+        OPTIMIZED_ATTENTION
+            .forward_eval_alibi(q, k, v, shape, &slopes, &mut out, &mut scores)
+            .expect("model ALiBi attention shapes are validated by Config");
+    } else {
+        OPTIMIZED_ATTENTION
+            .forward_eval(q, k, v, shape, &mut out, &mut scores)
+            .expect("model attention shapes are validated by Config");
+    }
     out
 }
 
@@ -1532,6 +1574,7 @@ fn attention_forward(
     t: usize,
     d: usize,
     n_head: usize,
+    position: PositionKind,
 ) -> (Vec<f32>, Vec<f32>) {
     let shape = AttentionShape {
         tokens: t,
@@ -1540,9 +1583,16 @@ fn attention_forward(
     };
     let mut probs = vec![0.0; n_head * t * t];
     let mut out = vec![0.0; t * d];
-    OPTIMIZED_ATTENTION
-        .forward_cached(q, k, v, shape, &mut out, &mut probs)
-        .expect("model attention shapes are validated by Config");
+    if position == PositionKind::Alibi {
+        let slopes = alibi_slopes(n_head).expect("model ALiBi head count is positive");
+        OPTIMIZED_ATTENTION
+            .forward_cached_alibi(q, k, v, shape, &slopes, &mut out, &mut probs)
+            .expect("model ALiBi attention shapes are validated by Config");
+    } else {
+        OPTIMIZED_ATTENTION
+            .forward_cached(q, k, v, shape, &mut out, &mut probs)
+            .expect("model attention shapes are validated by Config");
+    }
     (out, probs)
 }
 
@@ -1723,6 +1773,49 @@ mod tests {
         assert!(
             grads[pos_start..pos_end].iter().all(|&g| g == 0.0),
             "reserved learned-absolute position slots must remain inert under RoPE"
+        );
+        assert!(
+            grads[..pos_start].iter().any(|g| g.abs() > 0.0),
+            "token embeddings should still receive gradient"
+        );
+    }
+
+    #[test]
+    fn alibi_keeps_parameter_layout_and_reserved_position_gradient_inert() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_3901);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_3901);
+        let learned = Gpt::new(cfg, &mut rng_a);
+        let alibi = Gpt::new_with_policies(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::Alibi,
+            &mut rng_b,
+        );
+        assert_eq!(learned.collect_params(), alibi.collect_params());
+        assert_eq!(alibi.position_kind(), PositionKind::Alibi);
+
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        assert_ne!(learned.logits(&x), alibi.logits(&x));
+
+        let mut grads = vec![0.0; alibi.collect_params().len()];
+        let loss = alibi.backward_into(&x, &y, &mut grads);
+        assert!(loss.is_finite());
+        assert!(grads.iter().all(|g| g.is_finite()));
+
+        let pos_start = cfg.vocab * cfg.n_embd;
+        let pos_end = pos_start + cfg.block * cfg.n_embd;
+        assert!(
+            grads[pos_start..pos_end].iter().all(|&g| g == 0.0),
+            "reserved learned-absolute position slots must remain inert under ALiBi"
         );
         assert!(
             grads[..pos_start].iter().any(|g| g.abs() > 0.0),
