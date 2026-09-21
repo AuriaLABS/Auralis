@@ -145,6 +145,7 @@ mod tests {
             "rope-experiment.md",
             "external-memory.md",
             "memory-model-integration.md",
+            "recurrent-reasoning.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -472,6 +473,34 @@ mod tests {
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
         );
+        assert_eq!(crate::recurrent::RECURRENT_CONFIG_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn recurrent_reasoning_doc_matches_contract() {
+        let text = docs("recurrent-reasoning.md");
+        for needle in [
+            "shared-weight recurrent computation",
+            "reasoning_steps: 1",
+            "bit-for-bit equality",
+            "same weights",
+            "12 total physical block applications",
+            "R=1 -> 12 optimizer updates",
+            "R=2 -> 6 optimizer updates",
+            "R=3 -> 4 optimizer updates",
+            "finite-difference",
+            "default model remains one reasoning step",
+        ] {
+            assert!(
+                text.contains(needle),
+                "recurrent-reasoning.md missing {needle}"
+            );
+        }
+        assert!(readme().contains("docs/recurrent-reasoning.md"));
+        assert_eq!(crate::recurrent::RECURRENT_CONFIG_SCHEMA_VERSION, 1);
+        let bench = crate::bench::find("recurrent-reasoning")
+            .expect("recurrent-reasoning benchmark");
+        assert_eq!(bench.bin, "auralis_recurrent_reasoning_bench");
     }
 
     #[test]
@@ -502,6 +531,7 @@ mod tests {
             "BRAIN_AB_SCHEMA_VERSION = 4",
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
+            "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
