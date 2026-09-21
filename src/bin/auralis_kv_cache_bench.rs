@@ -1,3 +1,4 @@
+use auralis::kv_cache::KV_CACHE_SCHEMA_VERSION;
 use auralis::model::{Config, Gpt};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -102,7 +103,8 @@ fn main() {
     let repeats = 5usize;
 
     println!(
-        "kv_cache_protocol | schema=1 repeats={} vocab={} width={} heads={} layers={} block={} ff={} comparison=growing_prefix_decode",
+        "kv_cache_protocol | schema={} repeats={} vocab={} width={} heads={} layers={} block={} ff={} comparison=growing_prefix_decode",
+        KV_CACHE_SCHEMA_VERSION,
         repeats,
         cfg.vocab,
         cfg.n_embd,
