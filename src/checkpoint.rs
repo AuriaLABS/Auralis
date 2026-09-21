@@ -84,10 +84,44 @@ fn validate_cfg(cfg: Config) -> std::io::Result<()> {
     Ok(())
 }
 
-fn build_model(cfg: Config) -> std::io::Result<Gpt> {
+fn build_model(cfg: Config, n_kv_head: usize) -> std::io::Result<Gpt> {
     validate_cfg(cfg)?;
+    if n_kv_head == 0 || n_kv_head > cfg.n_head || cfg.n_head % n_kv_head != 0 {
+        return Err(invalid_data("invalid KV-head layout in checkpoint"));
+    }
     let mut rng = rand::thread_rng();
-    Ok(Gpt::new(cfg, &mut rng))
+    Ok(Gpt::new_with_attention_heads(
+        cfg,
+        crate::model::NormalizationKind::LayerNorm,
+        crate::position::PositionKind::LearnedAbsolute,
+        n_kv_head,
+        &mut rng,
+    ))
+}
+
+fn infer_kv_heads_from_parameter_count(cfg: Config, params: usize) -> std::io::Result<usize> {
+    validate_cfg(cfg)?;
+    let mut matched = None;
+    for n_kv_head in 1..=cfg.n_head {
+        if cfg.n_head % n_kv_head != 0 {
+            continue;
+        }
+        let expected = Gpt::expected_parameter_count(cfg, n_kv_head)
+            .map_err(invalid_data)?;
+        if expected == params {
+            if matched.is_some() {
+                return Err(invalid_data(
+                    "ambiguous KV-head layout for checkpoint parameter count",
+                ));
+            }
+            matched = Some(n_kv_head);
+        }
+    }
+    matched.ok_or_else(|| {
+        invalid_data(format!(
+            "parameter count {params} does not match any valid KV-head layout"
+        ))
+    })
 }
 
 pub fn save(path: impl AsRef<Path>, gpt: &Gpt, tok: &AnyTok) -> std::io::Result<()> {
@@ -247,9 +281,10 @@ pub fn load_full(path: impl AsRef<Path>) -> std::io::Result<(Gpt, AnyTok, Option
         return Err(invalid_data("vocabulary size mismatch"));
     }
 
-    let mut gpt = build_model(cfg)?;
-    let expected = gpt.collect_params().len();
     let n = read_u32(&mut f)? as usize;
+    let n_kv_head = infer_kv_heads_from_parameter_count(cfg, n)?;
+    let mut gpt = build_model(cfg, n_kv_head)?;
+    let expected = gpt.collect_params().len();
     if n != expected {
         return Err(invalid_data(format!(
             "parameter count mismatch: checkpoint={n}, architecture={expected}"
@@ -333,7 +368,7 @@ fn load_v1(f: &mut File) -> std::io::Result<(Gpt, AnyTok)> {
         return Err(invalid_data("vocabulary size mismatch"));
     }
 
-    let mut gpt = build_model(cfg)?;
+    let mut gpt = build_model(cfg, cfg.n_head)?;
     let expected = gpt.collect_params().len();
     let n = read_u32(f)? as usize;
     if n != expected {
