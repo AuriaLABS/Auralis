@@ -91,6 +91,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "memory-model",
+        bin: "auralis_memory_model_bench",
+        kind: "brain-memory",
+        summary: "opt-in model-memory retrieval/fusion task and cost",
+        default_args: "100 7",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",

@@ -1,0 +1,86 @@
+name: Brain Memory Model Integration
+
+on:
+  pull_request:
+    paths:
+      - "src/memory_integration.rs"
+      - "src/model.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_memory_model_bench.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "docs/memory-model-integration.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/brain_memory_model_integration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Integration contract tests
+        run: |
+          cargo test --lib memory_integration::tests -- --nocapture
+          cargo test --lib memory::tests -- --nocapture
+
+      - name: Synthetic memory on/off task and cost
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_memory_model_bench -- 100 7             | tee /tmp/memory-model.txt
+
+          test "$(grep -c '^memory_model_run |' /tmp/memory-model.txt)" -eq 7
+          grep -q '^memory_model_task |' /tmp/memory-model.txt
+          grep -q '^memory_model_cost |' /tmp/memory-model.txt
+          grep -q '^memory_integration |' /tmp/memory-model.txt
+          grep -q '^memory_integration_json |' /tmp/memory-model.txt
+
+          python3 - <<'PY'
+          import json
+          import re
+
+          text = open("/tmp/memory-model.txt", encoding="utf-8").read()
+          task = next(x for x in text.splitlines() if x.startswith("memory_model_task |"))
+          assert "off_correct=0" in task
+          assert "on_correct=3" in task
+          assert "off_accuracy=0.000000" in task
+          assert "on_accuracy=1.000000" in task
+          assert "off_exact=true" in task
+          assert "empty_exact=true" in task
+          assert "writes_unchanged=true" in task
+
+          trace_line = next(x for x in text.splitlines() if x.startswith("memory_integration_json |"))
+          trace = json.loads(trace_line.split(" | ", 1)[1])
+          assert trace["schema_version"] == 1
+          assert trace["enabled"] is True
+          assert trace["memory_present"] is True
+          assert trace["memory_version"] == 1
+          assert trace["hits"] == 1
+          assert len(trace["record_ids"]) == 1
+          assert trace["fused_width"] == 4
+          assert trace["fusion"] == "last_hidden_mean_add"
+          assert trace["fusion_scale"] == 1.0
+
+          cost = next(x for x in text.splitlines() if x.startswith("memory_model_cost |"))
+          ratio = float(re.search(r"on_over_off=([0-9.]+)", cost).group(1))
+          heap = int(re.search(r"estimated_heap_bytes=(\d+)", cost).group(1))
+          snapshot = int(re.search(r"snapshot_bytes=(\d+)", cost).group(1))
+          assert ratio > 0
+          assert heap > 0
+          assert snapshot > 0
+          print(
+              f"memory_model_gate | off_accuracy=0 on_accuracy=1 "
+              f"on_over_off={ratio:.4f} heap_bytes={heap} snapshot_bytes={snapshot}"
+          )
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

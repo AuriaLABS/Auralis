@@ -144,6 +144,7 @@ mod tests {
             "optimizer-variants.md",
             "rope-experiment.md",
             "external-memory.md",
+            "memory-model-integration.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -448,6 +449,32 @@ mod tests {
     }
 
     #[test]
+    fn memory_model_integration_doc_matches_contract() {
+        let text = docs("memory-model-integration.md");
+        for needle in [
+            "Gpt::logits_with_memory",
+            "MemoryInferenceMode::Off",
+            "last_hidden_mean_add",
+            "no implicit writes or resets occur",
+            "0/3",
+            "3/3",
+            "auralis_memory_model_bench",
+            "not** evidence of improved general reasoning",
+            "No default changes",
+        ] {
+            assert!(
+                text.contains(needle),
+                "memory-model-integration.md missing {needle}"
+            );
+        }
+        assert!(readme().contains("docs/memory-model-integration.md"));
+        assert_eq!(
+            crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
+            1
+        );
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
@@ -457,6 +484,10 @@ mod tests {
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
+        assert_eq!(
+            crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
+            1
+        );
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
@@ -470,6 +501,7 @@ mod tests {
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 3",
             "BRAIN_AB_SCHEMA_VERSION = 4",
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
+            "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

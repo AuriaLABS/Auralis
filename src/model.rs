@@ -13,6 +13,10 @@ use crate::layer_diagnostics::{
     cosine_similarity, summarize_tensor, AdjacentLayerCosine, GradientLayerSummary,
     LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
 };
+use crate::memory::ExternalMemory;
+use crate::memory_integration::{
+    fuse_last_hidden, retrieve_hidden_residual, MemoryInferenceMode, MemoryTrace,
+};
 use crate::numeric::{explain, scan_f32, Scan, Stage};
 use crate::position::{
     alibi_slopes, Alibi, LearnedAbsolute, PositionKind, PositionalEncoding, Rotary,
@@ -579,6 +583,44 @@ impl Gpt {
         }
     }
 
+    /// Optional external-memory inference path.
+    ///
+    /// Memory-off delegates directly to logits(). Memory-on never writes to
+    /// the memory backend: it retrieves a hidden-space residual and fuses it
+    /// only into the final hidden row before the output projection.
+    pub fn logits_with_memory(
+        &self,
+        tokens: &[usize],
+        memory: Option<&dyn ExternalMemory>,
+        mode: &MemoryInferenceMode,
+    ) -> Result<(Vec<f32>, MemoryTrace), String> {
+        let retrieval = retrieve_hidden_residual(memory, mode, self.cfg.n_embd)?;
+
+        if retrieval.residual.is_none() {
+            return Ok((self.logits(tokens), retrieval.trace));
+        }
+
+        let fusion = match mode {
+            MemoryInferenceMode::On { fusion, .. } => *fusion,
+            MemoryInferenceMode::Off => {
+                return Ok((self.logits(tokens), retrieval.trace));
+            }
+        };
+
+        let mut h_final =
+            self.forward_eval_hidden_with_backend(tokens, &OPTIMIZED_CPU_BACKEND);
+        fuse_last_hidden(
+            &mut h_final,
+            tokens.len(),
+            self.cfg.n_embd,
+            retrieval.residual.as_deref().expect("checked above"),
+            fusion,
+        )?;
+        let logits =
+            self.project_logits_with_backend(&h_final, tokens.len(), &OPTIMIZED_CPU_BACKEND);
+        Ok((logits, retrieval.trace))
+    }
+
     /// Debug-only forward pass with compact numerical summaries for cached
     /// activations. The normal `logits()` / `forward_eval()` path remains
     /// untouched and pays no diagnostics branch or scan cost.
@@ -1021,7 +1063,7 @@ impl Gpt {
         self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
     }
 
-    fn forward_eval_with_backend<B: Backend>(
+    fn forward_eval_hidden_with_backend<B: Backend>(
         &self,
         tokens: &[usize],
         backend: &B,
@@ -1052,10 +1094,34 @@ impl Gpt {
             x = out;
         }
 
-        let h_final = normalization_eval(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b);
-        let mut logits = matmul_with_backend(backend, &h_final, t, d, &self.w_out, self.cfg.vocab);
-        add_bias_inplace(&mut logits, t, self.cfg.vocab, &self.b_out);
+        normalization_eval(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b)
+    }
+
+    fn project_logits_with_backend<B: Backend>(
+        &self,
+        h_final: &[f32],
+        tokens: usize,
+        backend: &B,
+    ) -> Vec<f32> {
+        let mut logits = matmul_with_backend(
+            backend,
+            h_final,
+            tokens,
+            self.cfg.n_embd,
+            &self.w_out,
+            self.cfg.vocab,
+        );
+        add_bias_inplace(&mut logits, tokens, self.cfg.vocab, &self.b_out);
         logits
+    }
+
+    fn forward_eval_with_backend<B: Backend>(
+        &self,
+        tokens: &[usize],
+        backend: &B,
+    ) -> Vec<f32> {
+        let h_final = self.forward_eval_hidden_with_backend(tokens, backend);
+        self.project_logits_with_backend(&h_final, tokens.len(), backend)
     }
 
     fn forward_internal(&self, tokens: &[usize]) -> (Vec<f32>, ForwardCache) {
