@@ -44,10 +44,19 @@ impl ArchitectureConfig {
         normalization: NormalizationKind,
         position: PositionKind,
     ) -> Self {
+        Self::from_model_with_kv_heads(cfg, normalization, position, cfg.n_head)
+    }
+
+    pub fn from_model_with_kv_heads(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+    ) -> Self {
         Self {
             n_embd: cfg.n_embd,
             n_head: cfg.n_head,
-            n_kv_head: cfg.n_head,
+            n_kv_head,
             n_layer: cfg.n_layer,
             block: cfg.block,
             n_ff: cfg.n_ff,
