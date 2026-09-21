@@ -92,6 +92,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/brain-ab.md](docs/brain-ab.md) — harness A/B reproducible para experimentos Brain.
 - [docs/alibi-experiment.md](docs/alibi-experiment.md) — contrato, A/B y benchmark por contexto del experimento ALiBi.
 - [docs/external-memory.md](docs/external-memory.md) — contrato versionado y backend reference de memoria externa experimental.
+- [docs/memory-model-integration.md](docs/memory-model-integration.md) — integración opt-in retrieval/fusion de memoria en el modelo.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
 - [docs/gradient-clipping.md](docs/gradient-clipping.md) — clipping global-norm ON/OFF, métricas y migración RunConfig.
