@@ -1,8 +1,8 @@
 //! Positional-encoding boundary for Brain experiments.
 //!
-//! The current supported implementation is learned absolute position
-//! embeddings. The model owns the parameter storage; this module owns the
-//! semantics for applying it and accumulating its gradient.
+//! Learned absolute, RoPE and ALiBi share one explicit policy boundary.
+//! The model owns historical positional parameter storage; this module owns
+//! positional semantics while keeping experimental policies layout-compatible.
 
 use std::fmt;
 use std::str::FromStr;
@@ -11,6 +11,7 @@ use std::str::FromStr;
 pub enum PositionKind {
     LearnedAbsolute,
     Rope,
+    Alibi,
 }
 
 impl PositionKind {
@@ -18,6 +19,7 @@ impl PositionKind {
         match self {
             Self::LearnedAbsolute => "learned_absolute",
             Self::Rope => "rope",
+            Self::Alibi => "alibi",
         }
     }
 }
@@ -29,6 +31,7 @@ impl FromStr for PositionKind {
         match value {
             "learned_absolute" => Ok(Self::LearnedAbsolute),
             "rope" => Ok(Self::Rope),
+            "alibi" => Ok(Self::Alibi),
             other => Err(format!("unknown positional encoding {other}")),
         }
     }
@@ -243,6 +246,162 @@ impl TrainablePositionalEncoding for LearnedAbsolute<'_> {
                 let index = i * self.width + j;
                 parameter_grads[index] += activation_grads[index];
             }
+        }
+        Ok(())
+    }
+}
+
+
+pub fn alibi_slopes(heads: usize) -> Result<Vec<f32>, PositionError> {
+    if heads == 0 {
+        return Err(PositionError::ZeroShape);
+    }
+
+    fn power_of_two_slopes(heads: usize) -> Vec<f32> {
+        debug_assert!(heads.is_power_of_two());
+        let log2_heads = heads.ilog2() as f32;
+        let start = 2.0f32.powf(-2.0f32.powf(-(log2_heads - 3.0)));
+        (0..heads)
+            .map(|index| start.powi((index + 1) as i32))
+            .collect()
+    }
+
+    if heads.is_power_of_two() {
+        return Ok(power_of_two_slopes(heads));
+    }
+
+    let lower = heads.next_power_of_two() / 2;
+    let mut slopes = power_of_two_slopes(lower);
+    let extended = power_of_two_slopes(lower * 2);
+    slopes.extend(
+        extended
+            .into_iter()
+            .step_by(2)
+            .take(heads.saturating_sub(lower)),
+    );
+    Ok(slopes)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Alibi {
+    block: usize,
+    width: usize,
+    heads: usize,
+}
+
+impl Alibi {
+    pub fn new(block: usize, width: usize, heads: usize) -> Result<Self, PositionError> {
+        if block == 0 || width == 0 || heads == 0 {
+            return Err(PositionError::ZeroShape);
+        }
+        if width % heads != 0 {
+            return Err(PositionError::HeadWidthMismatch { width, heads });
+        }
+        Ok(Self {
+            block,
+            width,
+            heads,
+        })
+    }
+
+    fn active_len(&self, positions: usize) -> Result<usize, PositionError> {
+        if positions > self.block {
+            return Err(PositionError::ContextExceeded {
+                positions,
+                max_positions: self.block,
+            });
+        }
+        positions
+            .checked_mul(self.width)
+            .ok_or(PositionError::ActivationMismatch {
+                expected: usize::MAX,
+                actual: 0,
+            })
+    }
+
+    pub fn slopes(&self) -> Vec<f32> {
+        alibi_slopes(self.heads).expect("validated ALiBi head count")
+    }
+}
+
+impl PositionalEncoding for Alibi {
+    fn kind(&self) -> &'static str {
+        "alibi"
+    }
+
+    fn max_positions(&self) -> usize {
+        self.block
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn add_forward(&self, activations: &mut [f32], positions: usize) -> Result<(), PositionError> {
+        let expected = self.active_len(positions)?;
+        if activations.len() != expected {
+            return Err(PositionError::ActivationMismatch {
+                expected,
+                actual: activations.len(),
+            });
+        }
+        Ok(())
+    }
+
+    fn apply_qk(
+        &self,
+        q: &mut [f32],
+        k: &mut [f32],
+        positions: usize,
+        heads: usize,
+    ) -> Result<(), PositionError> {
+        if heads != self.heads {
+            return Err(PositionError::HeadWidthMismatch {
+                width: self.width,
+                heads,
+            });
+        }
+        self.active_len(positions)?;
+        validate_qk(q, k, positions, self.width, heads)
+    }
+
+    fn backward_qk(
+        &self,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        positions: usize,
+        heads: usize,
+    ) -> Result<(), PositionError> {
+        self.apply_qk(dq, dk, positions, heads)
+    }
+}
+
+impl TrainablePositionalEncoding for Alibi {
+    fn accumulate_backward(
+        &self,
+        activation_grads: &[f32],
+        positions: usize,
+        parameter_grads: &mut [f32],
+    ) -> Result<(), PositionError> {
+        let expected = self.active_len(positions)?;
+        if activation_grads.len() != expected {
+            return Err(PositionError::GradientMismatch {
+                expected,
+                actual: activation_grads.len(),
+            });
+        }
+        let reserved = self
+            .block
+            .checked_mul(self.width)
+            .ok_or(PositionError::GradientMismatch {
+                expected: usize::MAX,
+                actual: parameter_grads.len(),
+            })?;
+        if parameter_grads.len() != reserved {
+            return Err(PositionError::GradientMismatch {
+                expected: reserved,
+                actual: parameter_grads.len(),
+            });
         }
         Ok(())
     }
@@ -466,6 +625,40 @@ mod tests {
         let positional = LearnedAbsolute::new(&weights, block, width).unwrap();
         positional.accumulate_backward(&dx, 2, &mut observed).unwrap();
         assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn alibi_slopes_match_reference_schedule_for_power_and_non_power_heads() {
+        assert_eq!(alibi_slopes(1).unwrap(), vec![0.00390625]);
+        assert_eq!(
+            alibi_slopes(4).unwrap(),
+            vec![0.25, 0.0625, 0.015625, 0.00390625]
+        );
+        assert_eq!(
+            alibi_slopes(3).unwrap(),
+            vec![0.0625, 0.00390625, 0.25]
+        );
+        assert!(alibi_slopes(0).is_err());
+    }
+
+    #[test]
+    fn alibi_is_parameter_free_and_keeps_reserved_position_gradient_inert() {
+        let alibi = Alibi::new(8, 12, 3).unwrap();
+        assert_eq!(alibi.kind(), "alibi");
+        assert_eq!(alibi.max_positions(), 8);
+        assert_eq!(alibi.width(), 12);
+        assert_eq!(alibi.slopes(), alibi_slopes(3).unwrap());
+
+        let mut activations = vec![0.25; 4 * 12];
+        let before = activations.clone();
+        alibi.add_forward(&mut activations, 4).unwrap();
+        assert_eq!(activations, before);
+
+        let dx = vec![0.5; 4 * 12];
+        let mut reserved = vec![0.0; 8 * 12];
+        alibi.accumulate_backward(&dx, 4, &mut reserved).unwrap();
+        assert!(reserved.iter().all(|&x| x == 0.0));
+        assert!(Alibi::new(8, 10, 3).is_err());
     }
 
     #[test]
