@@ -5,7 +5,7 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
-use crate::attention::{Attention, AttentionShape, RowSlicesAttention};
+use crate::attention::{Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
@@ -127,6 +127,7 @@ pub struct Gpt {
     pub cfg: Config,
     normalization: NormalizationKind,
     position: PositionKind,
+    n_kv_head: usize,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -222,6 +223,7 @@ struct GptGrad {
 #[derive(Debug)]
 pub(crate) struct BackwardWorkspace {
     cfg: Config,
+    n_kv_head: usize,
     grads: GptGrad,
     scratch: Arena,
     dx: Vec<f32>,
@@ -232,14 +234,16 @@ fn init_vec(rng: &mut impl Rng, n: usize, scale: f32) -> Vec<f32> {
     (0..n).map(|_| rng.gen_range(-scale..scale)).collect()
 }
 
-fn zeros_block_grad(cfg: Config) -> BlockGrad {
+fn zeros_block_grad(cfg: Config, n_kv_head: usize) -> BlockGrad {
     let d = cfg.n_embd;
+    let head_width = d / cfg.n_head;
+    let kv_width = head_width * n_kv_head;
     BlockGrad {
         ln1_g: vec![0.0; d],
         ln1_b: vec![0.0; d],
         wq: vec![0.0; d * d],
-        wk: vec![0.0; d * d],
-        wv: vec![0.0; d * d],
+        wk: vec![0.0; d * kv_width],
+        wv: vec![0.0; d * kv_width],
         wo: vec![0.0; d * d],
         ln2_g: vec![0.0; d],
         ln2_b: vec![0.0; d],
@@ -309,6 +313,7 @@ impl BackwardWorkspace {
 
         Self {
             cfg: gpt.cfg,
+            n_kv_head: gpt.n_kv_head,
             grads: gpt.zero_grads(),
             scratch: Arena::with_capacity(scratch_capacity),
             dx: vec![0.0; td],
@@ -317,7 +322,7 @@ impl BackwardWorkspace {
     }
 
     pub(crate) fn matches(&self, gpt: &Gpt) -> bool {
-        self.cfg == gpt.cfg
+        self.cfg == gpt.cfg && self.n_kv_head == gpt.n_kv_head
     }
 
     fn clear(&mut self) {
@@ -328,10 +333,11 @@ impl BackwardWorkspace {
 
 impl Gpt {
     pub fn new(cfg: Config, rng: &mut impl Rng) -> Self {
-        Self::new_with_policies(
+        Self::new_with_attention_heads(
             cfg,
             NormalizationKind::LayerNorm,
             PositionKind::LearnedAbsolute,
+            cfg.n_head,
             rng,
         )
     }
@@ -341,7 +347,13 @@ impl Gpt {
         normalization: NormalizationKind,
         rng: &mut impl Rng,
     ) -> Self {
-        Self::new_with_policies(cfg, normalization, PositionKind::LearnedAbsolute, rng)
+        Self::new_with_attention_heads(
+            cfg,
+            normalization,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            rng,
+        )
     }
 
     pub fn new_with_policies(
@@ -350,20 +362,35 @@ impl Gpt {
         position: PositionKind,
         rng: &mut impl Rng,
     ) -> Self {
+        Self::new_with_attention_heads(cfg, normalization, position, cfg.n_head, rng)
+    }
+
+    pub fn new_with_attention_heads(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
+        assert!(
+            n_kv_head > 0 && n_kv_head <= cfg.n_head && cfg.n_head % n_kv_head == 0,
+            "n_kv_head must divide n_head"
+        );
         if position == PositionKind::Rope {
             Rotary::new(cfg.block, cfg.n_embd, cfg.n_head)
                 .expect("RoPE requires even per-head width");
         }
         let d = cfg.n_embd;
+        let kv_width = (d / cfg.n_head) * n_kv_head;
         let mut blocks = Vec::with_capacity(cfg.n_layer);
         for _ in 0..cfg.n_layer {
             blocks.push(Block {
                 ln1_g: vec![1.0; d],
                 ln1_b: vec![0.0; d],
                 wq: init_vec(rng, d * d, 0.02),
-                wk: init_vec(rng, d * d, 0.02),
-                wv: init_vec(rng, d * d, 0.02),
+                wk: init_vec(rng, d * kv_width, 0.02),
+                wv: init_vec(rng, d * kv_width, 0.02),
                 wo: init_vec(rng, d * d, 0.02),
                 ln2_g: vec![1.0; d],
                 ln2_b: vec![0.0; d],
@@ -377,6 +404,7 @@ impl Gpt {
             cfg,
             normalization,
             position,
+            n_kv_head,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -398,6 +426,15 @@ impl Gpt {
     pub fn position_kind(&self) -> PositionKind {
         self.position
     }
+
+    pub fn n_kv_head(&self) -> usize {
+        self.n_kv_head
+    }
+
+    pub fn kv_width(&self) -> usize {
+        (self.cfg.n_embd / self.cfg.n_head) * self.n_kv_head
+    }
+
 
     pub fn set_position_kind(&mut self, position: PositionKind) {
         if position == PositionKind::Rope {
@@ -577,7 +614,7 @@ impl Gpt {
     pub fn new_kv_cache(&self) -> KvCache {
         KvCache::new(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
             self.cfg.block,
             self.position,
         )
@@ -593,7 +630,7 @@ impl Gpt {
     ) -> Result<Vec<f32>, String> {
         cache.validate_for(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
             self.cfg.block,
             self.position,
         )?;
@@ -1838,7 +1875,7 @@ impl Gpt {
             tok_emb: vec![0.0; self.tok_emb.len()],
             pos_emb: vec![0.0; self.pos_emb.len()],
             blocks: (0..self.cfg.n_layer)
-                .map(|_| zeros_block_grad(self.cfg))
+                .map(|_| zeros_block_grad(self.cfg, self.n_kv_head))
                 .collect(),
             ln_f_g: vec![0.0; self.ln_f_g.len()],
             ln_f_b: vec![0.0; self.ln_f_b.len()],
@@ -1849,7 +1886,9 @@ impl Gpt {
 
     fn block_param_count(&self) -> usize {
         let d = self.cfg.n_embd;
-        4 * d * d
+        let kv_width = self.kv_width();
+        2 * d * d
+            + 2 * d * kv_width
             + 2 * d
             + 2 * d
             + d * self.cfg.n_ff
@@ -2960,6 +2999,54 @@ mod tests {
         }
         assert_eq!(CpuBackend::Optimized.id(), BackendId::OptimizedCpu);
         assert_eq!(CpuBackend::Scalar.id(), BackendId::ScalarCpu);
+    }
+
+    #[test]
+    fn grouped_kv_constructor_preserves_mha_default_and_compacts_parameters() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_1401);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_1401);
+        let mha = Gpt::new(cfg, &mut rng_a);
+        let explicit_mha = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            &mut rng_b,
+        );
+        assert_eq!(mha.collect_params(), explicit_mha.collect_params());
+        assert_eq!(mha.n_kv_head(), cfg.n_head);
+        assert_eq!(mha.kv_width(), cfg.n_embd);
+
+        let mut rng_gqa = StdRng::seed_from_u64(0xA11CE_1401);
+        let gqa = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            2,
+            &mut rng_gqa,
+        );
+        assert_eq!(gqa.n_kv_head(), 2);
+        assert_eq!(gqa.kv_width(), 4);
+        assert!(gqa.collect_params().len() < mha.collect_params().len());
+
+        let mut rng_mqa = StdRng::seed_from_u64(0xA11CE_1401);
+        let mqa = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            1,
+            &mut rng_mqa,
+        );
+        assert_eq!(mqa.kv_width(), 2);
+        assert!(mqa.collect_params().len() < gqa.collect_params().len());
     }
 
     #[test]
