@@ -1716,37 +1716,70 @@ impl Gpt {
         };
         let mut staged = Vec::with_capacity(self.blocks.len());
 
+        let kv_width = self.kv_width();
         for (layer_index, b) in self.blocks.iter().enumerate() {
             let h1 = normalization_eval(self.normalization, &x, 1, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, 1, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, 1, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, 1, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, 1, d, &b.wk, kv_width);
+            let v = matmul_with_backend(backend, &h1, 1, d, &b.wv, kv_width);
 
             if self.position == PositionKind::Rope {
-                Rotary::new(self.cfg.block, d, self.cfg.n_head)
-                    .map_err(|e| e.to_string())?
-                    .apply_qk_at_position(&mut q, &mut k, position, self.cfg.n_head)
+                let rotary = Rotary::new(self.cfg.block, d, self.cfg.n_head)
                     .map_err(|e| e.to_string())?;
+                if self.n_kv_head == self.cfg.n_head {
+                    rotary
+                        .apply_qk_at_position(&mut q, &mut k, position, self.cfg.n_head)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    rotary
+                        .apply_grouped_qk_at_position(
+                            &mut q,
+                            &mut k,
+                            position,
+                            self.cfg.n_head,
+                            self.n_kv_head,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
             }
 
             let (history_k, history_v) = cache.history(layer_index)?;
             let mut att = vec![0.0; d];
             let mut scores = vec![0.0; position + 1];
-            OPTIMIZED_ATTENTION
-                .forward_decode(
-                    &q,
-                    history_k,
-                    history_v,
-                    &k,
-                    &v,
-                    position,
-                    d,
-                    self.cfg.n_head,
-                    head_slopes.as_deref(),
-                    &mut att,
-                    &mut scores,
-                )
-                .map_err(|e| e.to_string())?;
+            if self.n_kv_head == self.cfg.n_head {
+                OPTIMIZED_ATTENTION
+                    .forward_decode(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            } else {
+                OPTIMIZED_ATTENTION
+                    .forward_decode_grouped(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        self.n_kv_head,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
 
             let mut proj = matmul_with_backend(backend, &att, 1, d, &b.wo, d);
             let mut r1 = x;
@@ -1799,10 +1832,10 @@ impl Gpt {
         for b in &self.blocks {
             let h1 = normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+            let att = self.attention_eval_current(&q, &k, &v, t);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
@@ -1864,11 +1897,10 @@ impl Gpt {
                 let h1 =
                     normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
                 let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
                 self.apply_position_to_qk(&mut q, &mut k, t);
-                let att =
-                    attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let att = self.attention_eval_current(&q, &k, &v, t);
                 let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
                 let mut r1 = x;
                 add_inplace(&mut r1, &proj);
@@ -1918,11 +1950,10 @@ impl Gpt {
                 let (h1, ln1) =
                     normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
                 let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
                 self.apply_position_to_qk(&mut q, &mut k, t);
-                let (att, probs) =
-                    attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let (att, probs) = self.attention_forward_current(&q, &k, &v, t);
                 let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
                 let mut r1 = x;
                 add_inplace(&mut r1, &proj);
@@ -1993,11 +2024,10 @@ impl Gpt {
         for b in &self.blocks {
             let (h1, ln1) = normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let (att, probs) =
-                attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+            let (att, probs) = self.attention_forward_current(&q, &k, &v, t);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
