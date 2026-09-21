@@ -71,3 +71,14 @@ cargo run --release --bin auralis_kv_cache_bench
 ```
 
 It compares growing-prefix autoregressive decode with full uncached prefix recomputation against one-token cached decode at contexts 8, 16, 32 and 64. It reports exact cached/uncached equivalence, total and per-token latency, speedup, active/allocated cache bytes and fixed model parameter count. Hosted-runner timing is descriptive; the longest-context advantage is the performance gate for #40.
+
+
+## Brain GQA/MQA benchmark
+
+The `gqa-mqa` entry runs:
+
+```
+cargo run --release --bin auralis_gqa_mqa_bench
+```
+
+It compares MHA (`n_kv_head=n_head`), GQA and MQA under the same seed, token stream, optimizer and training protocol, then measures growing-prefix decode at contexts 8, 16 and 32. It reports eval loss/perplexity, training throughput, parameter count, compact K/V width, cached/uncached latency and active KV-cache bytes. The benchmark is descriptive evidence for #140; it does not auto-promote GQA or MQA over the MHA default.
