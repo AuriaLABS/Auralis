@@ -82,6 +82,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "external-memory",
+        bin: "auralis_memory_bench",
+        kind: "brain-memory",
+        summary: "external-memory retrieval, capacity and persistence",
+        default_args: "128 40",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
