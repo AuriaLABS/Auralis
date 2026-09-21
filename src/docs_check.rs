@@ -538,6 +538,7 @@ mod tests {
         for needle in [
             "per-session key/value cache",
             "KV_CACHE_SCHEMA_VERSION",
+            "query-head count and KV-head count",
             "prefill_kv_cache",
             "decode_kv_cached",
             "transactional across layers",
@@ -553,7 +554,7 @@ mod tests {
             assert!(text.contains(needle), "kv-cache.md missing {needle}");
         }
         assert!(readme().contains("docs/kv-cache.md"));
-        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 2);
         let bench = crate::bench::find("kv-cache").expect("kv-cache benchmark");
         assert_eq!(bench.bin, "auralis_kv_cache_bench");
     }
@@ -569,7 +570,7 @@ mod tests {
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::brain_ab::ATTENTION_HEAD_AB_SCHEMA_VERSION, 1);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
-        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 2);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -590,7 +591,7 @@ mod tests {
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
-            "KV_CACHE_SCHEMA_VERSION = 1",
+            "KV_CACHE_SCHEMA_VERSION = 2",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
