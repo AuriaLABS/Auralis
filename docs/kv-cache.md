@@ -4,7 +4,7 @@ Issue #40 adds an explicit, per-session key/value cache for autoregressive infer
 
 ## Contract
 
-`KvCache` schema 1 records only session metadata and derived K/V activations:
+`KvCache` uses `KV_CACHE_SCHEMA_VERSION = 1` and records only session metadata and derived K/V activations:
 
 - physical layer count;
 - model width;
