@@ -2233,7 +2233,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 mod tests {
     use super::{
         rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
-        CpuBackend, Gpt, NormalizationKind, PositionKind,
+        CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -2807,4 +2807,132 @@ mod tests {
         assert_eq!(ids.len(), 10);
         assert!(ids.iter().all(|&x| x < cfg.vocab));
     }
+    #[test]
+    fn recurrent_one_step_is_bit_exact_with_baseline() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4101);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        let recurrent = RecurrentConfig::new(1).unwrap();
+
+        assert_eq!(gpt.logits_recurrent(&x, recurrent).unwrap(), gpt.logits(&x));
+        assert_eq!(
+            gpt.loss_recurrent(&x, &y, recurrent).unwrap().to_bits(),
+            gpt.loss(&x, &y).to_bits()
+        );
+
+        let mut baseline_grads = vec![0.0; gpt.collect_params().len()];
+        let mut recurrent_grads = vec![0.0; baseline_grads.len()];
+        let baseline_loss = gpt.backward_into(&x, &y, &mut baseline_grads);
+        let recurrent_loss = gpt
+            .backward_recurrent_into(&x, &y, &mut recurrent_grads, recurrent)
+            .unwrap();
+        assert_eq!(recurrent_loss.to_bits(), baseline_loss.to_bits());
+        assert_eq!(recurrent_grads, baseline_grads);
+    }
+
+    #[test]
+    fn recurrent_multi_step_is_finite_and_keeps_parameter_budget_fixed() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4102);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let params_before = gpt.collect_params();
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+
+        let baseline_logits = gpt.logits(&x);
+        for steps in [2usize, 3] {
+            let recurrent = RecurrentConfig::new(steps).unwrap();
+            let logits = gpt.logits_recurrent(&x, recurrent).unwrap();
+            assert!(logits.iter().all(|value| value.is_finite()));
+            assert_ne!(logits, baseline_logits);
+
+            let eval_loss = gpt.loss_recurrent(&x, &y, recurrent).unwrap();
+            let mut grads = vec![0.0; params_before.len()];
+            let backward_loss = gpt
+                .backward_recurrent_into(&x, &y, &mut grads, recurrent)
+                .unwrap();
+            assert!(eval_loss.is_finite() && backward_loss.is_finite());
+            assert!(
+                (eval_loss - backward_loss).abs() < 1e-6,
+                "steps={steps} eval={eval_loss} backward={backward_loss}"
+            );
+            assert!(grads.iter().all(|value| value.is_finite()));
+            assert!(grads.iter().any(|value| value.abs() > 0.0));
+            assert_eq!(
+                recurrent.block_applications(cfg.n_layer).unwrap(),
+                steps * cfg.n_layer
+            );
+        }
+
+        assert_eq!(gpt.collect_params(), params_before);
+    }
+
+    #[test]
+    fn recurrent_two_step_gradient_matches_finite_difference() {
+        let cfg = Config {
+            vocab: 5,
+            n_embd: 4,
+            n_head: 1,
+            n_layer: 1,
+            block: 3,
+            n_ff: 8,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4103);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let x = [0, 1, 2];
+        let y = [1, 2, 3];
+        let recurrent = RecurrentConfig::new(2).unwrap();
+        let params = gpt.collect_params();
+        let mut analytic = vec![0.0; params.len()];
+        gpt.backward_recurrent_into(&x, &y, &mut analytic, recurrent)
+            .unwrap();
+
+        let tok_index = 0usize;
+        let pos_index = cfg.vocab * cfg.n_embd;
+        let block_base = cfg.vocab * cfg.n_embd + cfg.block * cfg.n_embd;
+        let wq_index = block_base + 2 * cfg.n_embd;
+        let w_out_start = params.len() - cfg.vocab - cfg.n_embd * cfg.vocab;
+        let probe_indices = [tok_index, pos_index, wq_index, w_out_start];
+
+        let h = 1e-3f32;
+        for &index in &probe_indices {
+            let mut plus_params = params.clone();
+            let mut minus_params = params.clone();
+            plus_params[index] += h;
+            minus_params[index] -= h;
+
+            let mut plus = gpt.clone();
+            plus.write_params(&plus_params);
+            let mut minus = gpt.clone();
+            minus.write_params(&minus_params);
+
+            let plus_loss = plus.loss_recurrent(&x, &y, recurrent).unwrap();
+            let minus_loss = minus.loss_recurrent(&x, &y, recurrent).unwrap();
+            let numeric = (plus_loss - minus_loss) / (2.0 * h);
+            let error = (analytic[index] - numeric).abs();
+            assert!(
+                error < 4e-3,
+                "recurrent grad mismatch index={index} analytic={} numeric={numeric} error={error}",
+                analytic[index]
+            );
+        }
+    }
+
+
 }
