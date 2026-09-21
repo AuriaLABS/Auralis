@@ -52,6 +52,7 @@ jobs:
           cat >/tmp/auralis_checkpoint_schema_probe.rs <<'RS'
           use auralis::checkpoint;
           use auralis::model::{Config, Gpt};
+          use auralis::optim::Adam;
           use auralis::tokenizer::{AnyTok, CharTokenizer};
           use rand::rngs::StdRng;
           use rand::SeedableRng;
@@ -68,33 +69,43 @@ jobs:
               };
               let mut rng = StdRng::seed_from_u64(0xA11CE_BA5E);
               let gpt = Gpt::new(cfg, &mut rng);
-              let path = std::env::args().nth(1).expect("output path");
-              checkpoint::save(path, &gpt, &tok).expect("save checkpoint");
+              let mut args = std::env::args().skip(1);
+              let weights_path = args.next().expect("weights-only output path");
+              let adam_path = args.next().expect("Adam output path");
+              checkpoint::save(&weights_path, &gpt, &tok).expect("save AURLIS02 checkpoint");
+              let adam = Adam::new(gpt.collect_params().len(), 3e-3);
+              checkpoint::save_full(&adam_path, &gpt, &tok, Some(&adam))
+                  .expect("save AURLIS03 checkpoint");
           }
           RS
 
           probe_checkpoint() {
             local sha="$1"
-            local out="$2"
+            local weights_out="$2"
+            local adam_out="$3"
             git checkout --detach "$sha"
             cp /tmp/auralis_checkpoint_schema_probe.rs src/bin/auralis_checkpoint_schema_probe.rs
-            cargo run --quiet --bin auralis_checkpoint_schema_probe -- "$out"
+            cargo run --quiet --bin auralis_checkpoint_schema_probe -- "$weights_out" "$adam_out"
             rm src/bin/auralis_checkpoint_schema_probe.rs
           }
 
-          probe_checkpoint "$BASE_SHA" /tmp/backend-base-schema.bin
-          probe_checkpoint "$HEAD_SHA" /tmp/backend-head-schema.bin
+          probe_checkpoint "$BASE_SHA" /tmp/backend-base-aurlis02.bin /tmp/backend-base-aurlis03.bin
+          probe_checkpoint "$HEAD_SHA" /tmp/backend-head-aurlis02.bin /tmp/backend-head-aurlis03.bin
 
-          if ! cmp -s /tmp/backend-base-schema.bin /tmp/backend-head-schema.bin; then
-            echo "Default MHA checkpoint bytes changed across backend/model integration"
-            cmp -l /tmp/backend-base-schema.bin /tmp/backend-head-schema.bin | head -40 || true
-            exit 1
-          fi
+          for schema in aurlis02 aurlis03; do
+            base="/tmp/backend-base-$schema.bin"
+            head="/tmp/backend-head-$schema.bin"
+            if ! cmp -s "$base" "$head"; then
+              echo "Default MHA $schema checkpoint bytes changed across backend/model integration"
+              cmp -l "$base" "$head" | head -40 || true
+              exit 1
+            fi
+          done
 
           git checkout --detach "$HEAD_SHA"
           cargo test --test genesis checkpoint_roundtrip_preserves_model_tokenizer_and_adam -- --nocapture
           cargo test --test genesis incompatible_checkpoint_is_an_error_not_a_panic -- --nocapture
-          echo "persistent_schema_gate | run_config_unchanged=true default_mha_checkpoint_bytes_exact=true legacy_load_checks=true"
+          echo "persistent_schema_gate | run_config_unchanged=true aurlis02_bytes_exact=true aurlis03_bytes_exact=true legacy_load_checks=true"
 
       - name: Build base and head profiler binaries
         shell: bash
