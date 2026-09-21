@@ -9,6 +9,7 @@ on:
       - "src/position.rs"
       - "src/kv_cache.rs"
       - "src/checkpoint.rs"
+      - "src/gradcheck.rs"
       - "src/brain_ab.rs"
       - "src/bin/auralis_gqa_mqa_bench.rs"
       - "src/bench.rs"
@@ -39,6 +40,7 @@ jobs:
           cargo test --lib attention::tests::invalid_grouped_head_counts_fail_explicitly -- --nocapture
           cargo test --lib position::tests::rope_grouped_kv_matches_repeated_mha_heads -- --nocapture
           cargo test --lib model::tests::grouped_kv_constructor_preserves_mha_default_and_compacts_parameters -- --nocapture
+          cargo test --lib gradcheck::tests::grouped_kv_projection_gradients_match_finite_differences -- --nocapture
           cargo test --test genesis grouped_kv_checkpoint_roundtrip_infers_compact_layout_and_adam -- --nocapture
           cargo test --lib brain_ab::tests::attention_head_ab_tracks_mha_vs_mqa_parameter_and_quality_measurements -- --nocapture
           cargo test --lib docs_check::tests::gqa_mqa_doc_matches_contract -- --nocapture
@@ -54,8 +56,23 @@ jobs:
           test "$(grep -c '^gqa_decode |' /tmp/gqa-mqa.txt)" -eq 9
 
           python3 - <<'PY'
+          import math
+
+          quality = []
           rows = []
           for line in open("/tmp/gqa-mqa.txt", encoding="utf-8"):
+              if line.startswith("gqa_quality |"):
+                  fields = dict(
+                      token.split("=", 1)
+                      for token in line.split(" | ", 1)[1].split()
+                      if "=" in token
+                  )
+                  quality.append({
+                      "loss": float(fields["mean_eval_loss"]),
+                      "ppl": float(fields["mean_ppl"]),
+                      "tps": float(fields["mean_tok_per_s"]),
+                      "params": int(fields["params"]),
+                  })
               if not line.startswith("gqa_decode |"):
                   continue
               fields = dict(
@@ -69,10 +86,21 @@ jobs:
                   "params": int(fields["params"]),
                   "width": int(fields["kv_width"]),
                   "logical": int(fields["logical_bytes"]),
-                  "cached": int(fields["cached_ns"]),
-                  "uncached": int(fields["uncached_ns"]),
+                  "full_prefill": int(fields["full_prefill_ns"]),
+                  "cache_prefill": int(fields["cache_prefill_ns"]),
+                  "uncached_next": int(fields["uncached_next_ns"]),
+                  "cached_next": int(fields["cached_next_ns"]),
                   "exact": fields["exact"] == "true",
               })
+
+          assert len(quality) == 4, quality
+          assert all(
+              math.isfinite(q["loss"]) and q["loss"] > 0
+              and math.isfinite(q["ppl"]) and q["ppl"] >= 1
+              and math.isfinite(q["tps"]) and q["tps"] > 0
+              and q["params"] > 0
+              for q in quality
+          ), quality
 
           assert len(rows) == 9, rows
           assert all(r["exact"] for r in rows)
@@ -82,8 +110,14 @@ jobs:
               assert group[1]["params"] < group[2]["params"] < group[4]["params"]
               assert group[1]["width"] < group[2]["width"] < group[4]["width"]
               assert group[1]["logical"] < group[2]["logical"] < group[4]["logical"]
-              assert all(r["cached"] > 0 and r["uncached"] > 0 for r in group.values())
-          print("gqa_mqa_gate | exact=true compact_params=true compact_kv_cache=true")
+              assert all(
+                  r["full_prefill"] > 0
+                  and r["cache_prefill"] > 0
+                  and r["uncached_next"] > 0
+                  and r["cached_next"] > 0
+                  for r in group.values()
+              )
+          print("gqa_mqa_gate | exact=true gradients=finite-difference compact_params=true compact_kv_cache=true prefill_decode=measured")
           PY
 
       - name: Full suite

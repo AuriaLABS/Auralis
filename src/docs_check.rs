@@ -517,6 +517,9 @@ mod tests {
             "run_attention_head_experiment",
             "auralis_gqa_mqa_bench",
             "quality evidence",
+            "finite-difference",
+            "prefill latency",
+            "next-token latency",
             "does not auto-promote",
         ] {
             assert!(text.contains(needle), "gqa-mqa.md missing {needle}");
@@ -563,6 +566,7 @@ mod tests {
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 4);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
+        assert_eq!(crate::brain_ab::ATTENTION_HEAD_AB_SCHEMA_VERSION, 1);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
         assert_eq!(
@@ -581,6 +585,7 @@ mod tests {
             "RUN_CONFIG_SCHEMA_VERSION = 2",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 4",
             "BRAIN_AB_SCHEMA_VERSION = 4",
+            "ATTENTION_HEAD_AB_SCHEMA_VERSION = 1",
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",

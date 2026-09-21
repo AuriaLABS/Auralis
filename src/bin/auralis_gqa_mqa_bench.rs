@@ -9,7 +9,7 @@ use rand::SeedableRng;
 use std::hint::black_box;
 use std::time::Instant;
 
-fn config() -> Config {
+fn quality_config() -> Config {
     Config {
         vocab: 32,
         n_embd: 32,
@@ -17,6 +17,13 @@ fn config() -> Config {
         n_layer: 2,
         block: 32,
         n_ff: 96,
+    }
+}
+
+fn decode_config() -> Config {
+    Config {
+        block: 64,
+        ..quality_config()
     }
 }
 
@@ -42,6 +49,7 @@ fn median(values: &mut [u64]) -> u64 {
 }
 
 fn decode_curve(cfg: Config, n_kv_head: usize, context: usize, repeats: usize) {
+    assert!(context < cfg.block);
     let mut rng = StdRng::seed_from_u64(0xA11CE_1400);
     let gpt = Gpt::new_with_attention_heads(
         cfg,
@@ -50,38 +58,54 @@ fn decode_curve(cfg: Config, n_kv_head: usize, context: usize, repeats: usize) {
         n_kv_head,
         &mut rng,
     );
-    let stream = tokens(cfg.vocab, context);
-    let baseline = gpt.logits(&stream);
-    let mut check_cache = gpt.new_kv_cache();
-    let cached = gpt.prefill_kv_cache(&stream, &mut check_cache).unwrap();
-    assert_eq!(cached, baseline);
+    let stream = tokens(cfg.vocab, context + 1);
+    let prefix = &stream[..context];
+    let next = stream[context];
 
-    let mut uncached_times = Vec::with_capacity(repeats);
-    let mut cached_times = Vec::with_capacity(repeats);
+    let baseline_prefix = gpt.logits(prefix);
+    let mut check_cache = gpt.new_kv_cache();
+    let cached_prefix = gpt.prefill_kv_cache(prefix, &mut check_cache).unwrap();
+    assert_eq!(cached_prefix, baseline_prefix);
+
+    let full_with_next = gpt.logits(&stream);
+    let expected_next = &full_with_next[context * cfg.vocab..(context + 1) * cfg.vocab];
+    let cached_next = gpt.decode_kv_cached(next, &mut check_cache).unwrap();
+    assert_eq!(cached_next, expected_next);
+
+    let mut full_prefill_times = Vec::with_capacity(repeats);
+    let mut cache_prefill_times = Vec::with_capacity(repeats);
+    let mut uncached_next_times = Vec::with_capacity(repeats);
+    let mut cached_next_times = Vec::with_capacity(repeats);
     let mut logical_bytes = 0usize;
     let mut allocated_bytes = 0usize;
 
     for _ in 0..repeats {
         let started = Instant::now();
-        for end in 1..=context {
-            black_box(gpt.logits(&stream[..end]));
-        }
-        uncached_times.push(started.elapsed().as_nanos().max(1) as u64);
+        black_box(gpt.logits(prefix));
+        full_prefill_times.push(started.elapsed().as_nanos().max(1) as u64);
 
         let mut cache = gpt.new_kv_cache();
         let started = Instant::now();
-        for &token in &stream {
-            black_box(gpt.decode_kv_cached(token, &mut cache).unwrap());
-        }
-        cached_times.push(started.elapsed().as_nanos().max(1) as u64);
+        black_box(gpt.prefill_kv_cache(prefix, &mut cache).unwrap());
+        cache_prefill_times.push(started.elapsed().as_nanos().max(1) as u64);
         logical_bytes = cache.logical_bytes();
         allocated_bytes = cache.allocated_bytes();
+
+        let started = Instant::now();
+        black_box(gpt.logits(&stream));
+        uncached_next_times.push(started.elapsed().as_nanos().max(1) as u64);
+
+        let started = Instant::now();
+        black_box(gpt.decode_kv_cached(next, &mut cache).unwrap());
+        cached_next_times.push(started.elapsed().as_nanos().max(1) as u64);
     }
 
-    let uncached_ns = median(&mut uncached_times);
-    let cached_ns = median(&mut cached_times);
+    let full_prefill_ns = median(&mut full_prefill_times);
+    let cache_prefill_ns = median(&mut cache_prefill_times);
+    let uncached_next_ns = median(&mut uncached_next_times);
+    let cached_next_ns = median(&mut cached_next_times);
     println!(
-        "gqa_decode | context={} n_head={} n_kv_head={} params={} kv_width={} logical_bytes={} allocated_bytes={} uncached_ns={} cached_ns={} cache_speedup={:.4} exact=true",
+        "gqa_decode | context={} n_head={} n_kv_head={} params={} kv_width={} logical_bytes={} allocated_bytes={} full_prefill_ns={} cache_prefill_ns={} uncached_next_ns={} cached_next_ns={} decode_speedup={:.4} exact=true",
         context,
         cfg.n_head,
         n_kv_head,
@@ -89,9 +113,11 @@ fn decode_curve(cfg: Config, n_kv_head: usize, context: usize, repeats: usize) {
         gpt.kv_width(),
         logical_bytes,
         allocated_bytes,
-        uncached_ns,
-        cached_ns,
-        uncached_ns as f64 / cached_ns as f64,
+        full_prefill_ns,
+        cache_prefill_ns,
+        uncached_next_ns,
+        cached_next_ns,
+        uncached_next_ns as f64 / cached_next_ns as f64,
     );
 }
 
@@ -140,7 +166,7 @@ fn print_quality(label: &str, result: &auralis::brain_ab::AttentionHeadExperimen
 }
 
 fn main() {
-    let cfg = config();
+    let quality_cfg = quality_config();
     let protocol = AbProtocol {
         seed: 659_918,
         steps: 4,
@@ -153,35 +179,36 @@ fn main() {
     };
 
     println!(
-        "gqa_mqa_protocol | attention_head_schema={} n_head={} variants=mha:4,gqa:2,mqa:1 quality_steps={} quality_repeats={} decode_repeats=5",
+        "gqa_mqa_protocol | attention_head_schema={} n_head={} variants=mha:4,gqa:2,mqa:1 quality_steps={} quality_repeats={} decode_repeats=5 decode_block=64",
         ATTENTION_HEAD_AB_SCHEMA_VERSION,
-        cfg.n_head,
+        quality_cfg.n_head,
         protocol.steps,
         protocol.repeats,
     );
 
     let mha_vs_gqa = run_attention_head_experiment(
         protocol,
-        variant("mha", cfg),
+        variant("mha", quality_cfg),
         4,
-        variant("gqa", cfg),
+        variant("gqa", quality_cfg),
         2,
     )
     .unwrap();
     let mha_vs_mqa = run_attention_head_experiment(
         protocol,
-        variant("mha", cfg),
+        variant("mha", quality_cfg),
         4,
-        variant("mqa", cfg),
+        variant("mqa", quality_cfg),
         1,
     )
     .unwrap();
     print_quality("mha_vs_gqa", &mha_vs_gqa);
     print_quality("mha_vs_mqa", &mha_vs_mqa);
 
+    let decode_cfg = decode_config();
     for context in [8usize, 16, 32] {
         for n_kv_head in [4usize, 2, 1] {
-            decode_curve(cfg, n_kv_head, context, 5);
+            decode_curve(decode_cfg, n_kv_head, context, 5);
         }
     }
 }
