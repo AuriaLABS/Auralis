@@ -618,6 +618,49 @@ mod tests {
     }
 
     #[test]
+    fn alibi_variant_is_reproducible_and_distinct_from_learned_absolute() {
+        let result = run_experiment(
+            AbProtocol {
+                steps: 2,
+                repeats: 2,
+                token_count: 128,
+                ..AbProtocol::default()
+            },
+            AbVariant {
+                label: "learned".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
+            },
+            AbVariant {
+                label: "alibi".into(),
+                config: tiny(),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::Alibi,
+                optimizer: OptimizerId::Adam,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.a.position, PositionKind::LearnedAbsolute);
+        assert_eq!(result.b.position, PositionKind::Alibi);
+        assert!(!result.a_vs_a_reproducible());
+        assert_eq!(
+            result.a.measurements[0].parameter_count,
+            result.b.measurements[0].parameter_count
+        );
+        assert_eq!(
+            result.a.measurements[0].checkpoint_bytes,
+            result.b.measurements[0].checkpoint_bytes
+        );
+        assert_ne!(
+            result.a.measurements[0].state_fingerprint,
+            result.b.measurements[0].state_fingerprint
+        );
+        assert!(result.json().contains("\"position\":\"alibi\""));
+    }
+
+    #[test]
     fn optimizer_variant_is_part_of_experiment_identity() {
         let result = run_experiment(
             AbProtocol {
