@@ -1,6 +1,6 @@
 # Benchmark registry
 
-`auralis bench list` catalogs Engine microbenchmarks. This slice does not run them.
+`auralis bench list` catalogs reproducible Engine and Brain benchmarks. Listing a benchmark does not run it.
 
 ```
 auralis bench list
@@ -27,3 +27,14 @@ Running a listed bench stays:
 ```
 cargo run --release --bin auralis_engine_bench -- 3 20 5
 ```
+
+
+## Brain external-memory contract benchmark
+
+The `external-memory` entry runs:
+
+```
+cargo run --release --bin auralis_memory_bench -- 128 40
+```
+
+It measures exact retrieval, explicit capacity degradation, per-query latency, estimated heap bytes, snapshot bytes and session-contamination count for the #37 reference backend. Timing is descriptive; correctness/capacity semantics are the gate.
