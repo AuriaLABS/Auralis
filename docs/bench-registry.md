@@ -38,3 +38,14 @@ cargo run --release --bin auralis_memory_bench -- 128 40
 ```
 
 It measures exact retrieval, explicit capacity degradation, per-query latency, estimated heap bytes, snapshot bytes and session-contamination count for the #37 reference backend. Timing is descriptive; correctness/capacity semantics are the gate.
+
+
+## Brain model-memory integration benchmark
+
+The `memory-model` entry runs:
+
+```
+cargo run --release --bin auralis_memory_model_bench -- 100 7
+```
+
+It compares the exact memory-off baseline with opt-in retrieval + `last_hidden_mean_add` fusion on a controlled synthetic task, and publishes on/off latency, query trace, heap estimate and snapshot size. It also proves inference leaves the #37 memory snapshot unchanged. The benchmark is evidence for #42; it does not promote memory to the default model path.
