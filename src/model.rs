@@ -9,6 +9,7 @@ use crate::attention::{Attention, AttentionShape, RowSlicesAttention};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
+use crate::kv_cache::KvCache;
 use crate::layer_diagnostics::{
     cosine_similarity, summarize_tensor, AdjacentLayerCosine, GradientLayerSummary,
     LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
@@ -570,6 +571,83 @@ impl Gpt {
     /// backward-only caches. The returned tensor is row-major `[tokens, vocab]`.
     pub fn logits(&self, tokens: &[usize]) -> Vec<f32> {
         self.forward_eval_with_backend(tokens, &OPTIMIZED_CPU_BACKEND)
+    }
+
+    /// Create an empty per-session KV cache matching this model.
+    pub fn new_kv_cache(&self) -> KvCache {
+        KvCache::new(
+            self.cfg.n_layer,
+            self.cfg.n_embd,
+            self.cfg.block,
+            self.position,
+        )
+        .expect("validated model config produces a valid KV cache")
+    }
+
+    /// Fill an empty KV cache from a causal prefix and return logits for every
+    /// prefix position in the same row-major layout as `logits()`.
+    pub fn prefill_kv_cache(
+        &self,
+        tokens: &[usize],
+        cache: &mut KvCache,
+    ) -> Result<Vec<f32>, String> {
+        cache.validate_for(
+            self.cfg.n_layer,
+            self.cfg.n_embd,
+            self.cfg.block,
+            self.position,
+        )?;
+        if !cache.is_empty() {
+            return Err("kv cache prefill requires an empty cache".into());
+        }
+        if tokens.is_empty() {
+            return Err("kv cache prefill requires at least one token".into());
+        }
+        if tokens.len() > self.cfg.block {
+            return Err(format!(
+                "kv cache prefill length {} exceeds model block {}",
+                tokens.len(),
+                self.cfg.block
+            ));
+        }
+        if tokens.iter().any(|&token| token >= self.cfg.vocab) {
+            return Err("kv cache prefill token id outside vocabulary".into());
+        }
+
+        let mut logits = Vec::with_capacity(tokens.len().saturating_mul(self.cfg.vocab));
+        for &token in tokens {
+            logits.extend(self.decode_kv_cached(token, cache)?);
+        }
+        Ok(logits)
+    }
+
+    /// Append one token to an existing KV-cache session and return only that
+    /// token's vocabulary-logit row.
+    pub fn decode_kv_cached(
+        &self,
+        token: usize,
+        cache: &mut KvCache,
+    ) -> Result<Vec<f32>, String> {
+        cache.validate_for(
+            self.cfg.n_layer,
+            self.cfg.n_embd,
+            self.cfg.block,
+            self.position,
+        )?;
+        if token >= self.cfg.vocab {
+            return Err(format!(
+                "kv cache token id {token} outside vocabulary {}",
+                self.cfg.vocab
+            ));
+        }
+        if cache.len() >= self.cfg.block {
+            return Err(format!(
+                "kv cache context full at {} tokens (block={})",
+                cache.len(),
+                self.cfg.block
+            ));
+        }
+        self.forward_decode_one_with_backend(token, cache, &OPTIMIZED_CPU_BACKEND)
     }
 
     /// Explicit CPU backend selection for verification/benchmarking.
@@ -1399,6 +1477,100 @@ impl Gpt {
             let next = sample_logits(row, temperature, rng);
             ids.push(next);
         }
+    }
+
+    fn forward_decode_one_with_backend<B: Backend>(
+        &self,
+        token: usize,
+        cache: &mut KvCache,
+        backend: &B,
+    ) -> Result<Vec<f32>, String> {
+        let position = cache.len();
+        let d = self.cfg.n_embd;
+        let mut x = self.tok_emb[token * d..(token + 1) * d].to_vec();
+
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let start = position
+                    .checked_mul(d)
+                    .ok_or_else(|| "kv cache positional offset overflow".to_string())?;
+                for j in 0..d {
+                    x[j] += self.pos_emb[start + j];
+                }
+            }
+            PositionKind::Rope | PositionKind::Alibi => {}
+        }
+
+        let head_slopes = if self.position == PositionKind::Alibi {
+            Some(alibi_slopes(self.cfg.n_head).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let mut staged = Vec::with_capacity(self.blocks.len());
+
+        for (layer_index, b) in self.blocks.iter().enumerate() {
+            let h1 = normalization_eval(self.normalization, &x, 1, d, &b.ln1_g, &b.ln1_b);
+            let mut q = matmul_with_backend(backend, &h1, 1, d, &b.wq, d);
+            let mut k = matmul_with_backend(backend, &h1, 1, d, &b.wk, d);
+            let v = matmul_with_backend(backend, &h1, 1, d, &b.wv, d);
+
+            if self.position == PositionKind::Rope {
+                Rotary::new(self.cfg.block, d, self.cfg.n_head)
+                    .map_err(|e| e.to_string())?
+                    .apply_qk_at_position(&mut q, &mut k, position, self.cfg.n_head)
+                    .map_err(|e| e.to_string())?;
+            }
+
+            let (history_k, history_v) = cache.history(layer_index)?;
+            let mut att = vec![0.0; d];
+            let mut scores = vec![0.0; position + 1];
+            OPTIMIZED_ATTENTION
+                .forward_decode(
+                    &q,
+                    history_k,
+                    history_v,
+                    &k,
+                    &v,
+                    position,
+                    d,
+                    self.cfg.n_head,
+                    head_slopes.as_deref(),
+                    &mut att,
+                    &mut scores,
+                )
+                .map_err(|e| e.to_string())?;
+
+            let mut proj = matmul_with_backend(backend, &att, 1, d, &b.wo, d);
+            let mut r1 = x;
+            add_inplace(&mut r1, &proj);
+
+            let h2 = normalization_eval(self.normalization, &r1, 1, d, &b.ln2_g, &b.ln2_b);
+            let mut ff_pre = matmul_with_backend(backend, &h2, 1, d, &b.w1, self.cfg.n_ff);
+            add_bias_inplace(&mut ff_pre, 1, self.cfg.n_ff, &b.b1);
+            let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
+            matmul_into_with_backend(
+                backend,
+                &ff_act,
+                1,
+                self.cfg.n_ff,
+                &b.w2,
+                d,
+                &mut proj,
+            );
+            add_bias_inplace(&mut proj, 1, d, &b.b2);
+            let mut out = r1;
+            add_inplace(&mut out, &proj);
+            x = out;
+            staged.push((k, v));
+        }
+
+        let h_final =
+            normalization_eval(self.normalization, &x, 1, d, &self.ln_f_g, &self.ln_f_b);
+        let logits = self.project_logits_with_backend(&h_final, 1, backend);
+
+        // Commit only after every layer and the output projection succeeded.
+        cache.commit(&staged)?;
+        Ok(logits)
     }
 
     /// Forward path for evaluation/inference. It preserves the training-forward
@@ -2807,6 +2979,77 @@ mod tests {
         assert_eq!(ids.len(), 10);
         assert!(ids.iter().all(|&x| x < cfg.vocab));
     }
+    #[test]
+    fn kv_cache_prefill_is_bit_exact_for_all_position_policies() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let tokens = [0, 1, 2, 3, 4, 5];
+
+        for position in [
+            PositionKind::LearnedAbsolute,
+            PositionKind::Rope,
+            PositionKind::Alibi,
+        ] {
+            let mut rng = StdRng::seed_from_u64(0xA11CE_4001);
+            let mut gpt = Gpt::new(cfg, &mut rng);
+            gpt.set_position_kind(position);
+            let baseline = gpt.logits(&tokens);
+            let params_before = gpt.collect_params();
+            let mut cache = gpt.new_kv_cache();
+            let cached = gpt.prefill_kv_cache(&tokens, &mut cache).unwrap();
+
+            assert_eq!(cached, baseline, "position={}", position.as_str());
+            assert_eq!(cache.len(), tokens.len());
+            assert_eq!(cache.logical_bytes(), tokens.len() * cfg.n_layer * cfg.n_embd * 2 * 4);
+            assert_eq!(gpt.collect_params(), params_before);
+        }
+    }
+
+    #[test]
+    fn kv_cache_incremental_decode_reset_clone_and_failures_are_explicit() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 6,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4002);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let prefix = [0, 1, 2, 3];
+        let mut cache = gpt.new_kv_cache();
+        gpt.prefill_kv_cache(&prefix, &mut cache).unwrap();
+
+        let mut cloned = cache.clone();
+        let row = gpt.decode_kv_cached(4, &mut cloned).unwrap();
+        let full = gpt.logits(&[0, 1, 2, 3, 4]);
+        assert_eq!(row, full[4 * cfg.vocab..]);
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cloned.len(), 5);
+
+        cloned.reset();
+        assert!(cloned.is_empty());
+        assert_eq!(cache.len(), 4);
+
+        let before = cache.len();
+        assert!(gpt.decode_kv_cached(cfg.vocab, &mut cache).is_err());
+        assert_eq!(cache.len(), before);
+        assert!(gpt.prefill_kv_cache(&prefix, &mut cache).is_err());
+
+        let mut full_cache = gpt.new_kv_cache();
+        gpt.prefill_kv_cache(&[0, 1, 2, 3, 4, 5], &mut full_cache)
+            .unwrap();
+        assert!(gpt.decode_kv_cached(6, &mut full_cache).is_err());
+        assert_eq!(full_cache.len(), cfg.block);
+    }
+
     #[test]
     fn recurrent_one_step_is_bit_exact_with_baseline() {
         let cfg = Config {
