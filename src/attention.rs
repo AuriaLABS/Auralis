@@ -71,10 +71,84 @@ impl AttentionShape {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupedAttentionShape {
+    pub tokens: usize,
+    pub width: usize,
+    pub heads: usize,
+    pub kv_heads: usize,
+}
+
+impl GroupedAttentionShape {
+    pub fn validate(self) -> Result<Self, AttentionError> {
+        if self.tokens == 0 || self.width == 0 || self.heads == 0 || self.kv_heads == 0 {
+            return Err(AttentionError::ZeroDimension {
+                tokens: self.tokens,
+                width: self.width,
+                heads: self.heads,
+            });
+        }
+        if self.width % self.heads != 0 {
+            return Err(AttentionError::HeadWidthMismatch {
+                width: self.width,
+                heads: self.heads,
+            });
+        }
+        if self.kv_heads > self.heads || self.heads % self.kv_heads != 0 {
+            return Err(AttentionError::KvHeadMismatch {
+                heads: self.heads,
+                kv_heads: self.kv_heads,
+            });
+        }
+        self.activation_len()?;
+        self.kv_activation_len()?;
+        self.probs_len()?;
+        Ok(self)
+    }
+
+    pub fn head_width(self) -> Result<usize, AttentionError> {
+        self.validate().map(|shape| shape.width / shape.heads)
+    }
+
+    pub fn kv_width(self) -> Result<usize, AttentionError> {
+        let shape = self.validate()?;
+        shape
+            .head_width()?
+            .checked_mul(shape.kv_heads)
+            .ok_or(AttentionError::SizeOverflow)
+    }
+
+    pub fn group_size(self) -> Result<usize, AttentionError> {
+        self.validate().map(|shape| shape.heads / shape.kv_heads)
+    }
+
+    pub fn activation_len(self) -> Result<usize, AttentionError> {
+        self.tokens
+            .checked_mul(self.width)
+            .ok_or(AttentionError::SizeOverflow)
+    }
+
+    pub fn kv_activation_len(self) -> Result<usize, AttentionError> {
+        let head_width = self.width / self.heads;
+        self.tokens
+            .checked_mul(head_width)
+            .and_then(|n| n.checked_mul(self.kv_heads))
+            .ok_or(AttentionError::SizeOverflow)
+    }
+
+    pub fn probs_len(self) -> Result<usize, AttentionError> {
+        self.heads
+            .checked_mul(self.tokens)
+            .and_then(|n| n.checked_mul(self.tokens))
+            .ok_or(AttentionError::SizeOverflow)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttentionError {
     ZeroDimension { tokens: usize, width: usize, heads: usize },
     HeadWidthMismatch { width: usize, heads: usize },
+    KvHeadMismatch { heads: usize, kv_heads: usize },
     SizeOverflow,
     LengthMismatch {
         tensor: &'static str,
@@ -93,6 +167,10 @@ impl fmt::Display for AttentionError {
             Self::HeadWidthMismatch { width, heads } => write!(
                 f,
                 "attention width {width} is not divisible by heads {heads}"
+            ),
+            Self::KvHeadMismatch { heads, kv_heads } => write!(
+                f,
+                "attention query heads {heads} must be divisible by kv heads {kv_heads}"
             ),
             Self::SizeOverflow => write!(f, "attention shape size overflow"),
             Self::LengthMismatch { tensor, expected, actual } => write!(
@@ -314,6 +392,337 @@ impl Attention for RowSlicesAttention {
 }
 
 impl RowSlicesAttention {
+    pub fn forward_eval_grouped(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: GroupedAttentionShape,
+        head_slopes: Option<&[f32]>,
+        out: &mut [f32],
+        scores: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let shape = shape.validate()?;
+        let expected_q = shape.activation_len()?;
+        let expected_kv = shape.kv_activation_len()?;
+        validate_len("q", q.len(), expected_q)?;
+        validate_len("k", k.len(), expected_kv)?;
+        validate_len("v", v.len(), expected_kv)?;
+        validate_len("out", out.len(), expected_q)?;
+        validate_len("scores", scores.len(), shape.tokens)?;
+        if let Some(slopes) = head_slopes {
+            validate_len("head_slopes", slopes.len(), shape.heads)?;
+        }
+
+        out.fill(0.0);
+        scores.fill(0.0);
+        let t = shape.tokens;
+        let d = shape.width;
+        let hd = d / shape.heads;
+        let kv_width = hd * shape.kv_heads;
+        let group_size = shape.heads / shape.kv_heads;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        for h in 0..shape.heads {
+            let q_off = h * hd;
+            let kv_head = h / group_size;
+            let kv_off = kv_head * hd;
+            for i in 0..t {
+                let q_head = &q[i * d + q_off..i * d + q_off + hd];
+                let mut max_score = f32::NEG_INFINITY;
+                for j in 0..=i {
+                    let k_head = &k[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    let mut score = 0.0f32;
+                    for (&qv, &kv) in q_head.iter().zip(k_head) {
+                        score += qv * kv;
+                    }
+                    score *= scale;
+                    if let Some(slopes) = head_slopes {
+                        score += slopes[h] * (j as f32 - i as f32);
+                    }
+                    scores[j] = score;
+                    max_score = max_score.max(score);
+                }
+
+                let mut sum = 0.0f32;
+                for score in &mut scores[..=i] {
+                    let e = (*score - max_score).exp();
+                    *score = e;
+                    sum += e;
+                }
+                let inv = 1.0 / sum.max(1e-20);
+                let out_head = &mut out[i * d + q_off..i * d + q_off + hd];
+                for j in 0..=i {
+                    scores[j] *= inv;
+                    let p = scores[j];
+                    let v_head = &v[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                        *dst += p * vv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn forward_cached_grouped(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        shape: GroupedAttentionShape,
+        head_slopes: Option<&[f32]>,
+        out: &mut [f32],
+        probs: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let shape = shape.validate()?;
+        let expected_q = shape.activation_len()?;
+        let expected_kv = shape.kv_activation_len()?;
+        validate_len("q", q.len(), expected_q)?;
+        validate_len("k", k.len(), expected_kv)?;
+        validate_len("v", v.len(), expected_kv)?;
+        validate_len("out", out.len(), expected_q)?;
+        validate_len("probs", probs.len(), shape.probs_len()?)?;
+        if let Some(slopes) = head_slopes {
+            validate_len("head_slopes", slopes.len(), shape.heads)?;
+        }
+
+        out.fill(0.0);
+        probs.fill(0.0);
+        let t = shape.tokens;
+        let d = shape.width;
+        let hd = d / shape.heads;
+        let kv_width = hd * shape.kv_heads;
+        let group_size = shape.heads / shape.kv_heads;
+        let scale = 1.0 / (hd as f32).sqrt();
+        let mut scores = vec![0.0f32; t];
+
+        for h in 0..shape.heads {
+            let q_off = h * hd;
+            let kv_head = h / group_size;
+            let kv_off = kv_head * hd;
+            for i in 0..t {
+                let q_head = &q[i * d + q_off..i * d + q_off + hd];
+                let mut max_score = f32::NEG_INFINITY;
+                for j in 0..=i {
+                    let k_head = &k[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    let mut score = 0.0f32;
+                    for (&qv, &kv) in q_head.iter().zip(k_head) {
+                        score += qv * kv;
+                    }
+                    score *= scale;
+                    if let Some(slopes) = head_slopes {
+                        score += slopes[h] * (j as f32 - i as f32);
+                    }
+                    scores[j] = score;
+                    max_score = max_score.max(score);
+                }
+
+                let mut sum = 0.0f32;
+                for score in &mut scores[..=i] {
+                    let e = (*score - max_score).exp();
+                    *score = e;
+                    sum += e;
+                }
+                let inv = 1.0 / sum.max(1e-20);
+                let out_head = &mut out[i * d + q_off..i * d + q_off + hd];
+                let row = (h * t + i) * t;
+                for j in 0..=i {
+                    let p = scores[j] * inv;
+                    probs[row + j] = p;
+                    let v_head = &v[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                        *dst += p * vv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn backward_grouped(
+        &self,
+        dout: &[f32],
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        probs: &[f32],
+        shape: GroupedAttentionShape,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        dv: &mut [f32],
+        dp: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let shape = shape.validate()?;
+        let expected_q = shape.activation_len()?;
+        let expected_kv = shape.kv_activation_len()?;
+        validate_len("dout", dout.len(), expected_q)?;
+        validate_len("q", q.len(), expected_q)?;
+        validate_len("k", k.len(), expected_kv)?;
+        validate_len("v", v.len(), expected_kv)?;
+        validate_len("probs", probs.len(), shape.probs_len()?)?;
+        validate_len("dq", dq.len(), expected_q)?;
+        validate_len("dk", dk.len(), expected_kv)?;
+        validate_len("dv", dv.len(), expected_kv)?;
+        validate_len("dp", dp.len(), shape.tokens)?;
+
+        dq.fill(0.0);
+        dk.fill(0.0);
+        dv.fill(0.0);
+        dp.fill(0.0);
+
+        let t = shape.tokens;
+        let d = shape.width;
+        let hd = d / shape.heads;
+        let kv_width = hd * shape.kv_heads;
+        let group_size = shape.heads / shape.kv_heads;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        for h in 0..shape.heads {
+            let q_off = h * hd;
+            let kv_head = h / group_size;
+            let kv_off = kv_head * hd;
+            for i in 0..t {
+                let q_head = &q[i * d + q_off..i * d + q_off + hd];
+                let dout_head = &dout[i * d + q_off..i * d + q_off + hd];
+                let row = (h * t + i) * t;
+                let mut weighted = 0.0f32;
+
+                for j in 0..=i {
+                    let v_head = &v[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    let mut value_grad = 0.0f32;
+                    for (&go, &vv) in dout_head.iter().zip(v_head) {
+                        value_grad += go * vv;
+                    }
+                    dp[j] = value_grad;
+                    let p = probs[row + j];
+                    weighted += p * value_grad;
+                    let dv_head = &mut dv
+                        [j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    for (dst, &go) in dv_head.iter_mut().zip(dout_head) {
+                        *dst += p * go;
+                    }
+                }
+
+                for j in 0..=i {
+                    let ds = probs[row + j] * (dp[j] - weighted) * scale;
+                    let k_head = &k[j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    let dq_head = &mut dq[i * d + q_off..i * d + q_off + hd];
+                    for (dst, &kv) in dq_head.iter_mut().zip(k_head) {
+                        *dst += ds * kv;
+                    }
+                    let dk_head = &mut dk
+                        [j * kv_width + kv_off..j * kv_width + kv_off + hd];
+                    for (dst, &qv) in dk_head.iter_mut().zip(q_head) {
+                        *dst += ds * qv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn forward_decode_grouped(
+        &self,
+        q: &[f32],
+        history_k: &[f32],
+        history_v: &[f32],
+        current_k: &[f32],
+        current_v: &[f32],
+        history_tokens: usize,
+        width: usize,
+        heads: usize,
+        kv_heads: usize,
+        head_slopes: Option<&[f32]>,
+        out: &mut [f32],
+        scores: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        let shape = GroupedAttentionShape {
+            tokens: history_tokens.saturating_add(1),
+            width,
+            heads,
+            kv_heads,
+        }
+        .validate()?;
+        let hd = width / heads;
+        let kv_width = hd
+            .checked_mul(kv_heads)
+            .ok_or(AttentionError::SizeOverflow)?;
+        let history_len = history_tokens
+            .checked_mul(kv_width)
+            .ok_or(AttentionError::SizeOverflow)?;
+        for (tensor, actual, expected) in [
+            ("q", q.len(), width),
+            ("history_k", history_k.len(), history_len),
+            ("history_v", history_v.len(), history_len),
+            ("current_k", current_k.len(), kv_width),
+            ("current_v", current_v.len(), kv_width),
+            ("out", out.len(), width),
+        ] {
+            validate_len(tensor, actual, expected)?;
+        }
+        validate_len("scores", scores.len(), shape.tokens)?;
+        if let Some(slopes) = head_slopes {
+            validate_len("head_slopes", slopes.len(), heads)?;
+        }
+
+        out.fill(0.0);
+        scores.fill(0.0);
+        let total_tokens = shape.tokens;
+        let group_size = heads / kv_heads;
+        let scale = 1.0 / (hd as f32).sqrt();
+
+        for head in 0..heads {
+            let q_off = head * hd;
+            let kv_head = head / group_size;
+            let kv_off = kv_head * hd;
+            let q_head = &q[q_off..q_off + hd];
+            let mut max_score = f32::NEG_INFINITY;
+
+            for key_index in 0..total_tokens {
+                let k_head = if key_index < history_tokens {
+                    let start = key_index * kv_width + kv_off;
+                    &history_k[start..start + hd]
+                } else {
+                    &current_k[kv_off..kv_off + hd]
+                };
+                let mut score = 0.0f32;
+                for (&qv, &kv) in q_head.iter().zip(k_head) {
+                    score += qv * kv;
+                }
+                score *= scale;
+                if let Some(slopes) = head_slopes {
+                    score += slopes[head] * (key_index as f32 - history_tokens as f32);
+                }
+                scores[key_index] = score;
+                max_score = max_score.max(score);
+            }
+
+            let mut sum = 0.0f32;
+            for score in &mut scores[..total_tokens] {
+                let e = (*score - max_score).exp();
+                *score = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            let out_head = &mut out[q_off..q_off + hd];
+            for key_index in 0..total_tokens {
+                scores[key_index] *= inv;
+                let p = scores[key_index];
+                let v_head = if key_index < history_tokens {
+                    let start = key_index * kv_width + kv_off;
+                    &history_v[start..start + hd]
+                } else {
+                    &current_v[kv_off..kv_off + hd]
+                };
+                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                    *dst += p * vv;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Decode one query token against immutable K/V history plus its current K/V.
     ///
     /// This is the autoregressive attention primitive used by the model KV cache.
@@ -584,6 +993,184 @@ mod tests {
         ReferenceAttention.forward_eval(&q, &k, &v, shape, &mut a, &mut sa).unwrap();
         RowSlicesAttention.forward_eval(&q, &k, &v, shape, &mut b, &mut sb).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn grouped_mha_matches_existing_forward_paths() {
+        let shape = AttentionShape {
+            tokens: 5,
+            width: 8,
+            heads: 2,
+        };
+        let grouped = GroupedAttentionShape {
+            tokens: shape.tokens,
+            width: shape.width,
+            heads: shape.heads,
+            kv_heads: shape.heads,
+        };
+        let n = shape.activation_len().unwrap();
+        let p = shape.probs_len().unwrap();
+        let q = data(n, 2);
+        let k = data(n, 5);
+        let v = data(n, 9);
+
+        let mut regular_eval = vec![0.0; n];
+        let mut grouped_eval = vec![0.0; n];
+        let mut s1 = vec![0.0; shape.tokens];
+        let mut s2 = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .forward_eval(&q, &k, &v, shape, &mut regular_eval, &mut s1)
+            .unwrap();
+        RowSlicesAttention
+            .forward_eval_grouped(&q, &k, &v, grouped, None, &mut grouped_eval, &mut s2)
+            .unwrap();
+        assert_eq!(grouped_eval, regular_eval);
+
+        let mut regular_cached = vec![0.0; n];
+        let mut grouped_cached = vec![0.0; n];
+        let mut p1 = vec![0.0; p];
+        let mut p2 = vec![0.0; p];
+        RowSlicesAttention
+            .forward_cached(&q, &k, &v, shape, &mut regular_cached, &mut p1)
+            .unwrap();
+        RowSlicesAttention
+            .forward_cached_grouped(&q, &k, &v, grouped, None, &mut grouped_cached, &mut p2)
+            .unwrap();
+        assert_eq!(grouped_cached, regular_cached);
+        assert_eq!(p2, p1);
+    }
+
+    #[test]
+    fn grouped_backward_matches_mha_reference_with_same_kv_head_count() {
+        let shape = AttentionShape {
+            tokens: 4,
+            width: 8,
+            heads: 2,
+        };
+        let grouped = GroupedAttentionShape {
+            tokens: shape.tokens,
+            width: shape.width,
+            heads: shape.heads,
+            kv_heads: shape.heads,
+        };
+        let n = shape.activation_len().unwrap();
+        let p = shape.probs_len().unwrap();
+        let q = data(n, 2);
+        let k = data(n, 5);
+        let v = data(n, 9);
+        let dout = data(n, 13);
+        let mut out = vec![0.0; n];
+        let mut probs = vec![0.0; p];
+        RowSlicesAttention
+            .forward_cached(&q, &k, &v, shape, &mut out, &mut probs)
+            .unwrap();
+
+        let mut rdq = vec![0.0; n];
+        let mut rdk = vec![0.0; n];
+        let mut rdv = vec![0.0; n];
+        let mut rdp = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .backward(
+                &dout, &q, &k, &v, &probs, shape,
+                &mut rdq, &mut rdk, &mut rdv, &mut rdp,
+            )
+            .unwrap();
+
+        let mut gdq = vec![0.0; n];
+        let mut gdk = vec![0.0; n];
+        let mut gdv = vec![0.0; n];
+        let mut gdp = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .backward_grouped(
+                &dout, &q, &k, &v, &probs, grouped,
+                &mut gdq, &mut gdk, &mut gdv, &mut gdp,
+            )
+            .unwrap();
+
+        for (a, b) in gdq.iter().zip(&rdq) {
+            assert!((a - b).abs() <= 1e-6);
+        }
+        for (a, b) in gdk.iter().zip(&rdk) {
+            assert!((a - b).abs() <= 1e-6);
+        }
+        for (a, b) in gdv.iter().zip(&rdv) {
+            assert!((a - b).abs() <= 1e-6);
+        }
+    }
+
+    #[test]
+    fn mqa_and_gqa_shapes_are_causal_and_decode_matches_last_row() {
+        for kv_heads in [1usize, 2] {
+            let shape = GroupedAttentionShape {
+                tokens: 5,
+                width: 8,
+                heads: 4,
+                kv_heads,
+            };
+            let q = data(shape.activation_len().unwrap(), 3);
+            let k = data(shape.kv_activation_len().unwrap(), 7);
+            let v = data(shape.kv_activation_len().unwrap(), 11);
+            let mut out = vec![0.0; shape.activation_len().unwrap()];
+            let mut probs = vec![f32::NAN; shape.probs_len().unwrap()];
+            RowSlicesAttention
+                .forward_cached_grouped(&q, &k, &v, shape, None, &mut out, &mut probs)
+                .unwrap();
+
+            for h in 0..shape.heads {
+                for i in 0..shape.tokens {
+                    for j in i + 1..shape.tokens {
+                        assert_eq!(probs[(h * shape.tokens + i) * shape.tokens + j], 0.0);
+                    }
+                }
+            }
+
+            let history = shape.tokens - 1;
+            let d = shape.width;
+            let kv_width = shape.kv_width().unwrap();
+            let mut decoded = vec![0.0; d];
+            let mut scores = vec![0.0; shape.tokens];
+            RowSlicesAttention
+                .forward_decode_grouped(
+                    &q[history * d..],
+                    &k[..history * kv_width],
+                    &v[..history * kv_width],
+                    &k[history * kv_width..],
+                    &v[history * kv_width..],
+                    history,
+                    d,
+                    shape.heads,
+                    shape.kv_heads,
+                    None,
+                    &mut decoded,
+                    &mut scores,
+                )
+                .unwrap();
+            assert_eq!(decoded, out[history * d..]);
+        }
+    }
+
+    #[test]
+    fn invalid_grouped_head_counts_fail_explicitly() {
+        assert!(matches!(
+            GroupedAttentionShape {
+                tokens: 4,
+                width: 12,
+                heads: 6,
+                kv_heads: 4,
+            }
+            .validate(),
+            Err(AttentionError::KvHeadMismatch { heads: 6, kv_heads: 4 })
+        ));
+        assert!(matches!(
+            GroupedAttentionShape {
+                tokens: 4,
+                width: 12,
+                heads: 6,
+                kv_heads: 0,
+            }
+            .validate(),
+            Err(AttentionError::ZeroDimension { .. })
+        ));
     }
 
     #[test]
