@@ -119,7 +119,7 @@ fn infer_kv_heads_from_parameter_count(cfg: Config, params: usize) -> std::io::R
     }
     matched.ok_or_else(|| {
         invalid_data(format!(
-            "parameter count {params} does not match any valid KV-head layout"
+            "parameter count mismatch: checkpoint={params}, no valid KV-head layout"
         ))
     })
 }
