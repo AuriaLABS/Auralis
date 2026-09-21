@@ -540,6 +540,7 @@ mod tests {
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
