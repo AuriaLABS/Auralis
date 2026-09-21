@@ -143,6 +143,7 @@ mod tests {
             "optimizer-boundary.md",
             "optimizer-variants.md",
             "rope-experiment.md",
+            "external-memory.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -420,6 +421,33 @@ mod tests {
     }
 
     #[test]
+    fn external_memory_doc_matches_contract() {
+        let text = docs("external-memory.md");
+        for needle in [
+            "External memory is experimental",
+            "write —",
+            "read —",
+            "query —",
+            "reset —",
+            "version —",
+            "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
+            "session is ephemeral",
+            "**never serialized**",
+            "reject-new",
+            "auralis_memory_bench",
+            "memory=off",
+            "#42",
+            "no claim that external memory improves reasoning",
+        ] {
+            assert!(text.contains(needle), "external-memory.md missing {needle}");
+        }
+        assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
+        let bench = crate::bench::find("external-memory").expect("external-memory benchmark");
+        assert_eq!(bench.bin, "auralis_memory_bench");
+        assert_eq!(bench.default_args, "128 40");
+    }
+
+    #[test]
     fn documented_versions_match_code() {
         let cargo = fs::read_to_string(root().join("Cargo.toml")).unwrap();
         assert!(cargo.contains("version = \"0.1.0\""));
@@ -428,6 +456,7 @@ mod tests {
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
+        assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::scheduler::SCHEDULER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_CONFIG_SCHEMA_VERSION, 1);
         assert_eq!(crate::optim::OPTIMIZER_STATE_SCHEMA_VERSION, 1);
@@ -440,6 +469,7 @@ mod tests {
             "RUN_CONFIG_SCHEMA_VERSION = 2",
             "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 3",
             "BRAIN_AB_SCHEMA_VERSION = 4",
+            "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

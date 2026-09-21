@@ -1,0 +1,99 @@
+name: Brain External Memory Contract
+
+on:
+  pull_request:
+    paths:
+      - "src/memory.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/bin/auralis_memory_bench.rs"
+      - "src/docs_check.rs"
+      - "docs/external-memory.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/brain_memory_contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Contract, persistence and corruption tests
+        run: |
+          cargo test --lib memory::tests -- --nocapture
+          cargo test --lib docs_check::tests::external_memory_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+          cargo test --lib bench::tests -- --nocapture
+
+      - name: Synthetic retrieval and capacity benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_memory_bench -- 128 20 \
+            | tee /tmp/auralis-memory-bench.txt
+
+          python3 - <<'PY'
+          rows = []
+          protocol = None
+          for line in open("/tmp/auralis-memory-bench.txt", encoding="utf-8"):
+              if line.startswith("memory_protocol |"):
+                  fields = {}
+                  for token in line.strip().split()[2:]:
+                      if "=" in token:
+                          key, value = token.split("=", 1)
+                          fields[key] = value
+                  protocol = fields
+              elif line.startswith("memory_capacity |"):
+                  fields = {}
+                  for token in line.strip().split()[2:]:
+                      if "=" in token:
+                          key, value = token.split("=", 1)
+                          fields[key] = value
+                  rows.append(fields)
+
+          assert protocol is not None
+          assert protocol["schema"] == "1"
+          assert protocol["working_set"] == "128"
+          assert protocol["capacity_policy"] == "reject_new"
+          assert protocol["session_persisted"] == "false"
+          assert protocol["contamination"] == "0"
+          assert protocol["restored_records"] == "2"
+          assert int(protocol["snapshot_bytes"]) > 0
+          assert len(protocol["snapshot_fingerprint"]) == 16
+
+          assert len(rows) == 3
+          expected = [8, 32, 128]
+          retrievals = []
+          heaps = []
+          for row, capacity in zip(rows, expected):
+              assert int(row["capacity"]) == capacity
+              assert int(row["working_set"]) == 128
+              assert int(row["stored"]) == capacity
+              assert int(row["rejected"]) == 128 - capacity
+              assert int(row["exact_hits"]) == capacity
+              ratio = float(row["exact_retrieval"])
+              assert abs(ratio - capacity / 128.0) < 1e-6
+              assert float(row["query_ns"]) > 0.0
+              assert int(row["estimated_heap_bytes"]) > 0
+              assert int(row["snapshot_bytes"]) > 0
+              retrievals.append(ratio)
+              heaps.append(int(row["estimated_heap_bytes"]))
+
+          assert retrievals == sorted(retrievals)
+          assert retrievals[-1] == 1.0
+          assert heaps == sorted(heaps)
+          print(
+              "memory_contract_gate | deterministic_capacity=true "
+              "contamination=0 full_capacity_retrieval=1.0"
+          )
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

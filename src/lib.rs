@@ -22,6 +22,7 @@ pub mod inspect;
 pub mod kernels;
 pub mod layer_diagnostics;
 pub mod manifest;
+pub mod memory;
 pub mod metrics;
 pub mod model;
 pub mod numeric;
