@@ -1316,21 +1316,20 @@ impl Gpt {
             matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
 
             scratch.reset();
+            let kv_width = self.kv_width();
             let dq_slot = scratch.alloc(td);
-            let dk_slot = scratch.alloc(td);
-            let dv_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(t * kv_width);
+            let dv_slot = scratch.alloc(t * kv_width);
             let dp_slot = scratch.alloc(t);
             {
                 let (dq, dk, dv, dp) = scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
-                attention_backward_into(
+                self.attention_backward_current(
                     dx,
                     &c.q,
                     &c.k,
                     &c.v,
                     &c.probs,
                     t,
-                    d,
-                    self.cfg.n_head,
                     dq,
                     dk,
                     dv,
@@ -1339,12 +1338,12 @@ impl Gpt {
                 self.backward_position_qk(dq, dk, t);
 
                 matmul_grad_b(&c.h1, t, d, dq, d, &mut bg.wq);
-                matmul_grad_b(&c.h1, t, d, dk, d, &mut bg.wk);
-                matmul_grad_b(&c.h1, t, d, dv, d, &mut bg.wv);
+                matmul_grad_b(&c.h1, t, d, dk, kv_width, &mut bg.wk);
+                matmul_grad_b(&c.h1, t, d, dv, kv_width, &mut bg.wv);
 
                 matmul_b_t_into(dq, t, d, &b.wq, d, dx);
-                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
-                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+                matmul_b_t_add_into(dk, t, kv_width, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, kv_width, &b.wv, d, dx);
             }
 
             scratch.reset();
@@ -1576,22 +1575,21 @@ impl Gpt {
             matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
 
             scratch.reset();
+            let kv_width = self.kv_width();
             let dq_slot = scratch.alloc(td);
-            let dk_slot = scratch.alloc(td);
-            let dv_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(t * kv_width);
+            let dv_slot = scratch.alloc(t * kv_width);
             let dp_slot = scratch.alloc(t);
             {
                 let (dq, dk, dv, dp) =
                     scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
-                attention_backward_into(
+                self.attention_backward_current(
                     dx,
                     &c.q,
                     &c.k,
                     &c.v,
                     &c.probs,
                     t,
-                    d,
-                    self.cfg.n_head,
                     dq,
                     dk,
                     dv,
@@ -1600,12 +1598,12 @@ impl Gpt {
                 self.backward_position_qk(dq, dk, t);
 
                 matmul_grad_b_add_reference(&c.h1, t, d, dq, d, &mut bg.wq);
-                matmul_grad_b_add_reference(&c.h1, t, d, dk, d, &mut bg.wk);
-                matmul_grad_b_add_reference(&c.h1, t, d, dv, d, &mut bg.wv);
+                matmul_grad_b_add_reference(&c.h1, t, d, dk, kv_width, &mut bg.wk);
+                matmul_grad_b_add_reference(&c.h1, t, d, dv, kv_width, &mut bg.wv);
 
                 matmul_b_t_into(dq, t, d, &b.wq, d, dx);
-                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
-                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+                matmul_b_t_add_into(dk, t, kv_width, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, kv_width, &b.wv, d, dx);
             }
 
             scratch.reset();
