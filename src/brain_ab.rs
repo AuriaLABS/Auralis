@@ -968,6 +968,7 @@ mod tests {
         };
         let mut mqa = variant.clone();
         mqa.label = "mqa".into();
+        let mha_heads = variant.config.n_head;
         let result = run_attention_head_experiment(
             AbProtocol {
                 steps: 2,
@@ -976,13 +977,13 @@ mod tests {
                 ..AbProtocol::default()
             },
             variant,
-            4,
+            mha_heads,
             mqa,
             1,
         )
         .unwrap();
         assert_eq!(result.schema_version, ATTENTION_HEAD_AB_SCHEMA_VERSION);
-        assert_eq!(result.a.n_kv_head, 4);
+        assert_eq!(result.a.n_kv_head, mha_heads);
         assert_eq!(result.b.n_kv_head, 1);
         assert!(
             result.b.measurements[0].parameter_count
