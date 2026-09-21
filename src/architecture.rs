@@ -347,7 +347,7 @@ mod tests {
         for cfg in [
             ArchitectureConfig { n_embd: 8, n_head: 1, n_layer: 1, block: 8, n_ff: 16, ..ArchitectureConfig::default() },
             ArchitectureConfig { n_embd: 16, n_head: 2, n_layer: 3, block: 16, n_ff: 32, ..ArchitectureConfig::default() },
-            ArchitectureConfig { n_embd: 32, n_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
+            ArchitectureConfig { n_embd: 32, n_head: 4, n_kv_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
         ] {
             cfg.validate().unwrap();
             assert_eq!(ArchitectureConfig::decode(&cfg.encode()).unwrap(), cfg);
@@ -359,7 +359,7 @@ mod tests {
         let old = "auralis_architecture=1\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\n";
         let decoded = ArchitectureConfig::decode(old).unwrap();
         assert_eq!(decoded, ArchitectureConfig::default());
-        assert!(decoded.encode().starts_with("auralis_architecture=3\n"));
+        assert!(decoded.encode().starts_with("auralis_architecture=4\n"));
         assert!(decoded.encode().contains("normalization=layernorm\n"));
         assert!(decoded.encode().contains("position=learned_absolute\n"));
     }
@@ -378,14 +378,15 @@ mod tests {
         let decoded = ArchitectureConfig::decode(old).unwrap();
         assert_eq!(decoded.normalization, NormalizationKind::RmsNorm);
         assert_eq!(decoded.position, PositionKind::LearnedAbsolute);
-        assert!(decoded.encode().starts_with("auralis_architecture=3\n"));
+        assert!(decoded.encode().starts_with("auralis_architecture=4\n"));
     }
 
     #[test]
-    fn alibi_roundtrips_in_schema_three_without_rope_head_width_constraint() {
+    fn alibi_roundtrips_in_current_schema_without_rope_head_width_constraint() {
         let cfg = ArchitectureConfig {
             n_embd: 6,
             n_head: 2,
+            n_kv_head: 2,
             n_layer: 1,
             block: 8,
             n_ff: 12,
@@ -403,6 +404,7 @@ mod tests {
         let bad = ArchitectureConfig {
             n_embd: 6,
             n_head: 2,
+            n_kv_head: 2,
             n_layer: 1,
             block: 8,
             n_ff: 12,
