@@ -314,6 +314,110 @@ impl Attention for RowSlicesAttention {
 }
 
 impl RowSlicesAttention {
+    /// Decode one query token against immutable K/V history plus its current K/V.
+    ///
+    /// This is the autoregressive attention primitive used by the model KV cache.
+    /// It preserves the scalar row order of the full causal eval path while
+    /// avoiding materializing/recomputing queries for the cached prefix.
+    pub fn forward_decode(
+        &self,
+        q: &[f32],
+        history_k: &[f32],
+        history_v: &[f32],
+        current_k: &[f32],
+        current_v: &[f32],
+        history_tokens: usize,
+        width: usize,
+        heads: usize,
+        head_slopes: Option<&[f32]>,
+        out: &mut [f32],
+        scores: &mut [f32],
+    ) -> Result<(), AttentionError> {
+        if width == 0 || heads == 0 {
+            return Err(AttentionError::ZeroDimension {
+                tokens: history_tokens.saturating_add(1),
+                width,
+                heads,
+            });
+        }
+        if width % heads != 0 {
+            return Err(AttentionError::HeadWidthMismatch { width, heads });
+        }
+        let history_len = history_tokens
+            .checked_mul(width)
+            .ok_or(AttentionError::SizeOverflow)?;
+        for (tensor, actual, expected) in [
+            ("q", q.len(), width),
+            ("history_k", history_k.len(), history_len),
+            ("history_v", history_v.len(), history_len),
+            ("current_k", current_k.len(), width),
+            ("current_v", current_v.len(), width),
+            ("out", out.len(), width),
+        ] {
+            validate_len(tensor, actual, expected)?;
+        }
+        let total_tokens = history_tokens
+            .checked_add(1)
+            .ok_or(AttentionError::SizeOverflow)?;
+        validate_len("scores", scores.len(), total_tokens)?;
+        if let Some(slopes) = head_slopes {
+            validate_len("head_slopes", slopes.len(), heads)?;
+        }
+
+        out.fill(0.0);
+        scores.fill(0.0);
+        let head_width = width / heads;
+        let scale = 1.0 / (head_width as f32).sqrt();
+
+        for head in 0..heads {
+            let hoff = head * head_width;
+            let q_head = &q[hoff..hoff + head_width];
+            let mut max_score = f32::NEG_INFINITY;
+
+            for key_index in 0..total_tokens {
+                let k_head = if key_index < history_tokens {
+                    let start = key_index * width + hoff;
+                    &history_k[start..start + head_width]
+                } else {
+                    &current_k[hoff..hoff + head_width]
+                };
+                let mut score = 0.0f32;
+                for (&qv, &kv) in q_head.iter().zip(k_head) {
+                    score += qv * kv;
+                }
+                score *= scale;
+                if let Some(slopes) = head_slopes {
+                    score += slopes[head] * (key_index as f32 - history_tokens as f32);
+                }
+                scores[key_index] = score;
+                max_score = max_score.max(score);
+            }
+
+            let mut sum = 0.0f32;
+            for score in &mut scores[..total_tokens] {
+                let e = (*score - max_score).exp();
+                *score = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            let out_head = &mut out[hoff..hoff + head_width];
+            for key_index in 0..total_tokens {
+                scores[key_index] *= inv;
+                let p = scores[key_index];
+                let v_head = if key_index < history_tokens {
+                    let start = key_index * width + hoff;
+                    &history_v[start..start + head_width]
+                } else {
+                    &current_v[hoff..hoff + head_width]
+                };
+                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                    *dst += p * vv;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn forward_eval_alibi(
         &self,
         q: &[f32],
@@ -480,6 +584,93 @@ mod tests {
         ReferenceAttention.forward_eval(&q, &k, &v, shape, &mut a, &mut sa).unwrap();
         RowSlicesAttention.forward_eval(&q, &k, &v, shape, &mut b, &mut sb).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn decode_matches_full_eval_last_row_exactly() {
+        let shape = AttentionShape {
+            tokens: 5,
+            width: 8,
+            heads: 2,
+        };
+        let n = shape.activation_len().unwrap();
+        let q = data(n, 2);
+        let k = data(n, 5);
+        let v = data(n, 9);
+        let mut full = vec![0.0; n];
+        let mut full_scores = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .forward_eval(&q, &k, &v, shape, &mut full, &mut full_scores)
+            .unwrap();
+
+        let d = shape.width;
+        let history = shape.tokens - 1;
+        let mut decoded = vec![0.0; d];
+        let mut scores = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .forward_decode(
+                &q[history * d..],
+                &k[..history * d],
+                &v[..history * d],
+                &k[history * d..],
+                &v[history * d..],
+                history,
+                d,
+                shape.heads,
+                None,
+                &mut decoded,
+                &mut scores,
+            )
+            .unwrap();
+        assert_eq!(decoded, full[history * d..]);
+    }
+
+    #[test]
+    fn alibi_decode_matches_full_eval_last_row_exactly() {
+        let shape = AttentionShape {
+            tokens: 5,
+            width: 8,
+            heads: 2,
+        };
+        let n = shape.activation_len().unwrap();
+        let q = data(n, 2);
+        let k = data(n, 5);
+        let v = data(n, 9);
+        let slopes = [0.25f32, 0.0625];
+        let mut full = vec![0.0; n];
+        let mut full_scores = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .forward_eval_alibi(
+                &q,
+                &k,
+                &v,
+                shape,
+                &slopes,
+                &mut full,
+                &mut full_scores,
+            )
+            .unwrap();
+
+        let d = shape.width;
+        let history = shape.tokens - 1;
+        let mut decoded = vec![0.0; d];
+        let mut scores = vec![0.0; shape.tokens];
+        RowSlicesAttention
+            .forward_decode(
+                &q[history * d..],
+                &k[..history * d],
+                &v[..history * d],
+                &k[history * d..],
+                &v[history * d..],
+                history,
+                d,
+                shape.heads,
+                Some(&slopes),
+                &mut decoded,
+                &mut scores,
+            )
+            .unwrap();
+        assert_eq!(decoded, full[history * d..]);
     }
 
     #[test]
