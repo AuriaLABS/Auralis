@@ -5,7 +5,7 @@
 
 use crate::position::PositionKind;
 
-pub const KV_CACHE_SCHEMA_VERSION: u32 = 1;
+pub const KV_CACHE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug)]
 struct LayerKvCache {
@@ -18,6 +18,8 @@ pub struct KvCache {
     version: u32,
     layers: usize,
     width: usize,
+    query_heads: usize,
+    kv_heads: usize,
     capacity: usize,
     position: PositionKind,
     len: usize,
@@ -31,9 +33,25 @@ impl KvCache {
         capacity: usize,
         position: PositionKind,
     ) -> Result<Self, String> {
-        if layers == 0 || width == 0 || capacity == 0 {
+        Self::new_with_heads(layers, width, 1, 1, capacity, position)
+    }
+
+    pub fn new_with_heads(
+        layers: usize,
+        width: usize,
+        query_heads: usize,
+        kv_heads: usize,
+        capacity: usize,
+        position: PositionKind,
+    ) -> Result<Self, String> {
+        if layers == 0 || width == 0 || capacity == 0 || query_heads == 0 || kv_heads == 0 {
             return Err(format!(
-                "kv cache requires positive shape: layers={layers} width={width} capacity={capacity}"
+                "kv cache requires positive shape: layers={layers} width={width} query_heads={query_heads} kv_heads={kv_heads} capacity={capacity}"
+            ));
+        }
+        if kv_heads > query_heads || query_heads % kv_heads != 0 || width % kv_heads != 0 {
+            return Err(format!(
+                "kv cache requires compatible attention heads: width={width} query_heads={query_heads} kv_heads={kv_heads}"
             ));
         }
         let _ = layers
@@ -45,6 +63,8 @@ impl KvCache {
             version: KV_CACHE_SCHEMA_VERSION,
             layers,
             width,
+            query_heads,
+            kv_heads,
             capacity,
             position,
             len: 0,
@@ -75,6 +95,14 @@ impl KvCache {
 
     pub fn width(&self) -> usize {
         self.width
+    }
+
+    pub fn query_heads(&self) -> usize {
+        self.query_heads
+    }
+
+    pub fn kv_heads(&self) -> usize {
+        self.kv_heads
     }
 
     pub fn capacity(&self) -> usize {
@@ -162,6 +190,25 @@ impl KvCache {
             if layer.keys.len() != expected || layer.values.len() != expected {
                 return Err("kv cache layer activation length mismatch".into());
             }
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_heads(
+        &self,
+        layers: usize,
+        width: usize,
+        query_heads: usize,
+        kv_heads: usize,
+        capacity: usize,
+        position: PositionKind,
+    ) -> Result<(), String> {
+        self.validate_for(layers, width, capacity, position)?;
+        if self.query_heads != query_heads || self.kv_heads != kv_heads {
+            return Err(format!(
+                "kv cache attention-layout mismatch: cache=query_heads:{} kv_heads:{} model=query_heads:{} kv_heads:{}",
+                self.query_heads, self.kv_heads, query_heads, kv_heads
+            ));
         }
         Ok(())
     }
@@ -255,6 +302,34 @@ mod tests {
         cache.commit(&staged).unwrap();
         assert!(cache.commit(&staged).is_err());
         assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn attention_layout_identity_fails_closed() {
+        let cache = KvCache::new_with_heads(
+            2,
+            4,
+            4,
+            2,
+            8,
+            PositionKind::LearnedAbsolute,
+        )
+        .unwrap();
+        cache
+            .validate_for_heads(2, 4, 4, 2, 8, PositionKind::LearnedAbsolute)
+            .unwrap();
+        assert!(cache
+            .validate_for_heads(2, 4, 2, 1, 8, PositionKind::LearnedAbsolute)
+            .is_err());
+        assert!(KvCache::new_with_heads(
+            2,
+            4,
+            4,
+            3,
+            8,
+            PositionKind::LearnedAbsolute,
+        )
+        .is_err());
     }
 
     #[test]
