@@ -485,34 +485,46 @@ impl Gpt {
     }
 
     fn apply_position_to_qk(&self, q: &mut [f32], k: &mut [f32], positions: usize) {
-        match self.position {
-            PositionKind::LearnedAbsolute => {
-                let positional = LearnedAbsolute::new(
-                    &self.pos_emb,
-                    self.cfg.block,
-                    self.cfg.n_embd,
-                )
-                .expect("model positional storage matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match positional contract");
+        if self.n_kv_head == self.cfg.n_head {
+            match self.position {
+                PositionKind::LearnedAbsolute => {
+                    let positional = LearnedAbsolute::new(
+                        &self.pos_emb,
+                        self.cfg.block,
+                        self.cfg.n_embd,
+                    )
+                    .expect("model positional storage matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match positional contract");
+                }
+                PositionKind::Rope => {
+                    let positional =
+                        Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model RoPE shape matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match RoPE contract");
+                }
+                PositionKind::Alibi => {
+                    let positional =
+                        Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model ALiBi shape matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match ALiBi contract");
+                }
             }
-            PositionKind::Rope => {
-                let positional =
-                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model RoPE shape matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match RoPE contract");
-            }
-            PositionKind::Alibi => {
-                let positional =
-                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model ALiBi shape matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match ALiBi contract");
-            }
+            return;
+        }
+
+        assert_eq!(q.len(), positions * self.cfg.n_embd);
+        assert_eq!(k.len(), positions * self.kv_width());
+        if self.position == PositionKind::Rope {
+            Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                .expect("model RoPE shape matches config")
+                .apply_grouped_qk(q, k, positions, self.cfg.n_head, self.n_kv_head)
+                .expect("grouped model Q/K shapes match RoPE contract");
         }
     }
 
@@ -522,35 +534,194 @@ impl Gpt {
         dk: &mut [f32],
         positions: usize,
     ) {
-        match self.position {
-            PositionKind::LearnedAbsolute => {
-                let positional = LearnedAbsolute::new(
-                    &self.pos_emb,
-                    self.cfg.block,
-                    self.cfg.n_embd,
-                )
-                .expect("model positional storage matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match positional contract");
+        if self.n_kv_head == self.cfg.n_head {
+            match self.position {
+                PositionKind::LearnedAbsolute => {
+                    let positional = LearnedAbsolute::new(
+                        &self.pos_emb,
+                        self.cfg.block,
+                        self.cfg.n_embd,
+                    )
+                    .expect("model positional storage matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match positional contract");
+                }
+                PositionKind::Rope => {
+                    let positional =
+                        Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model RoPE shape matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match RoPE contract");
+                }
+                PositionKind::Alibi => {
+                    let positional =
+                        Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model ALiBi shape matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match ALiBi contract");
+                }
             }
-            PositionKind::Rope => {
-                let positional =
-                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model RoPE shape matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match RoPE contract");
-            }
-            PositionKind::Alibi => {
-                let positional =
-                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model ALiBi shape matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match ALiBi contract");
-            }
+            return;
         }
+
+        assert_eq!(dq.len(), positions * self.cfg.n_embd);
+        assert_eq!(dk.len(), positions * self.kv_width());
+        if self.position == PositionKind::Rope {
+            Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                .expect("model RoPE shape matches config")
+                .backward_grouped_qk(
+                    dq,
+                    dk,
+                    positions,
+                    self.cfg.n_head,
+                    self.n_kv_head,
+                )
+                .expect("grouped model Q/K gradient shapes match RoPE contract");
+        }
+    }
+
+    fn attention_eval_current(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        tokens: usize,
+    ) -> Vec<f32> {
+        if self.n_kv_head == self.cfg.n_head {
+            return attention_eval(
+                q,
+                k,
+                v,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                self.position,
+            );
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        let mut out = vec![0.0; tokens * self.cfg.n_embd];
+        let mut scores = vec![0.0; tokens];
+        let slopes = if self.position == PositionKind::Alibi {
+            Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
+        } else {
+            None
+        };
+        OPTIMIZED_ATTENTION
+            .forward_eval_grouped(
+                q,
+                k,
+                v,
+                shape,
+                slopes.as_deref(),
+                &mut out,
+                &mut scores,
+            )
+            .expect("grouped attention eval shapes match model");
+        out
+    }
+
+    fn attention_forward_current(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        tokens: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        if self.n_kv_head == self.cfg.n_head {
+            return attention_forward(
+                q,
+                k,
+                v,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                self.position,
+            );
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        let mut out = vec![0.0; tokens * self.cfg.n_embd];
+        let mut probs = vec![0.0; shape.probs_len().expect("validated grouped attention shape")];
+        let slopes = if self.position == PositionKind::Alibi {
+            Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
+        } else {
+            None
+        };
+        OPTIMIZED_ATTENTION
+            .forward_cached_grouped(
+                q,
+                k,
+                v,
+                shape,
+                slopes.as_deref(),
+                &mut out,
+                &mut probs,
+            )
+            .expect("grouped attention forward shapes match model");
+        (out, probs)
+    }
+
+    fn attention_backward_current(
+        &self,
+        dout: &[f32],
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        probs: &[f32],
+        tokens: usize,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        dv: &mut [f32],
+        dp: &mut [f32],
+    ) {
+        if self.n_kv_head == self.cfg.n_head {
+            attention_backward_into(
+                dout,
+                q,
+                k,
+                v,
+                probs,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                dq,
+                dk,
+                dv,
+                dp,
+            );
+            return;
+        }
+        OPTIMIZED_ATTENTION
+            .backward_grouped(
+                dout,
+                q,
+                k,
+                v,
+                probs,
+                GroupedAttentionShape {
+                    tokens,
+                    width: self.cfg.n_embd,
+                    heads: self.cfg.n_head,
+                    kv_heads: self.n_kv_head,
+                },
+                dq,
+                dk,
+                dv,
+                dp,
+            )
+            .expect("grouped attention backward shapes match model");
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
@@ -667,7 +838,7 @@ impl Gpt {
     ) -> Result<Vec<f32>, String> {
         cache.validate_for(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
             self.cfg.block,
             self.position,
         )?;
