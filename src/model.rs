@@ -853,9 +853,11 @@ impl Gpt {
 
     /// Create an empty per-session KV cache matching this model.
     pub fn new_kv_cache(&self) -> KvCache {
-        KvCache::new(
+        KvCache::new_with_heads(
             self.cfg.n_layer,
             self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )
@@ -869,9 +871,11 @@ impl Gpt {
         tokens: &[usize],
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for(
+        cache.validate_for_heads(
             self.cfg.n_layer,
             self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )?;
@@ -906,9 +910,11 @@ impl Gpt {
         token: usize,
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for(
+        cache.validate_for_heads(
             self.cfg.n_layer,
             self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )?;
