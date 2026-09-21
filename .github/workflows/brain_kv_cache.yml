@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           cargo run --release --bin auralis_kv_cache_bench | tee /tmp/kv-cache.txt
 
-          grep -q '^kv_cache_protocol | schema=1 ' /tmp/kv-cache.txt
+          grep -q '^kv_cache_protocol | schema=2 ' /tmp/kv-cache.txt
           test "$(grep -c '^kv_cache_curve |' /tmp/kv-cache.txt)" -eq 4
 
           python3 - <<'PY'
