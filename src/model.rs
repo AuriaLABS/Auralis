@@ -234,6 +234,36 @@ fn init_vec(rng: &mut impl Rng, n: usize, scale: f32) -> Vec<f32> {
     (0..n).map(|_| rng.gen_range(-scale..scale)).collect()
 }
 
+fn init_compact_projection(
+    rng: &mut impl Rng,
+    input_width: usize,
+    full_output_width: usize,
+    compact_output_width: usize,
+    scale: f32,
+) -> Vec<f32> {
+    assert!(compact_output_width > 0 && compact_output_width <= full_output_width);
+    let full = init_vec(
+        rng,
+        input_width
+            .checked_mul(full_output_width)
+            .expect("projection initialization size overflow"),
+        scale,
+    );
+    if compact_output_width == full_output_width {
+        return full;
+    }
+    let mut compact = Vec::with_capacity(
+        input_width
+            .checked_mul(compact_output_width)
+            .expect("compact projection initialization size overflow"),
+    );
+    for row in 0..input_width {
+        let start = row * full_output_width;
+        compact.extend_from_slice(&full[start..start + compact_output_width]);
+    }
+    compact
+}
+
 fn zeros_block_grad(cfg: Config, n_kv_head: usize) -> BlockGrad {
     let d = cfg.n_embd;
     let head_width = d / cfg.n_head;
@@ -389,8 +419,8 @@ impl Gpt {
                 ln1_g: vec![1.0; d],
                 ln1_b: vec![0.0; d],
                 wq: init_vec(rng, d * d, 0.02),
-                wk: init_vec(rng, d * kv_width, 0.02),
-                wv: init_vec(rng, d * kv_width, 0.02),
+                wk: init_compact_projection(rng, d, d, kv_width, 0.02),
+                wv: init_compact_projection(rng, d, d, kv_width, 0.02),
                 wo: init_vec(rng, d * d, 0.02),
                 ln2_g: vec![1.0; d],
                 ln2_b: vec![0.0; d],
@@ -3280,6 +3310,29 @@ mod tests {
         );
         assert_eq!(mqa.kv_width(), 2);
         assert!(mqa.collect_params().len() < gqa.collect_params().len());
+
+        // Compact variants consume the same RNG budget as MHA, so everything
+        // initialized after Wk/Wv remains directly comparable.
+        let mut rng_mha_next = StdRng::seed_from_u64(0xA11CE_1402);
+        let mha_next = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            4,
+            &mut rng_mha_next,
+        );
+        let after_mha: u64 = rng_mha_next.gen();
+        let mut rng_mqa_next = StdRng::seed_from_u64(0xA11CE_1402);
+        let _mqa_next = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            1,
+            &mut rng_mqa_next,
+        );
+        let after_mqa: u64 = rng_mqa_next.gen();
+        assert_eq!(after_mqa, after_mha);
+        assert_eq!(mha_next.n_kv_head(), 4);
     }
 
     #[test]
