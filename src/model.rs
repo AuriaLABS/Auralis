@@ -435,6 +435,46 @@ impl Gpt {
         (self.cfg.n_embd / self.cfg.n_head) * self.n_kv_head
     }
 
+    pub fn expected_parameter_count(
+        cfg: Config,
+        n_kv_head: usize,
+    ) -> Result<usize, String> {
+        if cfg.vocab <= 1
+            || cfg.n_embd == 0
+            || cfg.n_head == 0
+            || cfg.n_layer == 0
+            || cfg.block == 0
+            || cfg.n_ff == 0
+            || cfg.n_embd % cfg.n_head != 0
+            || n_kv_head == 0
+            || n_kv_head > cfg.n_head
+            || cfg.n_head % n_kv_head != 0
+        {
+            return Err("invalid model/KV-head shape for parameter count".into());
+        }
+        let d = cfg.n_embd;
+        let kv_width = (d / cfg.n_head)
+            .checked_mul(n_kv_head)
+            .ok_or_else(|| "KV width overflow".to_string())?;
+        let per_block = d
+            .checked_mul(d)
+            .and_then(|n| n.checked_mul(2))
+            .and_then(|n| n.checked_add(d.checked_mul(kv_width)?.checked_mul(2)?))
+            .and_then(|n| n.checked_add(d.checked_mul(5)?))
+            .and_then(|n| n.checked_add(d.checked_mul(cfg.n_ff)?.checked_mul(2)?))
+            .and_then(|n| n.checked_add(cfg.n_ff))
+            .ok_or_else(|| "block parameter count overflow".to_string())?;
+
+        cfg.vocab
+            .checked_mul(d)
+            .and_then(|n| n.checked_add(cfg.block.checked_mul(d)?))
+            .and_then(|n| n.checked_add(cfg.n_layer.checked_mul(per_block)?))
+            .and_then(|n| n.checked_add(d.checked_mul(2)?))
+            .and_then(|n| n.checked_add(d.checked_mul(cfg.vocab)?))
+            .and_then(|n| n.checked_add(cfg.vocab))
+            .ok_or_else(|| "model parameter count overflow".to_string())
+    }
+
 
     pub fn set_position_kind(&mut self, position: PositionKind) {
         if position == PositionKind::Rope {
@@ -2097,14 +2137,8 @@ impl Gpt {
     }
 
     fn param_count(&self) -> usize {
-        let per_block = self.block_param_count();
-        self.tok_emb.len()
-            + self.pos_emb.len()
-            + self.cfg.n_layer * per_block
-            + self.ln_f_g.len()
-            + self.ln_f_b.len()
-            + self.w_out.len()
-            + self.b_out.len()
+        Self::expected_parameter_count(self.cfg, self.n_kv_head)
+            .expect("validated model shape has finite parameter count")
     }
 }
 
