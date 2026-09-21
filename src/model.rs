@@ -2710,7 +2710,7 @@ mod tests {
         CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
 
     #[test]
     fn explicit_layernorm_policy_is_bit_exact_with_historical_default() {
