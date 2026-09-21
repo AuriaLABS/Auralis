@@ -487,6 +487,64 @@ impl Rotary {
         Ok(())
     }
 
+    /// Apply RoPE to a single Q/K row at an absolute sequence position.
+    ///
+    /// This keeps incremental decode numerically aligned with the equivalent
+    /// row from the full-prefix RoPE transform.
+    pub fn apply_qk_at_position(
+        &self,
+        q: &mut [f32],
+        k: &mut [f32],
+        position: usize,
+        heads: usize,
+    ) -> Result<(), PositionError> {
+        if heads != self.heads || self.width % heads != 0 {
+            return Err(PositionError::HeadWidthMismatch {
+                width: self.width,
+                heads,
+            });
+        }
+        if position >= self.block {
+            return Err(PositionError::ContextExceeded {
+                positions: position.saturating_add(1),
+                max_positions: self.block,
+            });
+        }
+        if q.len() != self.width {
+            return Err(PositionError::ActivationMismatch {
+                expected: self.width,
+                actual: q.len(),
+            });
+        }
+        if k.len() != self.width {
+            return Err(PositionError::ActivationMismatch {
+                expected: self.width,
+                actual: k.len(),
+            });
+        }
+
+        let head_width = self.width / self.heads;
+        let pairs = head_width / 2;
+        for pair in 0..pairs {
+            let exponent = (2 * pair) as f32 / head_width as f32;
+            let denominator = 10_000.0f32.powf(exponent);
+            let theta = position as f32 / denominator;
+            let (sin, cos) = theta.sin_cos();
+            for head in 0..self.heads {
+                let base = head * head_width;
+                let i0 = base + 2 * pair;
+                let i1 = i0 + 1;
+                for values in [&mut *q, &mut *k] {
+                    let x0 = values[i0];
+                    let x1 = values[i1];
+                    values[i0] = x0 * cos - x1 * sin;
+                    values[i1] = x0 * sin + x1 * cos;
+                }
+            }
+        }
+        Ok(())
+    }
+
 }
 
 impl PositionalEncoding for Rotary {
@@ -582,6 +640,22 @@ impl TrainablePositionalEncoding for Rotary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rope_single_position_matches_full_transform_row_exactly() {
+        let rope = Rotary::new(8, 8, 2).unwrap();
+        let mut full_q: Vec<f32> = (0..32).map(|i| (i as f32 - 7.0) / 13.0).collect();
+        let mut full_k: Vec<f32> = (0..32).map(|i| (i as f32 + 3.0) / 17.0).collect();
+        let mut row_q = full_q[24..32].to_vec();
+        let mut row_k = full_k[24..32].to_vec();
+
+        rope.apply_qk(&mut full_q, &mut full_k, 4, 2).unwrap();
+        rope.apply_qk_at_position(&mut row_q, &mut row_k, 3, 2)
+            .unwrap();
+
+        assert_eq!(row_q, full_q[24..32]);
+        assert_eq!(row_k, full_k[24..32]);
+    }
 
     #[test]
     fn learned_absolute_forward_matches_legacy_nested_loop_exactly() {
