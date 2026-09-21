@@ -1,0 +1,76 @@
+name: Brain Recurrent Reasoning
+
+on:
+  pull_request:
+    paths:
+      - "src/recurrent.rs"
+      - "src/model.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_recurrent_reasoning_bench.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "docs/recurrent-reasoning.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/brain_recurrent_reasoning.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recurrent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Recurrent contract and gradient tests
+        run: |
+          cargo test --lib recurrent::tests -- --nocapture
+          cargo test --lib model::tests::recurrent_one_step_is_bit_exact_with_baseline -- --nocapture
+          cargo test --lib model::tests::recurrent_multi_step_is_finite_and_keeps_parameter_budget_fixed -- --nocapture
+          cargo test --lib model::tests::recurrent_two_step_gradient_matches_finite_difference -- --nocapture
+
+      - name: Fixed block-application budget curve
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_recurrent_reasoning_bench             | tee /tmp/recurrent.txt
+
+          grep -q '^recurrent_protocol |' /tmp/recurrent.txt
+          test "$(grep -c '^recurrent_run |' /tmp/recurrent.txt)" -eq 9
+          test "$(grep -c '^recurrent_curve |' /tmp/recurrent.txt)" -eq 3
+
+          python3 - <<'PY'
+          import re
+
+          text = open("/tmp/recurrent.txt", encoding="utf-8").read()
+          curves = [line for line in text.splitlines() if line.startswith("recurrent_curve |")]
+          assert len(curves) == 3
+
+          params = set()
+          for expected_steps, line in zip([1, 2, 3], curves):
+              steps = int(re.search(r"reasoning_steps=(\d+)", line).group(1))
+              applications = int(re.search(r"block_applications=(\d+)", line).group(1))
+              parameter_count = int(re.search(r"params=(\d+)", line).group(1))
+              train_ns = int(re.search(r"median_train_ns=(\d+)", line).group(1))
+              inference_ns = int(re.search(r"median_inference_100_ns=(\d+)", line).group(1))
+              loss = float(re.search(r"eval_loss=([0-9.]+)", line).group(1))
+              ppl = float(re.search(r"ppl=([0-9.]+)", line).group(1))
+              assert steps == expected_steps
+              assert applications == 12
+              assert train_ns > 0
+              assert inference_ns > 0
+              assert loss > 0
+              assert ppl >= 1
+              assert "state_reproducible=true" in line
+              params.add(parameter_count)
+
+          assert len(params) == 1, params
+          print("recurrent_gate | steps=1,2,3 block_budget=12 parameter_budget=fixed")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets
