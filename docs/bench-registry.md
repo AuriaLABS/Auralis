@@ -60,3 +60,14 @@ cargo run --release --bin auralis_recurrent_reasoning_bench
 ```
 
 It compares reasoning steps 1, 2 and 3 with a fixed 12 physical block-application budget, identical model parameter count, seed, optimizer policy and token stream. It reports optimizer updates, tokens seen, eval loss/perplexity, training and inference latency, gradient norm and final-state fingerprint. The curve is descriptive evidence; the benchmark does not auto-promote a recurrent depth.
+
+
+## Brain KV-cache benchmark
+
+The `kv-cache` entry runs:
+
+```
+cargo run --release --bin auralis_kv_cache_bench
+```
+
+It compares growing-prefix autoregressive decode with full uncached prefix recomputation against one-token cached decode at contexts 8, 16, 32 and 64. It reports exact cached/uncached equivalence, total and per-token latency, speedup, active/allocated cache bytes and fixed model parameter count. Hosted-runner timing is descriptive; the longest-context advantage is the performance gate for #40.
