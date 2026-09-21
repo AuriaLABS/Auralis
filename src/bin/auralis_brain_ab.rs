@@ -57,6 +57,22 @@ fn main() {
                 optimizer: OptimizerId::Adam,
             },
         ),
+        "alibi" => (
+            AbVariant {
+                label: "learned-absolute".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::LearnedAbsolute,
+                optimizer: OptimizerId::Adam,
+            },
+            AbVariant {
+                label: "alibi".into(),
+                config: config(2),
+                normalization: NormalizationKind::LayerNorm,
+                position: PositionKind::Alibi,
+                optimizer: OptimizerId::Adam,
+            },
+        ),
         "optimizer-adamw" => (
             AbVariant {
                 label: "adam".into(),
@@ -91,7 +107,7 @@ fn main() {
         ),
         other => {
             eprintln!(
-                "unknown A/B scenario {other}; expected same|depth|normalization|rope|optimizer-adamw|optimizer-lion"
+                "unknown A/B scenario {other}; expected same|depth|normalization|rope|alibi|optimizer-adamw|optimizer-lion"
             );
             std::process::exit(2);
         }

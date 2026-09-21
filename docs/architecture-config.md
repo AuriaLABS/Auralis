@@ -26,9 +26,10 @@ Supported normalization policies:
 Supported positional policies:
 
 - `learned_absolute` — historical Auralis baseline; adds the learned `pos_emb` table to token embeddings;
-- `rope` — experimental rotary position encoding applied to Q/K per attention head. The historical `pos_emb` storage remains reserved and receives zero gradient so parameter count and AURLIS03 tensor layout remain comparable.
+- `rope` — experimental rotary position encoding applied to Q/K per attention head. The historical `pos_emb` storage remains reserved and receives zero gradient so parameter count and AURLIS03 tensor layout remain comparable;
+- `alibi` — experimental Attention with Linear Biases. Q/K are not rotated; a fixed per-head linear distance bias is added to causal attention logits before softmax. `pos_emb` remains reserved/inert for layout comparability.
 
-RoPE currently obeys the configured `block`; #38 does not claim context extrapolation beyond that limit. RoPE requires an even per-head width.
+RoPE currently obeys the configured `block`; #38 does not claim context extrapolation beyond that limit. RoPE requires an even per-head width. ALiBi also obeys the configured `block` in this experiment; #39 measures sensitivity only within that supported capacity.
 
 Schema 1 files remain valid and migrate deterministically to `normalization=layernorm` + `position=learned_absolute`. Schema 2 preserves its explicit normalization and migrates to `position=learned_absolute`. Future/unknown schemas, normalization values and positional values fail closed.
 
@@ -40,6 +41,7 @@ Examples:
 - [`../examples/architecture-small-3x2.cfg`](../examples/architecture-small-3x2.cfg)
 - [`../examples/architecture-rmsnorm.cfg`](../examples/architecture-rmsnorm.cfg)
 - [`../examples/architecture-rope.cfg`](../examples/architecture-rope.cfg)
+- [`../examples/architecture-alibi.cfg`](../examples/architecture-alibi.cfg)
 
 ## Training
 
@@ -51,7 +53,7 @@ Without `--model-config`, training keeps the historical tiny LayerNorm + learned
 
 For explicit architecture configs, Auralis writes `CHECKPOINT.architecture`. Resume, eval, chat and numeric-forward restore that metadata before executing the model. A mismatch aborts before overwriting checkpoint or manifest.
 
-Legacy checkpoints without an architecture sidecar are interpreted as LayerNorm + learned-absolute only. Requesting RMSNorm or RoPE for such a checkpoint is rejected because those policies cannot be inferred safely.
+Legacy checkpoints without an architecture sidecar are interpreted as LayerNorm + learned-absolute only. Requesting RMSNorm, RoPE or ALiBi for such a checkpoint is rejected because those policies cannot be inferred safely.
 
 ## Invariants
 

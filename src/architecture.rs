@@ -319,6 +319,23 @@ mod tests {
     }
 
     #[test]
+    fn alibi_roundtrips_in_schema_three_without_rope_head_width_constraint() {
+        let cfg = ArchitectureConfig {
+            n_embd: 6,
+            n_head: 2,
+            n_layer: 1,
+            block: 8,
+            n_ff: 12,
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::Alibi,
+        };
+        cfg.validate().unwrap();
+        let decoded = ArchitectureConfig::decode(&cfg.encode()).unwrap();
+        assert_eq!(decoded, cfg);
+        assert!(decoded.encode().contains("position=alibi\n"));
+    }
+
+    #[test]
     fn rope_requires_even_head_width() {
         let bad = ArchitectureConfig {
             n_embd: 6,

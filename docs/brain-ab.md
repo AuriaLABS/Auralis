@@ -78,6 +78,17 @@ This scenario holds vocab, width, heads, depth, block, FF width, normalization, 
 
 RoPE keeps the historical learned-position parameter slots reserved/inert, so parameter count and raw AURLIS03 tensor layout remain directly comparable. The harness reports both variants and does **not** promote RoPE automatically.
 
+## Learned absolute vs ALiBi
+
+```bash
+cargo run --release --bin auralis_brain_ab -- 8 5 alibi
+cargo run --release --bin auralis_brain_ab -- 8 5 alibi --json
+```
+
+This scenario holds vocab, width, heads, depth, block, FF width, normalization, optimizer, seed, token stream and training budget constant. Only positional policy changes.
+
+ALiBi leaves Q/K values unrotated and adds a fixed per-head linear distance bias to causal attention logits. The historical learned-position parameter slots remain reserved/inert, so parameter count and raw AURLIS03 tensor layout stay directly comparable. The harness reports both variants and does **not** promote ALiBi automatically.
+
 ## Optimizer comparisons
 
 ```bash

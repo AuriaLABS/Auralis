@@ -234,8 +234,10 @@ mod tests {
             "normalization=layernorm",
             "architecture-rmsnorm.cfg",
             "architecture-rope.cfg",
+            "architecture-alibi.cfg",
             "position=learned_absolute",
             "rope",
+            "alibi",
             "CHECKPOINT.architecture",
             "--model-config",
             "architecture-tiny.cfg",
@@ -252,6 +254,7 @@ mod tests {
             "architecture-small-3x2.cfg",
             "architecture-rmsnorm.cfg",
             "architecture-rope.cfg",
+            "architecture-alibi.cfg",
         ] {
             let cfg = crate::architecture::ArchitectureConfig::load(
                 root().join("examples").join(example)
@@ -275,6 +278,7 @@ mod tests {
             "normalization policy",
             "positional policy",
             "Learned absolute vs RoPE",
+            "Learned absolute vs ALiBi",
             "Optimizer comparisons",
             "optimizer-adamw",
             "optimizer-lion",
@@ -390,6 +394,26 @@ mod tests {
             "Changing the default requires a separate",
         ] {
             assert!(text.contains(needle), "rope-experiment.md missing {needle}");
+        }
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
+    }
+
+    #[test]
+    fn alibi_experiment_doc_matches_contract() {
+        let text = docs("alibi-experiment.md");
+        for needle in [
+            "ALiBi is **experimental**",
+            "position=learned_absolute",
+            "position=alibi",
+            "zero gradient",
+            "auralis_brain_ab",
+            "auralis_alibi_context_bench",
+            "contexts 4, 8, 16 and 32",
+            "does **not** evaluate context beyond",
+            "Changing the default requires a separate",
+        ] {
+            assert!(text.contains(needle), "alibi-experiment.md missing {needle}");
         }
         assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 3);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);

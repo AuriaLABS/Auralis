@@ -1,0 +1,149 @@
+name: Brain ALiBi Experiment
+
+on:
+  pull_request:
+    paths:
+      - "src/position.rs"
+      - "src/attention.rs"
+      - "src/kernels.rs"
+      - "src/model.rs"
+      - "src/architecture.rs"
+      - "src/brain_ab.rs"
+      - "src/main.rs"
+      - "src/bin/auralis_brain_ab.rs"
+      - "src/bin/auralis_alibi_context_bench.rs"
+      - "examples/architecture-alibi.cfg"
+      - "docs/architecture-config.md"
+      - "docs/brain-ab.md"
+      - "docs/alibi-experiment.md"
+      - "docs/versions.md"
+      - "src/docs_check.rs"
+      - ".github/workflows/brain_alibi_experiment.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  alibi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: ALiBi contract tests
+        run: |
+          cargo test --lib position::tests::alibi_slopes_match_reference_schedule_for_power_and_non_power_heads -- --nocapture
+          cargo test --lib position::tests::alibi_is_parameter_free_and_keeps_reserved_position_gradient_inert -- --nocapture
+          cargo test --lib attention::tests::alibi_forward_is_causal_and_prefers_recent_keys_for_zero_qk -- --nocapture
+          cargo test --lib attention::tests::alibi_cached_and_eval_paths_match_and_validate_slope_shape -- --nocapture
+          cargo test --lib model::tests::explicit_learned_absolute_policy_is_bit_exact_with_default -- --nocapture
+          cargo test --lib model::tests::alibi_keeps_parameter_layout_and_reserved_position_gradient_inert -- --nocapture
+          cargo test --lib architecture::tests -- --nocapture
+          cargo test --lib brain_ab::tests::alibi_variant_is_reproducible_and_distinct_from_learned_absolute -- --nocapture
+          cargo test --lib docs_check::tests::alibi_experiment_doc_matches_contract -- --nocapture
+
+      - name: ALiBi split resume exactness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release -- train-fresh 3 /tmp/alibi-full.bin 659918 2 1 \
+            --model-config examples/architecture-alibi.cfg | tee /tmp/alibi-full.txt
+          cargo run --release -- train-fresh 2 /tmp/alibi-split.bin 659918 2 1 \
+            --model-config examples/architecture-alibi.cfg > /tmp/alibi-split-a.txt
+          cargo run --release -- train 1 /tmp/alibi-split.bin 659918 2 1 \
+            --model-config examples/architecture-alibi.cfg | tee /tmp/alibi-split-b.txt
+
+          cmp /tmp/alibi-full.bin /tmp/alibi-split.bin
+          cmp /tmp/alibi-full.bin.manifest /tmp/alibi-split.bin.manifest
+          cmp /tmp/alibi-full.bin.architecture /tmp/alibi-split.bin.architecture
+          grep -q 'position=alibi' /tmp/alibi-full.txt
+          grep -q 'position=alibi' /tmp/alibi-split-b.txt
+          echo "alibi_resume_gate | checkpoint_exact=true manifest_exact=true architecture_exact=true"
+
+      - name: Learned absolute vs ALiBi A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_brain_ab -- 4 3 alibi --json \
+            | tee /tmp/alibi-ab.json
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/alibi-ab.json", encoding="utf-8"))
+          assert data["schema_version"] == 4
+          assert data["a"]["position"] == "learned_absolute"
+          assert data["b"]["position"] == "alibi"
+          assert data["a"]["normalization"] == data["b"]["normalization"] == "layernorm"
+          assert data["a"]["optimizer"] == data["b"]["optimizer"] == "adam"
+          assert data["a"]["config"] == data["b"]["config"]
+          assert len(data["a"]["measurements"]) == len(data["b"]["measurements"]) == 3
+          for a, b in zip(data["a"]["measurements"], data["b"]["measurements"]):
+              assert a["parameter_count"] == b["parameter_count"]
+              assert a["parameter_bytes"] == b["parameter_bytes"]
+              assert a["checkpoint_bytes"] == b["checkpoint_bytes"]
+              for row in (a, b):
+                  assert row["final_train_loss"] > 0
+                  assert row["eval_loss"] > 0
+                  assert row["eval_perplexity"] >= 1
+                  assert row["tokens_per_second"] > 0
+          print("alibi_ab_gate | same_budget=true same_parameter_layout=true records=3")
+          PY
+
+      - name: Context sensitivity and resource profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_alibi_context_bench -- 4 30 3 \
+            | tee /tmp/alibi-context.txt
+          test "$(grep -c '^alibi_context_child |' /tmp/alibi-context.txt)" -eq 8
+
+          python3 - <<'PY'
+          rows = []
+          for line in open("/tmp/alibi-context.txt", encoding="utf-8"):
+              if not line.startswith("alibi_context_child |"):
+                  continue
+              fields = {}
+              for token in line.strip().split()[2:]:
+                  if "=" in token:
+                      key, value = token.split("=", 1)
+                      fields[key] = value
+              rows.append(fields)
+
+          by = {}
+          for row in rows:
+              key = (int(row["context"]), row["policy"])
+              by[key] = row
+              assert int(row["block"]) == 32
+              assert int(row["train_steps"]) == 4
+              assert int(row["optimizer_step"]) == 4
+              assert int(row["params"]) > 0
+              assert float(row["loss"]) > 0
+              assert float(row["ppl"]) >= 1
+              assert float(row["tok_per_s"]) > 0
+              assert row["peak_rss_kib"] == "null" or int(row["peak_rss_kib"]) > 0
+
+          for context in [4, 8, 16, 32]:
+              learned = by[(context, "learned_absolute")]
+              alibi = by[(context, "alibi")]
+              assert learned["params"] == alibi["params"]
+              speed_ratio = float(alibi["tok_per_s"]) / float(learned["tok_per_s"])
+              if speed_ratio < 0.60:
+                  raise SystemExit(
+                      f"ALiBi throughput regression too large at context {context}: {speed_ratio:.4f}"
+                  )
+              if learned["peak_rss_kib"] != "null" and alibi["peak_rss_kib"] != "null":
+                  if int(alibi["peak_rss_kib"]) > int(learned["peak_rss_kib"]) + 2048:
+                      raise SystemExit(
+                          f"ALiBi RSS regression too large at context {context}: "
+                          f"{alibi['peak_rss_kib']} vs {learned['peak_rss_kib']}"
+                      )
+              print(
+                  f"alibi_context_gate | context={context} "
+                  f"alibi_over_learned_tok_s={speed_ratio:.4f} "
+                  f"learned_loss={learned['loss']} alibi_loss={alibi['loss']}"
+              )
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

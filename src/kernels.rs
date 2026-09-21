@@ -277,6 +277,74 @@ pub fn attention_forward_row_slices_into(
     }
 }
 
+/// Slice-based causal attention with an ALiBi linear bias per head.
+///
+/// `head_slopes[h] * (key_position - query_position)` is added to each
+/// causal attention logit before softmax. Future positions remain masked by the
+/// causal loop rather than represented by sentinel logits.
+pub fn attention_forward_row_slices_alibi_into(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    t: usize,
+    d: usize,
+    n_head: usize,
+    head_slopes: &[f32],
+    out: &mut [f32],
+    probs: &mut [f32],
+) {
+    assert_eq!(q.len(), t * d);
+    assert_eq!(k.len(), t * d);
+    assert_eq!(v.len(), t * d);
+    assert_eq!(out.len(), t * d);
+    assert_eq!(probs.len(), n_head * t * t);
+    assert_eq!(head_slopes.len(), n_head);
+    assert!(n_head > 0 && d % n_head == 0);
+    out.fill(0.0);
+    probs.fill(0.0);
+
+    let hd = d / n_head;
+    let scale = 1.0 / (hd as f32).sqrt();
+    for h in 0..n_head {
+        let hoff = h * hd;
+        let slope = head_slopes[h];
+        for i in 0..t {
+            let q_head = &q[i * d + hoff..i * d + hoff + hd];
+            let prob_start = (h * t + i) * t;
+            let prob_row = &mut probs[prob_start..prob_start + t];
+            let mut max_score = f32::NEG_INFINITY;
+            for j in 0..=i {
+                let k_head = &k[j * d + hoff..j * d + hoff + hd];
+                let mut s = 0.0f32;
+                for (&qv, &kv) in q_head.iter().zip(k_head) {
+                    s += qv * kv;
+                }
+                s *= scale;
+                s += slope * (j as f32 - i as f32);
+                prob_row[j] = s;
+                max_score = max_score.max(s);
+            }
+
+            let mut sum = 0.0f32;
+            for score in &mut prob_row[..=i] {
+                let e = (*score - max_score).exp();
+                *score = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            let out_head = &mut out[i * d + hoff..i * d + hoff + hd];
+            for j in 0..=i {
+                prob_row[j] *= inv;
+                let p = prob_row[j];
+                let v_head = &v[j * d + hoff..j * d + hoff + hd];
+                for (dst, &vv) in out_head.iter_mut().zip(v_head) {
+                    *dst += p * vv;
+                }
+            }
+        }
+    }
+}
+
 /// Reference causal multi-head attention backward pass matching `model.rs`.
 pub fn attention_backward_reference_into(
     dout: &[f32],
