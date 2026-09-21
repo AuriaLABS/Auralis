@@ -19,7 +19,7 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | external memory schema | `EXTERNAL_MEMORY_SCHEMA_VERSION = 1` |
 | memory integration schema | `MEMORY_INTEGRATION_SCHEMA_VERSION = 1` |
 | recurrent config schema | `RECURRENT_CONFIG_SCHEMA_VERSION = 1` |
-| KV cache session schema | `KV_CACHE_SCHEMA_VERSION = 1` |
+| KV cache session schema | `KV_CACHE_SCHEMA_VERSION = 2` |
 | experiment manifest | `MANIFEST_VERSION = 4` |
 | release manifest | `RELEASE_MANIFEST_VERSION = 1` |
 
