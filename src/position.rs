@@ -487,6 +487,184 @@ impl Rotary {
         Ok(())
     }
 
+    pub fn apply_grouped_qk(
+        &self,
+        q: &mut [f32],
+        k: &mut [f32],
+        positions: usize,
+        query_heads: usize,
+        kv_heads: usize,
+    ) -> Result<(), PositionError> {
+        self.rotate_grouped_qk(q, k, positions, query_heads, kv_heads, false)
+    }
+
+    pub fn backward_grouped_qk(
+        &self,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        positions: usize,
+        query_heads: usize,
+        kv_heads: usize,
+    ) -> Result<(), PositionError> {
+        self.rotate_grouped_qk(dq, dk, positions, query_heads, kv_heads, true)
+    }
+
+    fn rotate_grouped_qk(
+        &self,
+        q: &mut [f32],
+        k: &mut [f32],
+        positions: usize,
+        query_heads: usize,
+        kv_heads: usize,
+        inverse: bool,
+    ) -> Result<(), PositionError> {
+        if query_heads != self.heads || kv_heads == 0 || query_heads % kv_heads != 0 {
+            return Err(PositionError::HeadWidthMismatch {
+                width: self.width,
+                heads: kv_heads,
+            });
+        }
+        self.active_len(positions)?;
+        let head_width = self.width / self.heads;
+        let expected_q = positions
+            .checked_mul(self.width)
+            .ok_or(PositionError::ActivationMismatch {
+                expected: usize::MAX,
+                actual: q.len(),
+            })?;
+        let kv_width = head_width
+            .checked_mul(kv_heads)
+            .ok_or(PositionError::ActivationMismatch {
+                expected: usize::MAX,
+                actual: k.len(),
+            })?;
+        let expected_k = positions
+            .checked_mul(kv_width)
+            .ok_or(PositionError::ActivationMismatch {
+                expected: usize::MAX,
+                actual: k.len(),
+            })?;
+        if q.len() != expected_q {
+            return Err(PositionError::ActivationMismatch {
+                expected: expected_q,
+                actual: q.len(),
+            });
+        }
+        if k.len() != expected_k {
+            return Err(PositionError::ActivationMismatch {
+                expected: expected_k,
+                actual: k.len(),
+            });
+        }
+
+        let pairs = head_width / 2;
+        for pair in 0..pairs {
+            let exponent = (2 * pair) as f32 / head_width as f32;
+            let denominator = 10_000.0f32.powf(exponent);
+            for position in 0..positions {
+                let theta = position as f32 / denominator;
+                let (sin, cos) = theta.sin_cos();
+                for head in 0..query_heads {
+                    let base = position * self.width + head * head_width;
+                    let i0 = base + 2 * pair;
+                    let i1 = i0 + 1;
+                    let x0 = q[i0];
+                    let x1 = q[i1];
+                    if inverse {
+                        q[i0] = x0 * cos + x1 * sin;
+                        q[i1] = -x0 * sin + x1 * cos;
+                    } else {
+                        q[i0] = x0 * cos - x1 * sin;
+                        q[i1] = x0 * sin + x1 * cos;
+                    }
+                }
+                for head in 0..kv_heads {
+                    let base = position * kv_width + head * head_width;
+                    let i0 = base + 2 * pair;
+                    let i1 = i0 + 1;
+                    let x0 = k[i0];
+                    let x1 = k[i1];
+                    if inverse {
+                        k[i0] = x0 * cos + x1 * sin;
+                        k[i1] = -x0 * sin + x1 * cos;
+                    } else {
+                        k[i0] = x0 * cos - x1 * sin;
+                        k[i1] = x0 * sin + x1 * cos;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn apply_grouped_qk_at_position(
+        &self,
+        q: &mut [f32],
+        k: &mut [f32],
+        position: usize,
+        query_heads: usize,
+        kv_heads: usize,
+    ) -> Result<(), PositionError> {
+        if position >= self.block {
+            return Err(PositionError::ContextExceeded {
+                positions: position.saturating_add(1),
+                max_positions: self.block,
+            });
+        }
+        if query_heads != self.heads || kv_heads == 0 || query_heads % kv_heads != 0 {
+            return Err(PositionError::HeadWidthMismatch {
+                width: self.width,
+                heads: kv_heads,
+            });
+        }
+        let head_width = self.width / self.heads;
+        let kv_width = head_width
+            .checked_mul(kv_heads)
+            .ok_or(PositionError::ActivationMismatch {
+                expected: usize::MAX,
+                actual: k.len(),
+            })?;
+        if q.len() != self.width {
+            return Err(PositionError::ActivationMismatch {
+                expected: self.width,
+                actual: q.len(),
+            });
+        }
+        if k.len() != kv_width {
+            return Err(PositionError::ActivationMismatch {
+                expected: kv_width,
+                actual: k.len(),
+            });
+        }
+
+        let pairs = head_width / 2;
+        for pair in 0..pairs {
+            let exponent = (2 * pair) as f32 / head_width as f32;
+            let denominator = 10_000.0f32.powf(exponent);
+            let theta = position as f32 / denominator;
+            let (sin, cos) = theta.sin_cos();
+            for head in 0..query_heads {
+                let base = head * head_width;
+                let i0 = base + 2 * pair;
+                let i1 = i0 + 1;
+                let x0 = q[i0];
+                let x1 = q[i1];
+                q[i0] = x0 * cos - x1 * sin;
+                q[i1] = x0 * sin + x1 * cos;
+            }
+            for head in 0..kv_heads {
+                let base = head * head_width;
+                let i0 = base + 2 * pair;
+                let i1 = i0 + 1;
+                let x0 = k[i0];
+                let x1 = k[i1];
+                k[i0] = x0 * cos - x1 * sin;
+                k[i1] = x0 * sin + x1 * cos;
+            }
+        }
+        Ok(())
+    }
+
     /// Apply RoPE to a single Q/K row at an absolute sequence position.
     ///
     /// This keeps incremental decode numerically aligned with the equivalent
@@ -640,6 +818,54 @@ impl TrainablePositionalEncoding for Rotary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rope_grouped_kv_matches_repeated_mha_heads() {
+        let rope = Rotary::new(8, 8, 4).unwrap();
+        let positions = 3;
+        let head_width = 2;
+        let mut q: Vec<f32> = (0..positions * 8)
+            .map(|i| (i as f32 - 5.0) / 17.0)
+            .collect();
+        let mut compact_k: Vec<f32> = (0..positions * 4)
+            .map(|i| (i as f32 + 2.0) / 19.0)
+            .collect();
+
+        let mut expanded_k = Vec::with_capacity(positions * 8);
+        for pos in 0..positions {
+            for kv_head in 0..2 {
+                let src = &compact_k[
+                    pos * 4 + kv_head * head_width
+                        ..pos * 4 + (kv_head + 1) * head_width
+                ];
+                expanded_k.extend_from_slice(src);
+                expanded_k.extend_from_slice(src);
+            }
+        }
+        let mut q_reference = q.clone();
+        rope.apply_qk(&mut q_reference, &mut expanded_k, positions, 4)
+            .unwrap();
+        rope.apply_grouped_qk(&mut q, &mut compact_k, positions, 4, 2)
+            .unwrap();
+        assert_eq!(q, q_reference);
+
+        for pos in 0..positions {
+            for kv_head in 0..2 {
+                let compact = &compact_k[
+                    pos * 4 + kv_head * head_width
+                        ..pos * 4 + (kv_head + 1) * head_width
+                ];
+                for group_offset in 0..2 {
+                    let q_head = kv_head * 2 + group_offset;
+                    let expanded = &expanded_k[
+                        pos * 8 + q_head * head_width
+                            ..pos * 8 + (q_head + 1) * head_width
+                    ];
+                    assert_eq!(compact, expanded);
+                }
+            }
+        }
+    }
 
     #[test]
     fn rope_single_position_matches_full_transform_row_exactly() {
