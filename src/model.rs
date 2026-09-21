@@ -10,12 +10,12 @@ use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
 use crate::layer_diagnostics::{
+    cosine_similarity, summarize_tensor, AdjacentLayerCosine, GradientLayerSummary,
+    LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
+};
 use crate::memory::ExternalMemory;
 use crate::memory_integration::{
     fuse_last_hidden, retrieve_hidden_residual, MemoryInferenceMode, MemoryTrace,
-};
-    cosine_similarity, summarize_tensor, AdjacentLayerCosine, GradientLayerSummary,
-    LayerDiagnosticsReport, LayerHooks, LayerTensorSummary,
 };
 use crate::numeric::{explain, scan_f32, Scan, Stage};
 use crate::position::{
