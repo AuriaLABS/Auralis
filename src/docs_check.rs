@@ -144,6 +144,7 @@ mod tests {
             "optimizer-variants.md",
             "rope-experiment.md",
             "external-memory.md",
+            "memory-model-integration.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -431,6 +432,7 @@ mod tests {
             "reset —",
             "version —",
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
+            "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "session is ephemeral",
             "**never serialized**",
             "reject-new",
@@ -442,9 +444,39 @@ mod tests {
             assert!(text.contains(needle), "external-memory.md missing {needle}");
         }
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
+        assert_eq!(
+            crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
+            1
+        );
         let bench = crate::bench::find("external-memory").expect("external-memory benchmark");
         assert_eq!(bench.bin, "auralis_memory_bench");
         assert_eq!(bench.default_args, "128 40");
+    }
+
+    #[test]
+    fn memory_model_integration_doc_matches_contract() {
+        let text = docs("memory-model-integration.md");
+        for needle in [
+            "Gpt::logits_with_memory",
+            "MemoryInferenceMode::Off",
+            "last_hidden_mean_add",
+            "no implicit writes or resets occur",
+            "0/3",
+            "3/3",
+            "auralis_memory_model_bench",
+            "not** evidence of improved general reasoning",
+            "No default changes",
+        ] {
+            assert!(
+                text.contains(needle),
+                "memory-model-integration.md missing {needle}"
+            );
+        }
+        assert!(readme().contains("docs/memory-model-integration.md"));
+        assert_eq!(
+            crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
+            1
+        );
     }
 
     #[test]
