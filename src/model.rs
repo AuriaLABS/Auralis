@@ -18,6 +18,7 @@ use crate::memory_integration::{
     fuse_last_hidden, retrieve_hidden_residual, MemoryInferenceMode, MemoryTrace,
 };
 use crate::numeric::{explain, scan_f32, Scan, Stage};
+use crate::recurrent::RecurrentConfig;
 use crate::position::{
     alibi_slopes, Alibi, LearnedAbsolute, PositionKind, PositionalEncoding, Rotary,
     TrainablePositionalEncoding,
@@ -748,6 +749,80 @@ impl Gpt {
         loss / t as f32
     }
 
+    /// Experimental recurrent inference with shared physical block weights.
+    ///
+    /// reasoning_steps=1 delegates to the exact baseline logits path.
+    pub fn logits_recurrent(
+        &self,
+        tokens: &[usize],
+        config: RecurrentConfig,
+    ) -> Result<Vec<f32>, String> {
+        let config = config.validate()?;
+        if config.reasoning_steps == 1 {
+            return Ok(self.logits(tokens));
+        }
+        Ok(self.forward_eval_recurrent_with_backend(
+            tokens,
+            &OPTIMIZED_CPU_BACKEND,
+            config.reasoning_steps,
+        ))
+    }
+
+    pub fn loss_recurrent(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        config: RecurrentConfig,
+    ) -> Result<f32, String> {
+        let config = config.validate()?;
+        if config.reasoning_steps == 1 {
+            return Ok(self.loss(x, y));
+        }
+        if x.len() != y.len() {
+            return Err("recurrent loss input/target length mismatch".into());
+        }
+        if x.is_empty() || x.len() > self.cfg.block {
+            return Err("recurrent loss token length outside model block".into());
+        }
+        if x.iter().any(|&token| token >= self.cfg.vocab)
+            || y.iter().any(|&token| token >= self.cfg.vocab)
+        {
+            return Err("recurrent loss token id outside vocabulary".into());
+        }
+
+        let logits = self.forward_eval_recurrent_with_backend(
+            x,
+            &OPTIMIZED_CPU_BACKEND,
+            config.reasoning_steps,
+        );
+        Ok(mean_cross_entropy(&logits, y, self.cfg.vocab))
+    }
+
+    /// Experimental recurrent backward pass.
+    ///
+    /// Shared physical block parameters accumulate gradient contributions from
+    /// every recurrent application. reasoning_steps=1 delegates to baseline.
+    pub fn backward_recurrent_into(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        grads: &mut [f32],
+        config: RecurrentConfig,
+    ) -> Result<f32, String> {
+        let config = config.validate()?;
+        if config.reasoning_steps == 1 {
+            return Ok(self.backward_into(x, y, grads));
+        }
+        let mut workspace = BackwardWorkspace::new(self);
+        self.backward_recurrent_into_reuse(
+            x,
+            y,
+            grads,
+            &mut workspace,
+            config.reasoning_steps,
+        )
+    }
+
     pub fn backward_into(&self, x: &[usize], y: &[usize], grads: &mut [f32]) -> f32 {
         let mut workspace = BackwardWorkspace::new(self);
         self.backward_into_reuse(x, y, grads, &mut workspace)
@@ -1037,6 +1112,275 @@ impl Gpt {
         loss
     }
 
+    fn backward_recurrent_into_reuse(
+        &self,
+        x: &[usize],
+        y: &[usize],
+        grads: &mut [f32],
+        workspace: &mut BackwardWorkspace,
+        reasoning_steps: usize,
+    ) -> Result<f32, String> {
+        if x.len() != y.len() {
+            return Err("recurrent backward input/target length mismatch".into());
+        }
+        if x.is_empty() || x.len() > self.cfg.block {
+            return Err("recurrent backward token length outside model block".into());
+        }
+        if grads.len() != self.param_count() {
+            return Err("recurrent backward gradient size mismatch".into());
+        }
+        if x.iter().any(|&token| token >= self.cfg.vocab)
+            || y.iter().any(|&token| token >= self.cfg.vocab)
+        {
+            return Err("recurrent backward token id outside vocabulary".into());
+        }
+        if !workspace.matches(self) {
+            return Err("recurrent backward workspace config mismatch".into());
+        }
+
+        let (mut dlogits, cache) = self.forward_internal_recurrent_with_backend(
+            x,
+            &OPTIMIZED_CPU_BACKEND,
+            reasoning_steps,
+        );
+        let expected_caches = self
+            .blocks
+            .len()
+            .checked_mul(reasoning_steps)
+            .ok_or_else(|| "recurrent cache count overflow".to_string())?;
+        if cache.layers.len() != expected_caches {
+            return Err("recurrent cache count mismatch".into());
+        }
+
+        let t = x.len();
+        let v = self.cfg.vocab;
+        let mut loss = 0.0f32;
+        for i in 0..t {
+            let start = i * v;
+            let end = start + v;
+            let maxv = dlogits[start..end]
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max);
+            let mut sum = 0.0f32;
+            for j in 0..v {
+                let idx = start + j;
+                let e = (dlogits[idx] - maxv).exp();
+                dlogits[idx] = e;
+                sum += e;
+            }
+            let inv = 1.0 / sum.max(1e-20);
+            for j in 0..v {
+                dlogits[start + j] *= inv;
+            }
+            let target = start + y[i];
+            let p = dlogits[target].max(1e-20);
+            loss -= p.ln();
+            dlogits[target] -= 1.0;
+        }
+        let inv_t = 1.0 / t as f32;
+        loss *= inv_t;
+        for value in &mut dlogits {
+            *value *= inv_t;
+        }
+
+        workspace.clear();
+        let BackwardWorkspace {
+            grads: gg,
+            scratch,
+            dx,
+            residual,
+            ..
+        } = workspace;
+        let d = self.cfg.n_embd;
+        let td = t * d;
+        let dx = &mut dx[..td];
+        let residual = &mut residual[..td];
+
+        // Output projection and final normalization execute once after all
+        // recurrent applications, so their gradients keep baseline semantics.
+        matmul_grad_b(&cache.h_final, t, d, &dlogits, v, &mut gg.w_out);
+        sum_rows_into(&dlogits, t, v, &mut gg.b_out);
+        matmul_b_t_into(&dlogits, t, v, &self.w_out, d, dx);
+
+        scratch.reset();
+        let dx_ln_slot = scratch.alloc(td);
+        let dgamma_slot = scratch.alloc(d);
+        let dbeta_slot = scratch.alloc(d);
+        {
+            let (dx_ln, dgamma, dbeta) =
+                scratch.get3_mut(dx_ln_slot, dgamma_slot, dbeta_slot);
+            normalization_backward_into(
+                self.normalization,
+                dx,
+                &cache.ln_f,
+                &self.ln_f_g,
+                dx_ln,
+                dgamma,
+                dbeta,
+            );
+            add_inplace(&mut gg.ln_f_g, dgamma);
+            add_inplace(&mut gg.ln_f_b, dbeta);
+            dx.copy_from_slice(dx_ln);
+        }
+
+        for cache_index in (0..cache.layers.len()).rev() {
+            let li = cache_index % self.blocks.len();
+            let b = &self.blocks[li];
+            let c = &cache.layers[cache_index];
+            let bg = &mut gg.blocks[li];
+
+            let dff_out = &dx[..];
+            matmul_grad_b_add_reference(
+                &c.ff_act,
+                t,
+                self.cfg.n_ff,
+                dff_out,
+                d,
+                &mut bg.w2,
+            );
+            sum_rows_into(dff_out, t, d, &mut bg.b2);
+
+            scratch.reset();
+            let dff_pre_slot = scratch.alloc(t * self.cfg.n_ff);
+            {
+                let dff_pre = scratch.get_mut(dff_pre_slot);
+                matmul_b_t_into(dff_out, t, d, &b.w2, self.cfg.n_ff, dff_pre);
+                for i in 0..dff_pre.len() {
+                    dff_pre[i] *= gelu_deriv(c.ff_pre[i]);
+                }
+
+                matmul_grad_b_add_reference(
+                    &c.h2,
+                    t,
+                    d,
+                    dff_pre,
+                    self.cfg.n_ff,
+                    &mut bg.w1,
+                );
+                sum_rows_into(dff_pre, t, self.cfg.n_ff, &mut bg.b1);
+                matmul_b_t_into(dff_pre, t, self.cfg.n_ff, &b.w1, d, residual);
+            }
+
+            scratch.reset();
+            let dln2_slot = scratch.alloc(td);
+            let dg2_slot = scratch.alloc(d);
+            let db2_slot = scratch.alloc(d);
+            {
+                let (dln2, dg2, db2) =
+                    scratch.get3_mut(dln2_slot, dg2_slot, db2_slot);
+                normalization_backward_into(
+                    self.normalization,
+                    residual,
+                    &c.ln2,
+                    &b.ln2_g,
+                    dln2,
+                    dg2,
+                    db2,
+                );
+                add_inplace(&mut bg.ln2_g, dg2);
+                add_inplace(&mut bg.ln2_b, db2);
+                for i in 0..td {
+                    residual[i] = dx[i] + dln2[i];
+                }
+            }
+
+            let dproj = &residual[..];
+            matmul_grad_b_add_reference(&c.att, t, d, dproj, d, &mut bg.wo);
+            matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
+
+            scratch.reset();
+            let dq_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(td);
+            let dv_slot = scratch.alloc(td);
+            let dp_slot = scratch.alloc(t);
+            {
+                let (dq, dk, dv, dp) =
+                    scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
+                attention_backward_into(
+                    dx,
+                    &c.q,
+                    &c.k,
+                    &c.v,
+                    &c.probs,
+                    t,
+                    d,
+                    self.cfg.n_head,
+                    dq,
+                    dk,
+                    dv,
+                    dp,
+                );
+                self.backward_position_qk(dq, dk, t);
+
+                matmul_grad_b_add_reference(&c.h1, t, d, dq, d, &mut bg.wq);
+                matmul_grad_b_add_reference(&c.h1, t, d, dk, d, &mut bg.wk);
+                matmul_grad_b_add_reference(&c.h1, t, d, dv, d, &mut bg.wv);
+
+                matmul_b_t_into(dq, t, d, &b.wq, d, dx);
+                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+            }
+
+            scratch.reset();
+            let dln1_slot = scratch.alloc(td);
+            let dg1_slot = scratch.alloc(d);
+            let db1_slot = scratch.alloc(d);
+            {
+                let (dln1, dg1, db1) =
+                    scratch.get3_mut(dln1_slot, dg1_slot, db1_slot);
+                normalization_backward_into(
+                    self.normalization,
+                    dx,
+                    &c.ln1,
+                    &b.ln1_g,
+                    dln1,
+                    dg1,
+                    db1,
+                );
+                add_inplace(&mut bg.ln1_g, dg1);
+                add_inplace(&mut bg.ln1_b, db1);
+                for i in 0..td {
+                    dx[i] = residual[i] + dln1[i];
+                }
+            }
+        }
+
+        for i in 0..t {
+            let token = x[i];
+            for j in 0..d {
+                gg.tok_emb[token * d + j] += dx[i * d + j];
+            }
+        }
+
+        match self.position {
+            PositionKind::LearnedAbsolute => {
+                let positional = LearnedAbsolute::new(&self.pos_emb, self.cfg.block, d)
+                    .expect("model positional storage matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("recurrent positional gradients match model");
+            }
+            PositionKind::Rope => {
+                let positional = Rotary::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model RoPE shape matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("reserved recurrent positional gradient matches model");
+            }
+            PositionKind::Alibi => {
+                let positional = Alibi::new(self.cfg.block, d, self.cfg.n_head)
+                    .expect("model ALiBi shape matches config");
+                positional
+                    .accumulate_backward(dx, t, &mut gg.pos_emb)
+                    .expect("reserved recurrent positional gradient matches model");
+            }
+        }
+
+        copy_grads_into(gg, grads);
+        Ok(loss)
+    }
+
     pub fn generate(
         &self,
         ids: &mut Vec<usize>,
@@ -1122,6 +1466,134 @@ impl Gpt {
     ) -> Vec<f32> {
         let h_final = self.forward_eval_hidden_with_backend(tokens, backend);
         self.project_logits_with_backend(&h_final, tokens.len(), backend)
+    }
+
+    fn forward_eval_recurrent_with_backend<B: Backend>(
+        &self,
+        tokens: &[usize],
+        backend: &B,
+        reasoning_steps: usize,
+    ) -> Vec<f32> {
+        debug_assert!(reasoning_steps > 1);
+        let t = tokens.len();
+        let d = self.cfg.n_embd;
+        let mut x = self.embed_tokens_with_positions(tokens);
+
+        for _ in 0..reasoning_steps {
+            for b in &self.blocks {
+                let h1 =
+                    normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
+                let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                self.apply_position_to_qk(&mut q, &mut k, t);
+                let att =
+                    attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
+                let mut r1 = x;
+                add_inplace(&mut r1, &proj);
+
+                let h2 =
+                    normalization_eval(self.normalization, &r1, t, d, &b.ln2_g, &b.ln2_b);
+                let mut ff_pre =
+                    matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
+                add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
+                let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
+                matmul_into_with_backend(
+                    backend,
+                    &ff_act,
+                    t,
+                    self.cfg.n_ff,
+                    &b.w2,
+                    d,
+                    &mut proj,
+                );
+                add_bias_inplace(&mut proj, t, d, &b.b2);
+                let mut out = r1;
+                add_inplace(&mut out, &proj);
+                x = out;
+            }
+        }
+
+        let h_final =
+            normalization_eval(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b);
+        self.project_logits_with_backend(&h_final, t, backend)
+    }
+
+    fn forward_internal_recurrent_with_backend<B: Backend>(
+        &self,
+        tokens: &[usize],
+        backend: &B,
+        reasoning_steps: usize,
+    ) -> (Vec<f32>, ForwardCache) {
+        debug_assert!(reasoning_steps > 1);
+        let t = tokens.len();
+        let d = self.cfg.n_embd;
+        let mut x = self.embed_tokens_with_positions(tokens);
+        let mut layer_caches =
+            Vec::with_capacity(self.blocks.len().saturating_mul(reasoning_steps));
+
+        for _ in 0..reasoning_steps {
+            for b in &self.blocks {
+                let (h1, ln1) =
+                    normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
+                let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                self.apply_position_to_qk(&mut q, &mut k, t);
+                let (att, probs) =
+                    attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
+                let mut r1 = x;
+                add_inplace(&mut r1, &proj);
+
+                let (h2, ln2) =
+                    normalization_forward(self.normalization, &r1, t, d, &b.ln2_g, &b.ln2_b);
+                let mut ff_pre =
+                    matmul_with_backend(backend, &h2, t, d, &b.w1, self.cfg.n_ff);
+                add_bias_inplace(&mut ff_pre, t, self.cfg.n_ff, &b.b1);
+                let ff_act: Vec<f32> = ff_pre.iter().copied().map(gelu).collect();
+                matmul_into_with_backend(
+                    backend,
+                    &ff_act,
+                    t,
+                    self.cfg.n_ff,
+                    &b.w2,
+                    d,
+                    &mut proj,
+                );
+                add_bias_inplace(&mut proj, t, d, &b.b2);
+                let mut out = r1;
+                add_inplace(&mut out, &proj);
+
+                layer_caches.push(LayerCache {
+                    ln1,
+                    h1,
+                    q,
+                    k,
+                    v,
+                    probs,
+                    att,
+                    ln2,
+                    h2,
+                    ff_pre,
+                    ff_act,
+                });
+                x = out;
+            }
+        }
+
+        let (h_final, ln_f) =
+            normalization_forward(self.normalization, &x, t, d, &self.ln_f_g, &self.ln_f_b);
+        let logits = self.project_logits_with_backend(&h_final, t, backend);
+        (
+            logits,
+            ForwardCache {
+                layers: layer_caches,
+                ln_f,
+                h_final,
+            },
+        )
     }
 
     fn forward_internal(&self, tokens: &[usize]) -> (Vec<f32>, ForwardCache) {
@@ -1263,6 +1735,22 @@ fn copy_grads_into(g: &GptGrad, out: &mut [f32]) {
     debug_assert_eq!(p, out.len());
 }
 
+fn mean_cross_entropy(logits: &[f32], targets: &[usize], vocab: usize) -> f32 {
+    assert_eq!(logits.len(), targets.len() * vocab);
+    let mut loss = 0.0f32;
+    for (i, &target) in targets.iter().enumerate() {
+        let row = &logits[i * vocab..(i + 1) * vocab];
+        let maxv = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for &logit in row {
+            sum += (logit - maxv).exp();
+        }
+        let p = ((row[target] - maxv).exp() / sum.max(1e-20)).max(1e-20);
+        loss -= p.ln();
+    }
+    loss / targets.len() as f32
+}
+
 fn add_inplace(a: &mut [f32], b: &[f32]) {
     assert_eq!(a.len(), b.len());
     for (x, y) in a.iter_mut().zip(b) {
@@ -1331,6 +1819,17 @@ fn matmul_grad_b(
     db: &mut [f32],
 ) {
     crate::kernels::matmul_grad_b_rowwise_zeroed(a, rows, inner, dy, cols, db);
+}
+
+fn matmul_grad_b_add_reference(
+    a: &[f32],
+    rows: usize,
+    inner: usize,
+    dy: &[f32],
+    cols: usize,
+    db: &mut [f32],
+) {
+    crate::kernels::matmul_grad_b_reference(a, rows, inner, dy, cols, db);
 }
 
 fn matmul_b_t_into(
@@ -1734,7 +2233,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 mod tests {
     use super::{
         rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
-        CpuBackend, Gpt, NormalizationKind, PositionKind,
+        CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -2308,4 +2807,132 @@ mod tests {
         assert_eq!(ids.len(), 10);
         assert!(ids.iter().all(|&x| x < cfg.vocab));
     }
+    #[test]
+    fn recurrent_one_step_is_bit_exact_with_baseline() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4101);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+        let recurrent = RecurrentConfig::new(1).unwrap();
+
+        assert_eq!(gpt.logits_recurrent(&x, recurrent).unwrap(), gpt.logits(&x));
+        assert_eq!(
+            gpt.loss_recurrent(&x, &y, recurrent).unwrap().to_bits(),
+            gpt.loss(&x, &y).to_bits()
+        );
+
+        let mut baseline_grads = vec![0.0; gpt.collect_params().len()];
+        let mut recurrent_grads = vec![0.0; baseline_grads.len()];
+        let baseline_loss = gpt.backward_into(&x, &y, &mut baseline_grads);
+        let recurrent_loss = gpt
+            .backward_recurrent_into(&x, &y, &mut recurrent_grads, recurrent)
+            .unwrap();
+        assert_eq!(recurrent_loss.to_bits(), baseline_loss.to_bits());
+        assert_eq!(recurrent_grads, baseline_grads);
+    }
+
+    #[test]
+    fn recurrent_multi_step_is_finite_and_keeps_parameter_budget_fixed() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 2,
+            n_layer: 2,
+            block: 4,
+            n_ff: 16,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4102);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let params_before = gpt.collect_params();
+        let x = [0, 1, 2, 3];
+        let y = [1, 2, 3, 4];
+
+        let baseline_logits = gpt.logits(&x);
+        for steps in [2usize, 3] {
+            let recurrent = RecurrentConfig::new(steps).unwrap();
+            let logits = gpt.logits_recurrent(&x, recurrent).unwrap();
+            assert!(logits.iter().all(|value| value.is_finite()));
+            assert_ne!(logits, baseline_logits);
+
+            let eval_loss = gpt.loss_recurrent(&x, &y, recurrent).unwrap();
+            let mut grads = vec![0.0; params_before.len()];
+            let backward_loss = gpt
+                .backward_recurrent_into(&x, &y, &mut grads, recurrent)
+                .unwrap();
+            assert!(eval_loss.is_finite() && backward_loss.is_finite());
+            assert!(
+                (eval_loss - backward_loss).abs() < 1e-6,
+                "steps={steps} eval={eval_loss} backward={backward_loss}"
+            );
+            assert!(grads.iter().all(|value| value.is_finite()));
+            assert!(grads.iter().any(|value| value.abs() > 0.0));
+            assert_eq!(
+                recurrent.block_applications(cfg.n_layer).unwrap(),
+                steps * cfg.n_layer
+            );
+        }
+
+        assert_eq!(gpt.collect_params(), params_before);
+    }
+
+    #[test]
+    fn recurrent_two_step_gradient_matches_finite_difference() {
+        let cfg = Config {
+            vocab: 5,
+            n_embd: 4,
+            n_head: 1,
+            n_layer: 1,
+            block: 3,
+            n_ff: 8,
+        };
+        let mut rng = StdRng::seed_from_u64(0xA11CE_4103);
+        let gpt = Gpt::new(cfg, &mut rng);
+        let x = [0, 1, 2];
+        let y = [1, 2, 3];
+        let recurrent = RecurrentConfig::new(2).unwrap();
+        let params = gpt.collect_params();
+        let mut analytic = vec![0.0; params.len()];
+        gpt.backward_recurrent_into(&x, &y, &mut analytic, recurrent)
+            .unwrap();
+
+        let tok_index = 0usize;
+        let pos_index = cfg.vocab * cfg.n_embd;
+        let block_base = cfg.vocab * cfg.n_embd + cfg.block * cfg.n_embd;
+        let wq_index = block_base + 2 * cfg.n_embd;
+        let w_out_start = params.len() - cfg.vocab - cfg.n_embd * cfg.vocab;
+        let probe_indices = [tok_index, pos_index, wq_index, w_out_start];
+
+        let h = 1e-3f32;
+        for &index in &probe_indices {
+            let mut plus_params = params.clone();
+            let mut minus_params = params.clone();
+            plus_params[index] += h;
+            minus_params[index] -= h;
+
+            let mut plus = gpt.clone();
+            plus.write_params(&plus_params);
+            let mut minus = gpt.clone();
+            minus.write_params(&minus_params);
+
+            let plus_loss = plus.loss_recurrent(&x, &y, recurrent).unwrap();
+            let minus_loss = minus.loss_recurrent(&x, &y, recurrent).unwrap();
+            let numeric = (plus_loss - minus_loss) / (2.0 * h);
+            let error = (analytic[index] - numeric).abs();
+            assert!(
+                error < 4e-3,
+                "recurrent grad mismatch index={index} analytic={} numeric={numeric} error={error}",
+                analytic[index]
+            );
+        }
+    }
+
+
 }

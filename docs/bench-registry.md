@@ -49,3 +49,14 @@ cargo run --release --bin auralis_memory_model_bench -- 100 7
 ```
 
 It compares the exact memory-off baseline with opt-in retrieval + `last_hidden_mean_add` fusion on a controlled synthetic task, and publishes on/off latency, query trace, heap estimate and snapshot size. It also proves inference leaves the #37 memory snapshot unchanged. The benchmark is evidence for #42; it does not promote memory to the default model path.
+
+
+## Brain recurrent-reasoning benchmark
+
+The `recurrent-reasoning` entry runs:
+
+```
+cargo run --release --bin auralis_recurrent_reasoning_bench
+```
+
+It compares reasoning steps 1, 2 and 3 with a fixed 12 physical block-application budget, identical model parameter count, seed, optimizer policy and token stream. It reports optimizer updates, tokens seen, eval loss/perplexity, training and inference latency, gradient norm and final-state fingerprint. The curve is descriptive evidence; the benchmark does not auto-promote a recurrent depth.

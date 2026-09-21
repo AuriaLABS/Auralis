@@ -100,6 +100,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "recurrent-reasoning",
+        bin: "auralis_recurrent_reasoning_bench",
+        kind: "brain-reasoning",
+        summary: "shared-weight recurrent reasoning quality/cost curve",
+        default_args: "",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
