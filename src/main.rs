@@ -75,10 +75,11 @@ fn new_model(
     let tok = AnyTok::Bpe(BpeTokenizer::fit(train_text, run.bpe_merges));
     let mut rng = StdRng::seed_from_u64(run.seed);
     let cfg = architecture.model_config(tok.vocab_size())?;
-    let gpt = Gpt::new_with_policies(
+    let gpt = Gpt::new_with_attention_heads(
         cfg,
         architecture.normalization,
         architecture.position,
+        architecture.n_kv_head,
         &mut rng,
     );
     Ok((gpt, tok))
@@ -96,7 +97,12 @@ fn resolve_model_architecture(
             return Err(format!(
                 "architecture metadata/model mismatch: metadata={} checkpoint={}",
                 persisted.line(),
-                ArchitectureConfig::from_model(gpt.cfg, gpt.normalization(), gpt.position_kind()).line(),
+                ArchitectureConfig::from_model_with_kv_heads(
+                    gpt.cfg,
+                    gpt.normalization(),
+                    gpt.position_kind(),
+                    gpt.n_kv_head(),
+                ).line(),
             ));
         }
         if let Some(requested) = requested {
@@ -110,7 +116,12 @@ fn resolve_model_architecture(
         }
         persisted
     } else {
-        let legacy = ArchitectureConfig::from_model(gpt.cfg, gpt.normalization(), gpt.position_kind());
+        let legacy = ArchitectureConfig::from_model_with_kv_heads(
+                    gpt.cfg,
+                    gpt.normalization(),
+                    gpt.position_kind(),
+                    gpt.n_kv_head(),
+                );
         if let Some(requested) = requested {
             if !requested.matches_model(gpt.cfg) {
                 return Err(format!(
@@ -131,11 +142,24 @@ fn resolve_model_architecture(
                         .into(),
                 );
             }
+            if requested.n_kv_head != legacy.n_kv_head {
+                return Err(
+                    "checkpoint has no architecture metadata; non-MHA KV-head layout cannot be inferred safely"
+                        .into(),
+                );
+            }
             requested
         } else {
             legacy
         }
     };
+    if selected.n_kv_head != gpt.n_kv_head() {
+        return Err(format!(
+            "architecture KV-head mismatch: metadata={} checkpoint_n_kv_head={}",
+            selected.line(),
+            gpt.n_kv_head(),
+        ));
+    }
     gpt.set_normalization(selected.normalization);
     gpt.set_position_kind(selected.position);
     Ok((selected, sidecar.exists() || requested.is_some()))
