@@ -1,0 +1,117 @@
+name: Research Reasoning Suite
+
+on:
+  pull_request:
+    paths:
+      - "src/reasoning_suite.rs"
+      - "src/eval_registry.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_reasoning_suite_bench.rs"
+      - "docs/reasoning-suite.md"
+      - "docs/eval-registry.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/research_reasoning_suite.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reasoning-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Reasoning suite contracts
+        run: |
+          cargo test --lib reasoning_suite::tests -- --nocapture
+          cargo test --lib eval_registry::tests -- --nocapture
+          cargo test --lib docs_check::tests::reasoning_suite_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Smoke and full objective profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_reasoning_suite_bench -- both | tee /tmp/reasoning-suite.txt
+
+          grep -q '^reasoning_suite_protocol | schema=1 seed=130659918 scoring=objective profiles=smoke,full$' /tmp/reasoning-suite.txt
+          test "$(grep -c '^reasoning_suite_profile |' /tmp/reasoning-suite.txt)" -eq 2
+          test "$(grep -c '^reasoning_suite_oracle |' /tmp/reasoning-suite.txt)" -eq 2
+          test "$(grep -c '^reasoning_suite_regression |' /tmp/reasoning-suite.txt)" -eq 2
+          test "$(grep -c '^reasoning_suite_breakdown |' /tmp/reasoning-suite.txt)" -eq 16
+
+          python3 - <<'PY'
+          import re
+
+          lines = open("/tmp/reasoning-suite.txt", encoding="utf-8").read().splitlines()
+          profiles = {}
+          oracles = {}
+          regressions = {}
+
+          def fields(line):
+              return dict(
+                  token.split("=", 1)
+                  for token in line.split(" | ", 1)[1].split()
+                  if "=" in token
+              )
+
+          for line in lines:
+              if line.startswith("reasoning_suite_profile |"):
+                  row = fields(line)
+                  profiles[row["profile"]] = row
+              elif line.startswith("reasoning_suite_oracle |"):
+                  row = fields(line)
+                  oracles[row["profile"]] = row
+              elif line.startswith("reasoning_suite_regression |"):
+                  row = fields(line)
+                  regressions[row["profile"]] = row
+
+          assert set(profiles) == {"smoke", "full"}
+          assert int(profiles["smoke"]["cases"]) == 30
+          assert int(profiles["full"]["cases"]) == 240
+
+          for name, row in profiles.items():
+              assert int(row["tasks"]) == 5
+              assert int(row["metrics"]) == 15
+              assert int(row["suite_fingerprint"], 16) != 0
+              assert int(row["fixture_fingerprint"], 16) != 0
+              assert int(row["generation_ns"]) > 0
+              assert int(row["oracle_score_ns"]) > 0
+              assert int(row["train_max_length"]) <= 4
+              assert int(row["hard_min_difficulty"]) >= 3
+              assert int(row["long_min_length"]) >= 7
+              assert int(row["long_max_difficulty"]) == 2
+
+              oracle = oracles[name]
+              assert float(oracle["exact_match"]) == 1.0
+              assert int(oracle["correct"]) == int(oracle["total"]) == int(row["cases"])
+              assert int(oracle["failures"]) == 0
+
+              regression = regressions[name]
+              assert float(regression["exact_match"]) == 0.0
+              assert int(regression["wrong_value"]) > 0
+              assert int(regression["wrong_length"]) > 0
+              assert int(regression["wrong_binding"]) > 0
+              assert int(regression["wrong_transition"]) > 0
+              assert int(regression["distractor_capture"]) > 0
+
+          breakdown = [fields(line) for line in lines if line.startswith("reasoning_suite_breakdown |")]
+          assert len(breakdown) == 16
+          for row in breakdown:
+              assert row["dimension"] in {"kind", "split"}
+              assert float(row["exact_match"]) == 1.0
+              assert int(row["correct"]) == int(row["total"]) > 0
+
+          assert profiles["smoke"]["suite_fingerprint"] != profiles["full"]["suite_fingerprint"]
+          assert profiles["smoke"]["fixture_fingerprint"] != profiles["full"]["fixture_fingerprint"]
+          print("reasoning_suite_gate | deterministic=true oracle_exact=true difficulty_isolated=true length_isolated=true regression_sensitive=true objective_scoring=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

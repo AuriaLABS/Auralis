@@ -98,6 +98,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/gqa-mqa.md](docs/gqa-mqa.md) — variantes experimentales MHA/GQA/MQA con K/V compactos, A/B y costes de cache.
 - [docs/local-attention.md](docs/local-attention.md) — atención causal local/window experimental, A/B, scaling y memoria de probabilidades.
 - [docs/eval-registry.md](docs/eval-registry.md) — registro versionado de suites, tareas, métricas y baselines canónicos.
+- [docs/reasoning-suite.md](docs/reasoning-suite.md) — suite sintética determinista de razonamiento con scoring objetivo y splits de generalización.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
