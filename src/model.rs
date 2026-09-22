@@ -705,7 +705,7 @@ impl Gpt {
         v: &[f32],
         tokens: usize,
     ) -> Vec<f32> {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             return attention_eval(
                 q,
                 k,
@@ -729,17 +729,32 @@ impl Gpt {
         } else {
             None
         };
-        OPTIMIZED_ATTENTION
-            .forward_eval_grouped(
-                q,
-                k,
-                v,
-                shape,
-                slopes.as_deref(),
-                &mut out,
-                &mut scores,
-            )
-            .expect("grouped attention eval shapes match model");
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .forward_eval_grouped(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut scores,
+                )
+                .expect("grouped attention eval shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .forward_eval_grouped_local(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    self.attention_window,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut scores,
+                )
+                .expect("local grouped attention eval shapes match model");
+        }
         out
     }
 
@@ -750,7 +765,7 @@ impl Gpt {
         v: &[f32],
         tokens: usize,
     ) -> (Vec<f32>, Vec<f32>) {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             return attention_forward(
                 q,
                 k,
@@ -768,23 +783,44 @@ impl Gpt {
             kv_heads: self.n_kv_head,
         };
         let mut out = vec![0.0; tokens * self.cfg.n_embd];
-        let mut probs = vec![0.0; shape.probs_len().expect("validated grouped attention shape")];
+        let probs_len = if self.attention_window == 0 {
+            shape.probs_len().expect("validated grouped attention shape")
+        } else {
+            local_probability_len(shape, self.attention_window)
+                .expect("validated local attention shape")
+        };
+        let mut probs = vec![0.0; probs_len];
         let slopes = if self.position == PositionKind::Alibi {
             Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
         } else {
             None
         };
-        OPTIMIZED_ATTENTION
-            .forward_cached_grouped(
-                q,
-                k,
-                v,
-                shape,
-                slopes.as_deref(),
-                &mut out,
-                &mut probs,
-            )
-            .expect("grouped attention forward shapes match model");
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .forward_cached_grouped(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut probs,
+                )
+                .expect("grouped attention forward shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .forward_cached_grouped_local(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    self.attention_window,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut probs,
+                )
+                .expect("local grouped attention forward shapes match model");
+        }
         (out, probs)
     }
 
@@ -801,7 +837,7 @@ impl Gpt {
         dv: &mut [f32],
         dp: &mut [f32],
     ) {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             attention_backward_into(
                 dout,
                 q,
@@ -818,25 +854,35 @@ impl Gpt {
             );
             return;
         }
-        OPTIMIZED_ATTENTION
-            .backward_grouped(
-                dout,
-                q,
-                k,
-                v,
-                probs,
-                GroupedAttentionShape {
-                    tokens,
-                    width: self.cfg.n_embd,
-                    heads: self.cfg.n_head,
-                    kv_heads: self.n_kv_head,
-                },
-                dq,
-                dk,
-                dv,
-                dp,
-            )
-            .expect("grouped attention backward shapes match model");
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .backward_grouped(
+                    dout, q, k, v, probs, shape, dq, dk, dv, dp,
+                )
+                .expect("grouped attention backward shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .backward_grouped_local(
+                    dout,
+                    q,
+                    k,
+                    v,
+                    probs,
+                    shape,
+                    self.attention_window,
+                    dq,
+                    dk,
+                    dv,
+                    dp,
+                )
+                .expect("local grouped attention backward shapes match model");
+        }
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
