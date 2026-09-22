@@ -4,7 +4,7 @@ Issue #111 adds a selectable causal local/window attention variant for Brain exp
 
 ## Policy
 
-The architecture field `attention_window` controls the pattern:
+The architecture field `attention_window` controls the pattern. A ready-to-run example is [`../examples/architecture-local-w8.cfg`](../examples/architecture-local-w8.cfg):
 
 - `attention_window=0`: historical dense causal attention;
 - `attention_window=W>0`: query position `i` may attend only keys in

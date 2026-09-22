@@ -19,6 +19,7 @@ on:
       - "docs/bench-registry.md"
       - "docs/versions.md"
       - "README.md"
+      - "examples/architecture-local-w8.cfg"
       - ".github/workflows/brain_local_attention.yml"
 
 permissions:
@@ -47,6 +48,100 @@ jobs:
           cargo test --lib architecture::tests::schema_four_migrates_to_dense_attention -- --nocapture
           cargo test --lib kv_cache::tests::attention_window_identity_fails_closed -- --nocapture
           cargo test --lib docs_check::tests::local_attention_doc_matches_contract -- --nocapture
+
+      - name: Local architecture resume is exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet --release -- train-fresh 3 /tmp/local-full.bin 659918 2 1 --model-config examples/architecture-local-w8.cfg | tee /tmp/local-full.txt
+          cargo run --quiet --release -- train-fresh 2 /tmp/local-split.bin 659918 2 1 --model-config examples/architecture-local-w8.cfg | tee /tmp/local-split-a.txt
+          cargo run --quiet --release -- train 1 /tmp/local-split.bin 659918 2 1 | tee /tmp/local-split-b.txt
+          cmp /tmp/local-full.bin /tmp/local-split.bin
+          cmp /tmp/local-full.bin.manifest /tmp/local-split.bin.manifest
+          cmp /tmp/local-full.bin.architecture /tmp/local-split.bin.architecture
+          grep -q '^attention_window=8
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_local_attention_bench | tee /tmp/local-attention.txt
+
+          grep -q '^local_attention_protocol | schema=1 ' /tmp/local-attention.txt
+          test "$(grep -c '^local_quality |' /tmp/local-attention.txt)" -eq 4
+          test "$(grep -c '^local_attention_curve |' /tmp/local-attention.txt)" -eq 12
+
+          python3 - <<'PY'
+          import math
+
+          quality = []
+          curves = []
+          for line in open("/tmp/local-attention.txt", encoding="utf-8"):
+              if line.startswith("local_quality |"):
+                  fields = dict(
+                      token.split("=", 1)
+                      for token in line.split(" | ", 1)[1].split()
+                      if "=" in token
+                  )
+                  quality.append({
+                      "window": int(fields["window"]),
+                      "loss": float(fields["mean_eval_loss"]),
+                      "ppl": float(fields["mean_ppl"]),
+                      "tps": float(fields["mean_tok_per_s"]),
+                      "params": int(fields["params"]),
+                  })
+              elif line.startswith("local_attention_curve |"):
+                  fields = dict(
+                      token.split("=", 1)
+                      for token in line.split(" | ", 1)[1].split()
+                      if "=" in token
+                  )
+                  curves.append({
+                      "context": int(fields["context"]),
+                      "window": int(fields["window"]),
+                      "forward": int(fields["forward_ns"]),
+                      "backward": int(fields["backward_ns"]),
+                      "slots": int(fields["probability_slots_per_layer"]),
+                      "bytes": int(fields["probability_bytes_model"]),
+                      "params": int(fields["params"]),
+                      "loss": float(fields["loss"]),
+                      "grad": float(fields["max_abs_grad"]),
+                  })
+
+          assert len(quality) == 4, quality
+          assert all(
+              math.isfinite(q["loss"]) and q["loss"] > 0
+              and math.isfinite(q["ppl"]) and q["ppl"] >= 1
+              and math.isfinite(q["tps"]) and q["tps"] > 0
+              and q["params"] > 0
+              for q in quality
+          ), quality
+          assert len({q["params"] for q in quality}) == 1, quality
+
+          assert len(curves) == 12, curves
+          for row in curves:
+              assert row["forward"] > 0 and row["backward"] > 0
+              assert row["slots"] > 0 and row["bytes"] > 0 and row["params"] > 0
+              assert math.isfinite(row["loss"]) and row["loss"] > 0
+              assert math.isfinite(row["grad"]) and row["grad"] > 0
+
+          for context in [8, 16, 32, 64]:
+              group = {r["window"]: r for r in curves if r["context"] == context}
+              assert set(group) == {0, 8, 16}, group
+              assert len({r["params"] for r in group.values()}) == 1
+              if context > 8:
+                  assert group[8]["slots"] < group[0]["slots"], group
+                  assert group[8]["bytes"] < group[0]["bytes"], group
+              if context > 16:
+                  assert group[16]["slots"] < group[0]["slots"], group
+                  assert group[16]["bytes"] < group[0]["bytes"], group
+
+          print("local_attention_gate | quality_finite=true gradients_finite=true compact_probability_memory=true dense_default=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets
+ /tmp/local-full.bin.architecture
+          grep -q 'attention_window=8' /tmp/local-split-b.txt
+          echo "local_attention_resume | checkpoint_exact=true manifest_exact=true metadata_exact=true"
 
       - name: Quality scaling and probability-memory evidence
         shell: bash
