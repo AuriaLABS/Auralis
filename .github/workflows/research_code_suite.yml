@@ -1,0 +1,104 @@
+name: Research Code Suite
+
+on:
+  pull_request:
+    paths:
+      - "src/code_suite.rs"
+      - "src/sec_path.rs"
+      - "src/eval_registry.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_code_suite_bench.rs"
+      - "docs/code-suite.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/research_code_suite.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  code-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Code suite contracts
+        run: |
+          cargo test --lib code_suite::tests -- --nocapture
+          cargo test --lib docs_check::tests::code_suite_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Smoke and full executable profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_code_suite_bench -- both | tee /tmp/code-suite.txt
+
+          grep -q '^code_suite_protocol | schema=1 seed=131659918 language=rust patch=single-expression compiler=rustc-test profiles=smoke,full$' /tmp/code-suite.txt
+          grep -q '^code_suite_gate | executable=true protected_tests=true patch_confined=true time_limits=true oracle_exact=true regression_sensitive=true$' /tmp/code-suite.txt
+          test "$(grep -c '^code_suite_profile |' /tmp/code-suite.txt)" -eq 2
+          test "$(grep -c '^code_suite_regression |' /tmp/code-suite.txt)" -eq 2
+          test "$(grep -c '^code_suite_kind |' /tmp/code-suite.txt)" -eq 8
+
+          python3 - <<'PY'
+          lines = open("/tmp/code-suite.txt", encoding="utf-8").read().splitlines()
+
+          def fields(line):
+              return dict(
+                  token.split("=", 1)
+                  for token in line.split(" | ", 1)[1].split()
+                  if "=" in token
+              )
+
+          profiles = {}
+          regressions = {}
+          kinds = []
+          for line in lines:
+              if line.startswith("code_suite_profile |"):
+                  row = fields(line)
+                  profiles[row["profile"]] = row
+              elif line.startswith("code_suite_regression |"):
+                  row = fields(line)
+                  regressions[row["profile"]] = row
+              elif line.startswith("code_suite_kind |"):
+                  kinds.append(fields(line))
+
+          assert set(profiles) == {"smoke", "full"}
+          assert int(profiles["smoke"]["cases"]) == 4
+          assert int(profiles["full"]["cases"]) == 16
+          for row in profiles.values():
+              assert int(row["tasks"]) == 4
+              assert int(row["metrics"]) == 16
+              assert int(row["suite_fingerprint"], 16) != 0
+              assert int(row["fixture_fingerprint"], 16) != 0
+              assert float(row["exact_pass"]) == 1.0
+              assert float(row["compile_pass"]) == 1.0
+              assert float(row["test_pass"]) == 1.0
+              assert int(row["compile_ns"]) > 0
+              assert int(row["test_ns"]) > 0
+              assert int(row["compile_timeout_ms"]) > 0
+              assert int(row["test_timeout_ms"]) > 0
+
+          for row in regressions.values():
+              assert float(row["exact_pass"]) == 0.0
+              assert int(row["compile_error"]) > 0
+              assert int(row["test_failure"]) > 0
+              assert int(row["missing_item"]) > 0
+              assert int(row["compile_timeout"]) == 0
+              assert int(row["test_timeout"]) == 0
+
+          assert len(kinds) == 8
+          for row in kinds:
+              assert row["kind"] in {"comprehension", "compile", "unit-tests", "bug-fix"}
+              assert float(row["exact_pass"]) == 1.0
+
+          print("code_suite_ci | objective=true executable=true compile_taxonomy=true regression_sensitive=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

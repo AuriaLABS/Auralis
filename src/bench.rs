@@ -163,6 +163,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "code-suite",
+        bin: "auralis_code_suite_bench",
+        kind: "research-code",
+        summary: "executable Rust compile/test/patch scoring with protected tests",
+        default_args: "both",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
