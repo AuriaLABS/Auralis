@@ -342,6 +342,7 @@ impl SuiteRef {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvaluationRunDescriptor {
     pub suite: SuiteRef,
+    pub seed: u64,
     pub code_revision: String,
     pub model_id: String,
     pub checkpoint_fingerprint: Option<u64>,
@@ -352,14 +353,18 @@ impl EvaluationRunDescriptor {
     pub fn validate(&self, registry: &EvaluationRegistry) -> Result<(), RegistryError> {
         nonempty("run code_revision", &self.code_revision)?;
         nonempty("run model_id", &self.model_id)?;
-        registry.resolve_suite(&self.suite)?;
+        let suite = registry.resolve_suite(&self.suite)?;
+        if !suite.seed_policy.seeds.contains(&self.seed) {
+            return Err(RegistryError::SeedNotAllowed { seed: self.seed });
+        }
         Ok(())
     }
 
     pub fn line(&self) -> String {
         format!(
-            "eval_run|{}|commit={}|model={}|checkpoint={}|config={:016x}",
+            "eval_run|{}|seed={}|commit={}|model={}|checkpoint={}|config={:016x}",
             self.suite.line(),
+            self.seed,
             escape(&self.code_revision),
             escape(&self.model_id),
             self.checkpoint_fingerprint
@@ -922,6 +927,9 @@ pub enum RegistryError {
         id: String,
         version: SemVer,
     },
+    SeedNotAllowed {
+        seed: u64,
+    },
     MetricSetMismatch {
         expected: usize,
         actual: usize,
@@ -983,6 +991,9 @@ impl fmt::Display for RegistryError {
                 "metric {id}@{version} definition changed without a version bump: existing={existing:016x} candidate={candidate:016x}"
             ),
             Self::UnknownSuite { id, version } => write!(f, "unknown suite {id}@{version}"),
+            Self::SeedNotAllowed { seed } => {
+                write!(f, "evaluation run seed {seed} is not allowed by suite seed policy")
+            },
             Self::MetricSetMismatch { expected, actual } => write!(
                 f,
                 "baseline metric count mismatch: expected {expected}, got {actual}"
@@ -1202,7 +1213,8 @@ mod tests {
     fn run_descriptor_requires_registered_exact_suite() {
         let (registry, suite_ref) = registered_smoke();
         let run = EvaluationRunDescriptor {
-            suite: suite_ref,
+            suite: suite_ref.clone(),
+            seed: 659_918,
             code_revision: "fedf075c".to_string(),
             model_id: "auralis-tiny".to_string(),
             checkpoint_fingerprint: Some(0x1234),
@@ -1210,6 +1222,14 @@ mod tests {
         };
         run.validate(&registry).unwrap();
         assert!(run.line().contains("suite_ref|id=registry-smoke|version=1.0.0"));
+        assert!(run.line().contains("|seed=659918|"));
+
+        let mut wrong_seed = run.clone();
+        wrong_seed.seed = 7;
+        assert!(matches!(
+            wrong_seed.validate(&registry),
+            Err(RegistryError::SeedNotAllowed { seed: 7 })
+        ));
     }
 
     #[test]
