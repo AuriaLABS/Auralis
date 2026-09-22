@@ -265,7 +265,7 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
     match &case.expected {
         ReasoningAnswer::Integer(expected) => match parse_integer(prediction) {
             None => fail(FailureKind::InvalidFormat),
-            Some(actual) if actual == *expected => pass(),
+            Some(actual) if actual.as_slice() == expected.as_slice() => pass(),
             Some(_) if case.kind == ReasoningKind::VariableBinding => {
                 fail(FailureKind::WrongBinding)
             }
@@ -284,7 +284,7 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
         } => match parse_plan(prediction) {
             None => fail(FailureKind::InvalidFormat),
             Some((actual_actions, actual_state, actual_steps))
-                if actual_actions == *actions
+                if actual_actions == actions.as_str()
                     && actual_state == *final_state
                     && actual_steps == *steps =>
             {
@@ -952,7 +952,7 @@ mod tests {
         let cases = generate_suite(ReasoningProfile::Smoke, REASONING_SUITE_SEED);
         let case = cases
             .iter()
-            .find(|case| matches!(case.expected, ReasoningAnswer::Integer(_)))
+            .find(|case| matches!(&case.expected, ReasoningAnswer::Integer(_)))
             .unwrap();
         let correct = case.expected.canonical();
         assert!(score_case(case, &correct).exact);
