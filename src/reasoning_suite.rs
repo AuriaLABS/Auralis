@@ -95,7 +95,7 @@ pub enum ReasoningAnswer {
     },
     DistractorInteger {
         correct: i64,
-        distractor: i64,
+        distractors: Vec<i64>,
     },
 }
 
@@ -294,11 +294,11 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
         },
         ReasoningAnswer::DistractorInteger {
             correct,
-            distractor,
+            distractors,
         } => match parse_integer(prediction) {
             None => fail(FailureKind::InvalidFormat),
             Some(actual) if actual == *correct => pass(),
-            Some(actual) if actual == *distractor => fail(FailureKind::DistractorCapture),
+            Some(actual) if distractors.contains(&actual) => fail(FailureKind::DistractorCapture),
             Some(_) => fail(FailureKind::WrongValue),
         },
     }
@@ -380,10 +380,10 @@ pub fn intentional_regression_predictions(cases: &[ReasoningCase]) -> Vec<String
             } => format!(
                 "plan={}B;state=S{};steps={}",
                 actions,
-                (final_state + 1) % 7,
+                final_state + 1,
                 steps + 1
             ),
-            ReasoningAnswer::DistractorInteger { distractor, .. } => distractor.to_string(),
+            ReasoningAnswer::DistractorInteger { distractors, .. } => distractors[0].to_string(),
         })
         .collect()
 }
@@ -695,9 +695,9 @@ fn planning_case(
     seed: u64,
     index: u64,
 ) -> ReasoningCase {
-    let state_count = 7usize;
+    let state_count = (length.saturating_mul(2).saturating_add(3)).max(7);
     let start = bounded(seed, index, 600, state_count);
-    let offset = 1 + bounded(seed, index, 601, (length.min(6)).max(1));
+    let offset = length.min(state_count - 1).max(1);
     let target = (start + offset) % state_count;
     let actions = shortest_plan(start, target, state_count);
     let final_state = apply_plan(start, &actions, state_count);
@@ -709,7 +709,10 @@ fn planning_case(
         difficulty,
         length,
         prompt: format!(
-            "States are S0..S6. Action A moves +1 mod 7; action B moves +2 mod 7. Start at S{start}, target S{target}. Return the lexicographically first shortest plan using A before B, exactly as plan=<AB...>;state=S<n>;steps=<n>."
+            "States are S0..S{}. Action A moves +1 mod {}; action B moves +2 mod {}. Start at S{start}, target S{target}. Return the lexicographically first shortest plan using A before B, exactly as plan=<AB...>;state=S<n>;steps=<n>.",
+            state_count - 1,
+            state_count,
+            state_count,
         ),
         expected: ReasoningAnswer::Plan {
             steps: actions.len(),
@@ -730,7 +733,20 @@ fn distractor_case(
     let x = 2 + bounded(seed, index, 700, 20) as i64;
     let y = 2 + bounded(seed, index, 701, 20) as i64;
     let correct = x + y;
-    let distractor = correct + 3 + bounded(seed, index, 702, 9) as i64;
+    let distractors = (0..length)
+        .map(|i| {
+            correct
+                + 3
+                + (i as i64 * 11)
+                + bounded(seed, index, 702 + i as u64, 5) as i64
+        })
+        .collect::<Vec<_>>();
+    let notes = distractors
+        .iter()
+        .enumerate()
+        .map(|(i, value)| format!("note{}={value}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     ReasoningCase {
         id,
@@ -739,11 +755,11 @@ fn distractor_case(
         difficulty,
         length,
         prompt: format!(
-            "Relevant facts: x={x}, y={y}. Compute x+y. Distractor note: an unrelated previous run reported {distractor}. Ignore unrelated notes and return only the correct integer."
+            "Relevant facts: x={x}, y={y}. Compute x+y. Unrelated previous-run notes: {notes}. Ignore every unrelated note and return only the correct integer."
         ),
         expected: ReasoningAnswer::DistractorInteger {
             correct,
-            distractor,
+            distractors,
         },
     }
 }
@@ -979,9 +995,28 @@ mod tests {
                 panic!("planning case has non-plan answer");
             };
             assert_eq!(actions.len(), *steps);
-            assert!(*final_state < 7);
             assert!(score_case(case, &case.expected.canonical()).exact);
         }
+    }
+
+    #[test]
+    fn length_split_increases_planning_horizon() {
+        let cases = generate_suite(ReasoningProfile::Full, REASONING_SUITE_SEED);
+        let plan_steps = |split| {
+            cases
+                .iter()
+                .filter(|case| {
+                    case.kind == ReasoningKind::FiniteStatePlanning && case.split == split
+                })
+                .map(|case| match &case.expected {
+                    ReasoningAnswer::Plan { steps, .. } => *steps,
+                    _ => unreachable!(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let train = plan_steps(ReasoningSplit::TrainDifficulty);
+        let long = plan_steps(ReasoningSplit::EvalLength);
+        assert!(long.iter().copied().min().unwrap() > train.iter().copied().max().unwrap());
     }
 
     #[test]
