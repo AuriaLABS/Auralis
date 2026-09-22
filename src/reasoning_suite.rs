@@ -786,7 +786,7 @@ fn apply_plan(start: usize, plan: &str, state_count: usize) -> usize {
 
 fn parse_integer(value: &str) -> Option<i64> {
     let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
         return None;
     }
     trimmed.parse::<i64>().ok()
@@ -839,7 +839,7 @@ fn fail(failure: FailureKind) -> CaseScore {
 
 fn bounded(seed: u64, index: u64, stream: u64, upper: usize) -> usize {
     debug_assert!(upper > 0);
-    (deterministic_u64(seed, index, stream) as usize) % upper
+    (deterministic_u64(seed, index, stream) % upper as u64) as usize
 }
 
 fn reasoning_kind_index(kind: ReasoningKind) -> usize {
