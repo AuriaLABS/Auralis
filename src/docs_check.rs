@@ -148,6 +148,7 @@ mod tests {
             "recurrent-reasoning.md",
             "kv-cache.md",
             "local-attention.md",
+            "eval-registry.md",
             "moe-router.md",
             "gradient-clipping.md",
             "verify.md",
@@ -560,11 +561,41 @@ mod tests {
     }
 
     #[test]
+    fn eval_registry_doc_matches_contract() {
+        let text = docs("eval-registry.md");
+        for needle in [
+            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
+            "EvaluationSuite",
+            "EvaluationTask",
+            "EvaluationMetric",
+            "Baseline",
+            "SuiteRef",
+            "SuiteVersionCollision",
+            "BaselineVersionCollision",
+            "DatasetMetadata",
+            "SeedPolicy",
+            "ResourceLimits",
+            "deprecate_suite",
+            "historical v1 baseline remains queryable",
+            "auralis_eval_registry_smoke",
+            "does not",
+        ] {
+            assert!(text.contains(needle), "eval-registry.md missing {needle}");
+        }
+        assert!(readme().contains("docs/eval-registry.md"));
+        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
+        let suite = crate::eval_registry::smoke_suite();
+        suite.validate().unwrap();
+        assert_ne!(suite.definition_fingerprint().unwrap(), 0);
+    }
+
+    #[test]
     fn moe_router_doc_matches_contract() {
         let text = docs("moe-router.md");
         for needle in [
             "MoE remains experimental",
             "MOE_ROUTER_SCHEMA_VERSION = 1",
+            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "DeterministicTopKRouter",
             "MoeRouter",
             "top_k",
@@ -580,6 +611,7 @@ mod tests {
         }
         assert!(readme().contains("docs/moe-router.md"));
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
+        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         let bench = crate::bench::find("moe-router").expect("moe-router benchmark");
         assert_eq!(bench.bin, "auralis_moe_router_bench");
     }
