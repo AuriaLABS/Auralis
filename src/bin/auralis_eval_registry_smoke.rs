@@ -31,9 +31,11 @@ fn main() {
         .expect("register smoke baseline v2");
 
     println!(
-        "eval_registry_protocol | schema={} suites={} baselines={} exact_compatibility={}",
+        "eval_registry_protocol | schema={} suites={} task_defs={} metric_defs={} baselines={} exact_compatibility={}",
         EVALUATION_REGISTRY_SCHEMA_VERSION,
         registry.suite_count(),
+        registry.task_definition_count(),
+        registry.metric_definition_count(),
         registry.baseline_count(),
         registry.exact_compatible(&v1_ref, &v2_ref).unwrap(),
     );
