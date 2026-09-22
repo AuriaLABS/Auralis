@@ -1,0 +1,111 @@
+name: Research Memory Suite
+
+on:
+  pull_request:
+    paths:
+      - "src/memory_suite.rs"
+      - "src/memory.rs"
+      - "src/eval_registry.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_memory_suite_bench.rs"
+      - "docs/memory-suite.md"
+      - "docs/external-memory.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/research_memory_suite.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Memory suite contracts
+        run: |
+          cargo test --lib memory_suite::tests -- --nocapture
+          cargo test --lib memory::tests -- --nocapture
+          cargo test --lib docs_check::tests::memory_suite_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Smoke and full objective profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_memory_suite_bench -- both | tee /tmp/memory-suite.txt
+
+          grep -q '^memory_suite_protocol | schema=1 seed=135659918 backend=external-memory-1 capacity_policy=reject-new eviction=none profiles=smoke,full$' /tmp/memory-suite.txt
+          grep -q '^memory_suite_gate | deterministic=true retrieval_exact=true temporal_latest=true conflict_latest=true stale_latest=true long_horizon=true memory_off_zero=true capacity_reject_new=true eviction_zero=true$' /tmp/memory-suite.txt
+          test "$(grep -c '^memory_suite_profile |' /tmp/memory-suite.txt)" -eq 2
+          test "$(grep -c '^memory_suite_regression |' /tmp/memory-suite.txt)" -eq 2
+          test "$(grep -c '^memory_suite_capacity |' /tmp/memory-suite.txt)" -eq 6
+
+          python3 - <<'PY'
+          lines = open("/tmp/memory-suite.txt", encoding="utf-8").read().splitlines()
+
+          def fields(line):
+              return dict(
+                  token.split("=", 1)
+                  for token in line.split(" | ", 1)[1].split()
+                  if "=" in token
+              )
+
+          profiles = {}
+          regressions = {}
+          capacities = []
+          for line in lines:
+              if line.startswith("memory_suite_profile |"):
+                  row = fields(line)
+                  profiles[row["profile"]] = row
+              elif line.startswith("memory_suite_regression |"):
+                  row = fields(line)
+                  regressions[row["profile"]] = row
+              elif line.startswith("memory_suite_capacity |"):
+                  capacities.append(fields(line))
+
+          assert set(profiles) == {"smoke", "full"}
+          assert int(profiles["smoke"]["cases"]) == 10
+          assert int(profiles["full"]["cases"]) == 60
+          for row in profiles.values():
+              assert int(row["tasks"]) == 5
+              assert int(row["metrics"]) == 12
+              assert int(row["suite_fingerprint"], 16) != 0
+              assert int(row["fixture_fingerprint"], 16) != 0
+              assert float(row["exact_match"]) == 1.0
+              assert float(row["off_exact_match"]) == 0.0
+              assert int(row["query_ns_total"]) > 0
+              assert int(row["max_heap_bytes"]) > 0
+              assert int(row["max_snapshot_bytes"]) > 0
+          assert int(profiles["full"]["min_long_horizon"]) >= 32
+          assert int(profiles["full"]["max_long_horizon"]) >= 120
+
+          for row in regressions.values():
+              assert float(row["exact_match"]) == 0.0
+              for field in ["missing", "wrong_value", "wrong_order", "conflict_capture", "stale_value"]:
+                  assert int(row[field]) > 0
+
+          assert len(capacities) == 6
+          for row in capacities:
+              assert int(row["stored"]) == min(int(row["capacity"]), int(row["attempted"]))
+              assert int(row["rejected"]) == int(row["attempted"]) - int(row["stored"])
+              assert int(row["exact_hits"]) == int(row["stored"])
+              assert int(row["evicted"]) == 0
+              assert int(row["query_ns"]) > 0
+              assert int(row["heap_bytes"]) > 0
+              assert int(row["snapshot_bytes"]) > 0
+
+          full = [row for row in capacities if row["profile"] == "full"]
+          assert [int(row["capacity"]) for row in full] == [8, 32, 128]
+          assert float(full[-1]["exact_retrieval"]) == 1.0
+          print("memory_suite_ci | objective=true profile_counts=true failure_taxonomy=true capacity_curve=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets

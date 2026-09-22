@@ -150,6 +150,7 @@ mod tests {
             "local-attention.md",
             "eval-registry.md",
             "reasoning-suite.md",
+            "memory-suite.md",
             "moe-router.md",
             "gradient-clipping.md",
             "verify.md",
@@ -562,6 +563,42 @@ mod tests {
     }
 
     #[test]
+    fn memory_suite_doc_matches_contract() {
+        let text = docs("memory-suite.md");
+        for needle in [
+            "MEMORY_SUITE_SCHEMA_VERSION = 1",
+            "MEMORY_SUITE_SEED = 135659918",
+            "Exact retrieval",
+            "Temporal order",
+            "Conflict resolution",
+            "Stale resolution",
+            "Long-horizon recall",
+            "latest-record-wins",
+            "memory-off",
+            "reject-new",
+            "eviction = none",
+            "wrong-order",
+            "conflict-capture",
+            "stale-value",
+            "auralis_memory_suite_bench",
+            "12 metrics",
+        ] {
+            assert!(text.contains(needle), "memory-suite.md missing {needle}");
+        }
+        assert!(readme().contains("docs/memory-suite.md"));
+        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
+        let suite = crate::memory_suite::suite_definition(
+            crate::memory_suite::MemorySuiteProfile::Smoke,
+            crate::memory_suite::MEMORY_SUITE_SEED,
+        );
+        suite.validate().unwrap();
+        assert_eq!(suite.metrics.len(), 12);
+        let bench = crate::bench::find("memory-suite").expect("memory-suite benchmark");
+        assert_eq!(bench.bin, "auralis_memory_suite_bench");
+        assert_eq!(bench.default_args, "both");
+    }
+
+    #[test]
     fn reasoning_suite_doc_matches_contract() {
         let text = docs("reasoning-suite.md");
         for needle in [
@@ -591,6 +628,7 @@ mod tests {
         }
         assert!(readme().contains("docs/reasoning-suite.md"));
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
         let smoke = crate::reasoning_suite::suite_definition(
             crate::reasoning_suite::ReasoningProfile::Smoke,
             crate::reasoning_suite::REASONING_SUITE_SEED,
@@ -726,6 +764,7 @@ mod tests {
             "MOE_ROUTER_SCHEMA_VERSION = 1",
             "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "REASONING_SUITE_SCHEMA_VERSION = 1",
+            "MEMORY_SUITE_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

@@ -115,3 +115,14 @@ cargo run --release --bin auralis_reasoning_suite_bench -- both
 ```
 
 It generates the versioned #130 smoke and full profiles, verifies deterministic fixture fingerprints, scores the exact oracle, and runs an intentional regression that must surface arithmetic/value, sequence-length, variable-binding, finite-state transition and distractor-capture failures separately. It also publishes generation/scoring timing and the train-vs-eval difficulty/length boundaries. Timing is descriptive; determinism, objective scoring and regression sensitivity are the gates.
+
+
+## Research external-memory evaluation suite
+
+The `memory-suite` entry runs:
+
+```
+cargo run --release --bin auralis_memory_suite_bench -- both
+```
+
+It executes the #135 deterministic smoke/full external-memory profiles over exact retrieval, temporal ordering, conflict/stale resolution and long-horizon recall. It also publishes the memory-off control plus reject-new capacity sweeps with retrieval ratio, query latency, heap bytes, snapshot bytes and observed evictions. Correctness and explicit capacity semantics are gates; hosted-runner latency is descriptive.
