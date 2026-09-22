@@ -23,8 +23,9 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | KV cache session schema | `KV_CACHE_SCHEMA_VERSION = 3` |
 | MoE router schema | `MOE_ROUTER_SCHEMA_VERSION = 1` |
 | evaluation registry schema | `EVALUATION_REGISTRY_SCHEMA_VERSION = 1` |
+| reasoning suite schema | `REASONING_SUITE_SCHEMA_VERSION = 1` |
 | experiment manifest | `MANIFEST_VERSION = 4` |
 | release manifest | `RELEASE_MANIFEST_VERSION = 1` |
 
-`auralis_run_config=1` migra explícitamente a schema 2 con `grad_clip_enabled=true`; schemas de run config distintos de 1/2 se rechazan. Un manifiesto v3 se rechaza. `auralis_architecture=1` migra a LayerNorm + learned-absolute + MHA; schema 2 conserva normalización y migra a learned-absolute + MHA; schema 3 conserva normalización/posición y migra a MHA (`n_kv_head=n_head`); schema 4 registra `n_kv_head` y migra a atención dense; schema 5 registra también `attention_window`. Otros schemas se rechazan (fail-closed). El contrato MoE router schema 1 es experimental e independiente del formato de checkpoint/modelo; dense permanece default. El evaluation registry schema 1 versiona suites/tareas/métricas/baselines y rechaza drift de definición sin bump explícito.
+`auralis_run_config=1` migra explícitamente a schema 2 con `grad_clip_enabled=true`; schemas de run config distintos de 1/2 se rechazan. Un manifiesto v3 se rechaza. `auralis_architecture=1` migra a LayerNorm + learned-absolute + MHA; schema 2 conserva normalización y migra a learned-absolute + MHA; schema 3 conserva normalización/posición y migra a MHA (`n_kv_head=n_head`); schema 4 registra `n_kv_head` y migra a atención dense; schema 5 registra también `attention_window`. Otros schemas se rechazan (fail-closed). El contrato MoE router schema 1 es experimental e independiente del formato de checkpoint/modelo; dense permanece default. El evaluation registry schema 1 versiona suites/tareas/métricas/baselines y rechaza drift de definición sin bump explícito. La reasoning suite schema 1 fija generación determinista, splits de dificultad/longitud y scoring estructurado objetivo.
 Gate local: [rc-gate.md](rc-gate.md).
