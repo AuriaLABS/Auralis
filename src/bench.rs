@@ -154,6 +154,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "memory-suite",
+        bin: "auralis_memory_suite_bench",
+        kind: "research-memory",
+        summary: "objective external-memory retrieval, conflict, stale, horizon and capacity suite",
+        default_args: "both",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
