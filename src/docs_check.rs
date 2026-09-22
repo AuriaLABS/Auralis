@@ -148,6 +148,7 @@ mod tests {
             "recurrent-reasoning.md",
             "kv-cache.md",
             "local-attention.md",
+            "moe-router.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -559,6 +560,31 @@ mod tests {
     }
 
     #[test]
+    fn moe_router_doc_matches_contract() {
+        let text = docs("moe-router.md");
+        for needle in [
+            "MoE remains experimental",
+            "MOE_ROUTER_SCHEMA_VERSION = 1",
+            "DeterministicTopKRouter",
+            "MoeRouter",
+            "top_k",
+            "dense-fallback",
+            "dropped_tokens",
+            "dispatch",
+            "gather",
+            "load coefficient of variation",
+            "auralis_moe_router_bench",
+            "dense model path remains the reference/default",
+        ] {
+            assert!(text.contains(needle), "moe-router.md missing {needle}");
+        }
+        assert!(readme().contains("docs/moe-router.md"));
+        assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
+        let bench = crate::bench::find("moe-router").expect("moe-router benchmark");
+        assert_eq!(bench.bin, "auralis_moe_router_bench");
+    }
+
+    #[test]
     fn kv_cache_doc_matches_contract() {
         let text = docs("kv-cache.md");
         for needle in [
@@ -598,6 +624,7 @@ mod tests {
         assert_eq!(crate::brain_ab::ATTENTION_WINDOW_AB_SCHEMA_VERSION, 1);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
+        assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -620,6 +647,7 @@ mod tests {
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
             "KV_CACHE_SCHEMA_VERSION = 3",
+            "MOE_ROUTER_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
