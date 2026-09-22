@@ -200,6 +200,10 @@ impl EvaluationTask {
             self.fixture_count,
         )
     }
+
+    fn definition_fingerprint(&self) -> u64 {
+        fingerprint_bytes(self.canonical().as_bytes())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,6 +232,10 @@ impl EvaluationMetric {
             self.direction.as_str(),
             escape(&self.description),
         )
+    }
+
+    fn definition_fingerprint(&self) -> u64 {
+        fingerprint_bytes(self.canonical().as_bytes())
     }
 }
 
@@ -474,9 +482,23 @@ struct BaselineRecord {
     fingerprint: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TaskRecord {
+    task: EvaluationTask,
+    fingerprint: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MetricRecord {
+    metric: EvaluationMetric,
+    fingerprint: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EvaluationRegistry {
     suites: Vec<SuiteRecord>,
+    tasks: Vec<TaskRecord>,
+    metrics: Vec<MetricRecord>,
     baselines: Vec<BaselineRecord>,
 }
 
@@ -488,6 +510,7 @@ impl EvaluationRegistry {
     pub fn register_suite(&mut self, suite: EvaluationSuite) -> Result<SuiteRef, RegistryError> {
         suite.validate()?;
         let fingerprint = suite.definition_fingerprint()?;
+
         if let Some(existing) = self
             .suites
             .iter()
@@ -503,6 +526,68 @@ impl EvaluationRegistry {
             }
             return existing.suite.exact_ref();
         }
+
+        // Validate the global task/metric catalogs before mutating anything.
+        for task in &suite.tasks {
+            let candidate = task.definition_fingerprint();
+            if let Some(existing) = self
+                .tasks
+                .iter()
+                .find(|record| record.task.id == task.id && record.task.version == task.version)
+            {
+                if existing.fingerprint != candidate {
+                    return Err(RegistryError::TaskVersionCollision {
+                        id: task.id.clone(),
+                        version: task.version,
+                        existing: existing.fingerprint,
+                        candidate,
+                    });
+                }
+            }
+        }
+        for metric in &suite.metrics {
+            let candidate = metric.definition_fingerprint();
+            if let Some(existing) = self
+                .metrics
+                .iter()
+                .find(|record| record.metric.id == metric.id && record.metric.version == metric.version)
+            {
+                if existing.fingerprint != candidate {
+                    return Err(RegistryError::MetricVersionCollision {
+                        id: metric.id.clone(),
+                        version: metric.version,
+                        existing: existing.fingerprint,
+                        candidate,
+                    });
+                }
+            }
+        }
+
+        for task in &suite.tasks {
+            if !self
+                .tasks
+                .iter()
+                .any(|record| record.task.id == task.id && record.task.version == task.version)
+            {
+                self.tasks.push(TaskRecord {
+                    task: task.clone(),
+                    fingerprint: task.definition_fingerprint(),
+                });
+            }
+        }
+        for metric in &suite.metrics {
+            if !self
+                .metrics
+                .iter()
+                .any(|record| record.metric.id == metric.id && record.metric.version == metric.version)
+            {
+                self.metrics.push(MetricRecord {
+                    metric: metric.clone(),
+                    fingerprint: metric.definition_fingerprint(),
+                });
+            }
+        }
+
         let suite_ref = SuiteRef {
             id: suite.id.clone(),
             version: suite.version,
@@ -661,6 +746,14 @@ impl EvaluationRegistry {
     pub fn baseline_count(&self) -> usize {
         self.baselines.len()
     }
+
+    pub fn task_definition_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    pub fn metric_definition_count(&self) -> usize {
+        self.metrics.len()
+    }
 }
 
 pub fn smoke_fixture_bytes() -> &'static [u8] {
@@ -779,6 +872,18 @@ pub enum RegistryError {
         expected: u64,
         actual: u64,
     },
+    TaskVersionCollision {
+        id: String,
+        version: SemVer,
+        existing: u64,
+        candidate: u64,
+    },
+    MetricVersionCollision {
+        id: String,
+        version: SemVer,
+        existing: u64,
+        candidate: u64,
+    },
     UnknownSuite {
         id: String,
         version: SemVer,
@@ -824,6 +929,24 @@ impl fmt::Display for RegistryError {
             } => write!(
                 f,
                 "suite {id}@{version} fingerprint mismatch: expected={expected:016x} actual={actual:016x}"
+            ),
+            Self::TaskVersionCollision {
+                id,
+                version,
+                existing,
+                candidate,
+            } => write!(
+                f,
+                "task {id}@{version} definition changed without a version bump: existing={existing:016x} candidate={candidate:016x}"
+            ),
+            Self::MetricVersionCollision {
+                id,
+                version,
+                existing,
+                candidate,
+            } => write!(
+                f,
+                "metric {id}@{version} definition changed without a version bump: existing={existing:016x} candidate={candidate:016x}"
             ),
             Self::UnknownSuite { id, version } => write!(f, "unknown suite {id}@{version}"),
             Self::MetricSetMismatch { expected, actual } => write!(
@@ -900,6 +1023,37 @@ mod tests {
         assert_ne!(new_ref, original);
         assert_eq!(registry.suite_versions("registry-smoke").len(), 2);
         assert!(!registry.exact_compatible(&original, &new_ref).unwrap());
+    }
+
+    #[test]
+    fn task_and_metric_semantics_require_their_own_version_bumps() {
+        let (mut registry, _) = registered_smoke();
+
+        let mut task_drift = smoke_suite();
+        task_drift.version = SemVer::new(2, 0, 0);
+        task_drift.tasks[0].description = "changed task semantics".to_string();
+        assert!(matches!(
+            registry.register_suite(task_drift),
+            Err(RegistryError::TaskVersionCollision { .. })
+        ));
+
+        let mut metric_drift = smoke_suite();
+        metric_drift.version = SemVer::new(2, 0, 0);
+        metric_drift.metrics[0].description = "changed metric semantics".to_string();
+        assert!(matches!(
+            registry.register_suite(metric_drift),
+            Err(RegistryError::MetricVersionCollision { .. })
+        ));
+
+        let mut valid = smoke_suite();
+        valid.version = SemVer::new(2, 0, 0);
+        valid.tasks[0].version = SemVer::new(2, 0, 0);
+        valid.tasks[0].description = "changed task semantics".to_string();
+        valid.metrics[0].version = SemVer::new(2, 0, 0);
+        valid.metrics[0].description = "changed metric semantics".to_string();
+        registry.register_suite(valid).unwrap();
+        assert_eq!(registry.task_definition_count(), 2);
+        assert_eq!(registry.metric_definition_count(), 2);
     }
 
     #[test]
