@@ -104,3 +104,14 @@ cargo run --release --bin auralis_moe_router_bench
 ```
 
 It measures deterministic top-k routing plus dispatch/gather against a dense identity-copy reference for multiple token/expert/top-k shapes. A forced saturation case exercises the explicit `dense-fallback` policy and verifies that every token is either routed or falls back, `dropped_tokens=0`, expert capacity is never exceeded, and identity-expert gather reconstructs the dense input within floating-point tolerance. Hosted-runner timing is descriptive evidence for #112; this benchmark does not claim a model-quality or end-to-end speed improvement.
+
+
+## Research deterministic reasoning-suite benchmark
+
+The `reasoning-suite` entry runs:
+
+```
+cargo run --release --bin auralis_reasoning_suite_bench -- both
+```
+
+It generates the versioned #130 smoke and full profiles, verifies deterministic fixture fingerprints, scores the exact oracle, and runs an intentional regression that must surface arithmetic/value, sequence-length, variable-binding, finite-state transition and distractor-capture failures separately. It also publishes generation/scoring timing and the train-vs-eval difficulty/length boundaries. Timing is descriptive; determinism, objective scoring and regression sensitivity are the gates.
