@@ -136,6 +136,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "moe-router",
+        bin: "auralis_moe_router_bench",
+        kind: "brain-moe",
+        summary: "deterministic top-k routing, capacity/fallback and dispatch/gather overhead",
+        default_args: "",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
