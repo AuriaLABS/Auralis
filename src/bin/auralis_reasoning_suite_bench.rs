@@ -59,14 +59,21 @@ fn main() {
             .filter(|case| case.split.as_str() == "eval-difficulty")
             .map(|case| case.difficulty)
             .collect::<Vec<_>>();
-        let long_lengths = cases
+        let long_cases = cases
             .iter()
             .filter(|case| case.split.as_str() == "eval-length")
+            .collect::<Vec<_>>();
+        let long_lengths = long_cases
+            .iter()
             .map(|case| case.length)
+            .collect::<Vec<_>>();
+        let long_difficulties = long_cases
+            .iter()
+            .map(|case| case.difficulty)
             .collect::<Vec<_>>();
 
         println!(
-            "reasoning_suite_profile | profile={} cases={} tasks={} metrics={} suite_fingerprint={:016x} fixture_fingerprint={:016x} generation_ns={} oracle_score_ns={} train_max_length={} hard_min_difficulty={} long_min_length={}",
+            "reasoning_suite_profile | profile={} cases={} tasks={} metrics={} suite_fingerprint={:016x} fixture_fingerprint={:016x} generation_ns={} oracle_score_ns={} train_max_length={} hard_min_difficulty={} long_min_length={} long_max_difficulty={}",
             profile.as_str(),
             cases.len(),
             suite.tasks.len(),
@@ -78,6 +85,7 @@ fn main() {
             train_lengths.iter().copied().max().unwrap_or(0),
             hard_difficulties.iter().copied().min().unwrap_or(0),
             long_lengths.iter().copied().min().unwrap_or(0),
+            long_difficulties.iter().copied().max().unwrap_or(0),
         );
         println!(
             "reasoning_suite_oracle | profile={} exact_match={:.6} correct={} total={} failures=0",
