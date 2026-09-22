@@ -135,6 +135,17 @@ impl MemoryCase {
             })
             .map(|(index, write)| (index, write.value))
     }
+
+    fn matching_ids(&self) -> Vec<u64> {
+        self.writes
+            .iter()
+            .enumerate()
+            .filter(|(_, write)| {
+                write.namespace == self.query_namespace && write.key == self.query_key
+            })
+            .map(|(index, _)| index as u64)
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -368,11 +379,12 @@ pub fn score_case(case: &MemoryCase, prediction: &MemoryPrediction) -> MemoryCas
     if prediction.record_ids.is_empty() || prediction.selected_id.is_none() {
         return fail(MemoryFailureKind::WrongOrder);
     }
-    if prediction.record_ids.windows(2).any(|ids| ids[0] >= ids[1]) {
+    let expected_ids = case.matching_ids();
+    if prediction.record_ids != expected_ids {
         return fail(MemoryFailureKind::WrongOrder);
     }
 
-    let latest_id = prediction.record_ids.last().copied();
+    let latest_id = expected_ids.last().copied();
     if actual.to_bits() == case.expected.to_bits() {
         if prediction.selected_id == latest_id {
             return pass();
@@ -552,6 +564,12 @@ pub fn capacity_sweep(
 
 pub fn suite_definition(profile: MemorySuiteProfile, seed: u64) -> EvaluationSuite {
     let cases = generate_suite(profile, seed);
+    let max_fixture_steps = cases
+        .iter()
+        .map(|case| case.writes.len())
+        .max()
+        .unwrap_or(1);
+    let max_steps = max_fixture_steps.max(profile.capacity_working_set());
     let canonical = canonical_cases(&cases);
     let profile_name = profile.as_str();
     let tasks = MemoryTaskKind::ALL
@@ -593,7 +611,7 @@ pub fn suite_definition(profile: MemorySuiteProfile, seed: u64) -> EvaluationSui
         seed_policy: SeedPolicy { seeds: vec![seed] },
         limits: ResourceLimits {
             max_examples: cases.len(),
-            max_steps: profile.capacity_working_set(),
+            max_steps,
             max_tokens: match profile {
                 MemorySuiteProfile::Smoke => 16_384,
                 MemorySuiteProfile::Full => 262_144,
@@ -907,6 +925,21 @@ mod tests {
             score_case(&case, &forged).failure,
             MemoryFailureKind::WrongOrder
         );
+
+        let temporal = generate_suite(MemorySuiteProfile::Smoke, MEMORY_SUITE_SEED)
+            .into_iter()
+            .find(|case| case.kind == MemoryTaskKind::TemporalOrder)
+            .unwrap();
+        let latest_only = temporal.matching_ids().last().copied().unwrap();
+        let forged = MemoryPrediction {
+            value: Some(temporal.expected),
+            record_ids: vec![latest_only],
+            selected_id: Some(latest_only),
+        };
+        assert_eq!(
+            score_case(&temporal, &forged).failure,
+            MemoryFailureKind::WrongOrder
+        );
     }
 
     #[test]
@@ -990,6 +1023,22 @@ mod tests {
                 .definition_fingerprint()
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn registry_resource_limits_cover_every_fixture_and_capacity_sweep() {
+        for profile in [MemorySuiteProfile::Smoke, MemorySuiteProfile::Full] {
+            let cases = generate_suite(profile, MEMORY_SUITE_SEED);
+            let suite = suite_definition(profile, MEMORY_SUITE_SEED);
+            let max_fixture_steps = cases
+                .iter()
+                .map(|case| case.writes.len())
+                .max()
+                .unwrap();
+            assert!(suite.limits.max_steps >= max_fixture_steps);
+            assert!(suite.limits.max_steps >= profile.capacity_working_set());
+            assert!(suite.limits.max_examples >= cases.len());
+        }
     }
 
     #[test]

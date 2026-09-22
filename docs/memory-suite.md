@@ -19,7 +19,7 @@ The suite never uses an LLM judge. Fixtures, retrieval policy, scoring and failu
 - `smoke`: 2 fixtures per task family, 10 cases total.
 - `full`: 12 fixtures per task family, 60 cases total.
 
-Both profiles use the exact #74 evaluation registry, exact fixture fingerprints and one pinned seed.
+Both profiles use the exact #74 evaluation registry, exact fixture fingerprints and one pinned seed. Registry resource limits are derived from the actual fixture workload and the capacity sweep, so every published case fits inside its declared `max_steps`.
 
 ## Task families
 
@@ -48,8 +48,10 @@ The target is written before a long series of unrelated writes and must remain e
 Each prediction records:
 
 - selected scalar value;
-- matching record IDs;
+- the **complete ordered list** of matching record IDs;
 - selected record ID.
+
+A prediction with the correct scalar but an incomplete/missing retrieval trace fails closed as `wrong-order`; value-only guessing cannot pass the suite.
 
 A correct temporal/conflict/stale answer must select the last matching ID. The failure taxonomy is:
 
