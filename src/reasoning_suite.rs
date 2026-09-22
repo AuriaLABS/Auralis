@@ -539,7 +539,10 @@ fn difficulty_and_length(split: ReasoningSplit, seed: u64, index: u64) -> (u8, u
             (difficulty, length)
         }
         ReasoningSplit::EvalLength => {
-            let difficulty = 2 + bounded(seed, index, 0, 2) as u8;
+            // Hold difficulty at the upper edge of the training band so this
+            // split isolates length generalization instead of mixing in the
+            // hard-only structures enabled at difficulty >= 3.
+            let difficulty = 2;
             let length = 7 + bounded(seed, index, 1, 6);
             (difficulty, length)
         }
@@ -979,7 +982,9 @@ mod tests {
 
         assert!(train.iter().all(|case| case.difficulty <= 2 && case.length <= 4));
         assert!(hard.iter().all(|case| case.difficulty >= 3));
-        assert!(long.iter().all(|case| case.length >= 7));
+        assert!(long
+            .iter()
+            .all(|case| case.length >= 7 && case.difficulty == 2));
         let max_train_length = train.iter().map(|case| case.length).max().unwrap();
         let min_long_length = long.iter().map(|case| case.length).min().unwrap();
         assert!(min_long_length > max_train_length);
@@ -1102,6 +1107,34 @@ mod tests {
                 sequence_acceleration(2, REASONING_SUITE_SEED, easy_index as u64),
                 0
             );
+        }
+    }
+
+    #[test]
+    fn length_split_does_not_activate_hard_only_structures() {
+        let cases = generate_suite(ReasoningProfile::Full, REASONING_SUITE_SEED);
+        for case in cases
+            .iter()
+            .filter(|case| case.split == ReasoningSplit::EvalLength)
+        {
+            assert_eq!(case.difficulty, 2);
+            match &case.expected {
+                ReasoningAnswer::Plan { .. } => {
+                    assert!(!case.prompt.contains("action C"));
+                }
+                ReasoningAnswer::DistractorInteger {
+                    correct,
+                    distractors,
+                } => {
+                    assert!(distractors
+                        .iter()
+                        .all(|value| (value - correct).abs() >= 10));
+                }
+                _ => {}
+            }
+            if case.kind == ReasoningKind::VariableBinding {
+                assert!(!case.prompt.contains("2*"));
+            }
         }
     }
 
