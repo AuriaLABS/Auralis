@@ -10,7 +10,7 @@ The model keeps `n_head` query heads and adds explicit `n_kv_head`.
 - GQA: `1 < n_kv_head < n_head`, with `n_head % n_kv_head == 0`.
 - MQA: `n_kv_head == 1`.
 
-Invalid zero, oversized or non-divisible KV-head counts fail closed. Architecture schema 4 persists `n_kv_head`; historical schemas 1-3 migrate to MHA.
+Invalid zero, oversized or non-divisible KV-head counts fail closed. Architecture schema 5 persists `n_kv_head` plus the orthogonal `attention_window`; schema 4 migrates to dense attention and historical schemas 1-3 migrate to MHA + dense.
 
 ## Physical layout
 
