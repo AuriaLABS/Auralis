@@ -265,7 +265,7 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
     match &case.expected {
         ReasoningAnswer::Integer(expected) => match parse_integer(prediction) {
             None => fail(FailureKind::InvalidFormat),
-            Some(actual) if actual.as_slice() == expected.as_slice() => pass(),
+            Some(actual) if actual == *expected => pass(),
             Some(_) if case.kind == ReasoningKind::VariableBinding => {
                 fail(FailureKind::WrongBinding)
             }
@@ -274,7 +274,7 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
         ReasoningAnswer::IntegerSequence(expected) => match parse_integer_sequence(prediction) {
             None => fail(FailureKind::InvalidFormat),
             Some(actual) if actual.len() != expected.len() => fail(FailureKind::WrongLength),
-            Some(actual) if actual == *expected => pass(),
+            Some(actual) if actual.as_slice() == expected.as_slice() => pass(),
             Some(_) => fail(FailureKind::WrongValue),
         },
         ReasoningAnswer::Plan {
