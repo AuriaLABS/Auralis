@@ -75,10 +75,11 @@ The correctness rule never changes across splits.
 - lengths remain in the short regime.
 
 `eval-length`:
-- difficulty stays moderate;
+- difficulty is fixed at 2, the upper edge of the training band;
+- difficulty-3-only structures are therefore excluded;
 - lengths are strictly beyond the training-length range.
 
-This separates harder composition from length generalization instead of mixing them into one score.
+This separates harder composition from length generalization instead of mixing them into one score. The length split deliberately holds difficulty at 2 so its out-of-distribution axis is length, not a hidden difficulty jump.
 
 ## Objective structured scoring
 
