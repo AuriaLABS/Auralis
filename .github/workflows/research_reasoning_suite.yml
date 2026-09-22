@@ -85,6 +85,7 @@ jobs:
               assert int(row["train_max_length"]) <= 4
               assert int(row["hard_min_difficulty"]) >= 3
               assert int(row["long_min_length"]) >= 7
+              assert int(row["long_max_difficulty"]) == 2
 
               oracle = oracles[name]
               assert float(oracle["exact_match"]) == 1.0
@@ -101,7 +102,7 @@ jobs:
 
           assert profiles["smoke"]["suite_fingerprint"] != profiles["full"]["suite_fingerprint"]
           assert profiles["smoke"]["fixture_fingerprint"] != profiles["full"]["fixture_fingerprint"]
-          print("reasoning_suite_gate | deterministic=true oracle_exact=true split_separation=true regression_sensitive=true objective_scoring=true")
+          print("reasoning_suite_gate | deterministic=true oracle_exact=true difficulty_isolated=true length_isolated=true regression_sensitive=true objective_scoring=true")
           PY
 
       - name: Full suite
