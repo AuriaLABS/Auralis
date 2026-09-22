@@ -1,7 +1,8 @@
 use auralis::memory_suite::{
-    capacity_sweep, execute_profile, generate_suite, intentional_regression_predictions,
-    memory_off_predictions, score_predictions, suite_definition, MemoryFailureKind,
-    MemorySuiteProfile, MEMORY_SUITE_SCHEMA_VERSION, MEMORY_SUITE_SEED,
+    capacity_sweep, execute_case, execute_profile, generate_suite,
+    intentional_regression_predictions, memory_off_predictions, score_case, score_predictions,
+    suite_definition, MemoryFailureKind, MemorySuiteProfile, MemoryTaskKind,
+    MEMORY_SUITE_SCHEMA_VERSION, MEMORY_SUITE_SEED,
 };
 
 fn profiles(arg: Option<&str>) -> Vec<MemorySuiteProfile> {
@@ -63,6 +64,23 @@ fn main() {
             regression.failure_count(MemoryFailureKind::ConflictCapture),
             regression.failure_count(MemoryFailureKind::StaleValue),
         );
+
+        for case in cases
+            .iter()
+            .filter(|case| case.kind == MemoryTaskKind::LongHorizonRecall)
+        {
+            let execution = execute_case(case).expect("long-horizon execution");
+            let score = score_case(case, &execution.prediction);
+            println!(
+                "memory_suite_horizon | profile={} horizon={} exact_match={} query_ns={} heap_bytes={} snapshot_bytes={}",
+                profile.as_str(),
+                case.horizon,
+                if score.exact { 1 } else { 0 },
+                execution.query_ns,
+                execution.heap_bytes,
+                execution.snapshot_bytes,
+            );
+        }
 
         for point in capacity_sweep(profile).expect("capacity sweep") {
             println!(
