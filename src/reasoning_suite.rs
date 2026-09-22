@@ -262,10 +262,12 @@ pub fn generate_suite(profile: ReasoningProfile, seed: u64) -> Vec<ReasoningCase
 }
 
 pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
+    let canonical = case.expected.canonical();
     match &case.expected {
         ReasoningAnswer::Integer(expected) => match parse_integer(prediction) {
             None => fail(FailureKind::InvalidFormat),
-            Some(actual) if actual == *expected => pass(),
+            Some(actual) if actual == *expected && prediction == canonical => pass(),
+            Some(actual) if actual == *expected => fail(FailureKind::InvalidFormat),
             Some(_) if case.kind == ReasoningKind::VariableBinding => {
                 fail(FailureKind::WrongBinding)
             }
@@ -274,7 +276,12 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
         ReasoningAnswer::IntegerSequence(expected) => match parse_integer_sequence(prediction) {
             None => fail(FailureKind::InvalidFormat),
             Some(actual) if actual.len() != expected.len() => fail(FailureKind::WrongLength),
-            Some(actual) if actual.as_slice() == expected.as_slice() => pass(),
+            Some(actual) if actual.as_slice() == expected.as_slice() && prediction == canonical => {
+                pass()
+            }
+            Some(actual) if actual.as_slice() == expected.as_slice() => {
+                fail(FailureKind::InvalidFormat)
+            }
             Some(_) => fail(FailureKind::WrongValue),
         },
         ReasoningAnswer::Plan {
@@ -286,9 +293,17 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
             Some((actual_actions, actual_state, actual_steps))
                 if actual_actions == actions.as_str()
                     && actual_state == *final_state
-                    && actual_steps == *steps =>
+                    && actual_steps == *steps
+                    && prediction == canonical =>
             {
                 pass()
+            }
+            Some((actual_actions, actual_state, actual_steps))
+                if actual_actions == actions.as_str()
+                    && actual_state == *final_state
+                    && actual_steps == *steps =>
+            {
+                fail(FailureKind::InvalidFormat)
             }
             Some(_) => fail(FailureKind::WrongTransition),
         },
@@ -297,7 +312,8 @@ pub fn score_case(case: &ReasoningCase, prediction: &str) -> CaseScore {
             distractors,
         } => match parse_integer(prediction) {
             None => fail(FailureKind::InvalidFormat),
-            Some(actual) if actual == *correct => pass(),
+            Some(actual) if actual == *correct && prediction == canonical => pass(),
+            Some(actual) if actual == *correct => fail(FailureKind::InvalidFormat),
             Some(actual) if distractors.contains(&actual) => fail(FailureKind::DistractorCapture),
             Some(_) => fail(FailureKind::WrongValue),
         },
@@ -1040,6 +1056,48 @@ mod tests {
             score_case(case, &verbose).failure,
             FailureKind::InvalidFormat
         );
+    }
+
+    #[test]
+    fn semantically_equal_noncanonical_predictions_are_invalid_format() {
+        let cases = generate_suite(ReasoningProfile::Smoke, REASONING_SUITE_SEED);
+        let mut covered = [false; 4];
+
+        for case in &cases {
+            let noncanonical = match &case.expected {
+                ReasoningAnswer::Integer(value) => {
+                    covered[0] = true;
+                    format!("+{value}")
+                }
+                ReasoningAnswer::IntegerSequence(values) => {
+                    covered[1] = true;
+                    values
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+                ReasoningAnswer::Plan {
+                    actions,
+                    final_state,
+                    steps,
+                } => {
+                    covered[2] = true;
+                    format!("plan={actions};state=S0{final_state};steps={steps}")
+                }
+                ReasoningAnswer::DistractorInteger { correct, .. } => {
+                    covered[3] = true;
+                    format!("+{correct}")
+                }
+            };
+            assert_eq!(
+                score_case(case, &noncanonical).failure,
+                FailureKind::InvalidFormat,
+                "case {} accepted noncanonical prediction {noncanonical:?}",
+                case.id
+            );
+        }
+        assert!(covered.into_iter().all(|seen| seen));
     }
 
     #[test]
