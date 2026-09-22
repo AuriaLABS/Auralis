@@ -738,9 +738,7 @@ fn unique_versioned_ids<'a>(
 ) -> Result<(), RegistryError> {
     let mut seen = Vec::<(String, SemVer)>::new();
     for (id, version) in values {
-        if seen.iter().any(|(seen_id, seen_version)| {
-            seen_id == id && *seen_version == version
-        }) {
+        if seen.iter().any(|(seen_id, _seen_version)| seen_id == id) {
             return Err(RegistryError::DuplicateVersionedId {
                 what,
                 id: id.clone(),
@@ -1019,6 +1017,15 @@ mod tests {
 
         let mut suite = smoke_suite();
         suite.metrics.push(suite.metrics[0].clone());
+        assert!(matches!(
+            suite.validate(),
+            Err(RegistryError::DuplicateVersionedId { what: "metric", .. })
+        ));
+
+        let mut suite = smoke_suite();
+        let mut newer = suite.metrics[0].clone();
+        newer.version = SemVer::new(2, 0, 0);
+        suite.metrics.push(newer);
         assert!(matches!(
             suite.validate(),
             Err(RegistryError::DuplicateVersionedId { what: "metric", .. })
