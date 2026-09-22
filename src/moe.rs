@@ -567,7 +567,7 @@ mod tests {
     fn dense_fallback_is_explicit_and_no_token_is_silently_dropped() {
         let router = DeterministicTopKRouter;
         let logits = [
-            3.0, 2.0, 1.0, 0.0, 4.0, 3.0, 2.0, 1.0, 0.0, 5.0, 4.0, 3.0,
+            3.0, 2.0, 1.0, 0.0, 4.0, 3.0, 2.0, 1.0, 0.0, 1.0, 5.0, 4.0,
         ];
         let plan = router
             .route(
@@ -592,7 +592,7 @@ mod tests {
     fn dispatch_and_identity_experts_gather_back_to_input_with_dense_fallback() {
         let router = DeterministicTopKRouter;
         let logits = [
-            3.0, 2.0, 1.0, 0.0, 4.0, 3.0, 2.0, 1.0, 0.0, 5.0, 4.0, 3.0,
+            3.0, 2.0, 1.0, 0.0, 4.0, 3.0, 2.0, 1.0, 0.0, 1.0, 5.0, 4.0,
         ];
         let plan = router
             .route(
