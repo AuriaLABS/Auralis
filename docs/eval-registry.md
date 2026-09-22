@@ -86,6 +86,8 @@ A baseline must report exactly one finite value for every metric in the referenc
 
 The reference `EvaluationRegistry` retains all registered baseline versions. Registering a newer baseline does not delete the previous one.
 
+Baseline metadata requires a real canonical `YYYY-MM-DD` calendar date plus non-empty code revision/model identity. Invalid dates such as `2026-02-30` fail closed.
+
 Queries can address:
 
 - a baseline by `id + version`;
