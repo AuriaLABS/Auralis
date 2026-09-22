@@ -2852,7 +2852,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 mod tests {
     use super::{
         rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
-        CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
+        CpuBackend, Gpt, KvCache, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
