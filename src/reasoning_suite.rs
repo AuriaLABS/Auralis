@@ -1121,6 +1121,70 @@ mod tests {
     }
 
     #[test]
+    fn shortest_plan_matches_exhaustive_lexicographic_oracle() {
+        fn exhaustive(
+            start: usize,
+            target: usize,
+            state_count: usize,
+            actions: &[char],
+            max_len: usize,
+        ) -> Option<String> {
+            if start == target {
+                return Some(String::new());
+            }
+            for len in 1..=max_len {
+                let total = actions.len().pow(len as u32);
+                for ordinal in 0..total {
+                    let mut n = ordinal;
+                    let mut digits = vec![0usize; len];
+                    for pos in (0..len).rev() {
+                        digits[pos] = n % actions.len();
+                        n /= actions.len();
+                    }
+                    let plan = digits
+                        .into_iter()
+                        .map(|digit| actions[digit])
+                        .collect::<String>();
+                    if apply_plan(start, &plan, state_count) == target {
+                        return Some(plan);
+                    }
+                }
+            }
+            None
+        }
+
+        for state_count in 2usize..=12 {
+            for &(action_set, alphabet) in [
+                (&[('A', 1usize), ('B', 2usize)][..], &['A', 'B'][..]),
+                (
+                    &[('A', 1usize), ('B', 2usize), ('C', 3usize)][..],
+                    &['A', 'B', 'C'][..],
+                ),
+            ]
+            .iter()
+            {
+                for start in 0..state_count {
+                    for target in 0..state_count {
+                        let actual = shortest_plan(start, target, state_count, action_set);
+                        let expected = exhaustive(
+                            start,
+                            target,
+                            state_count,
+                            alphabet,
+                            actual.len(),
+                        )
+                        .expect("connected finite ring");
+                        assert_eq!(
+                            actual, expected,
+                            "state_count={state_count} start={start} target={target}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn difficulty_split_changes_structure_in_every_family() {
         let cases = generate_suite(ReasoningProfile::Full, REASONING_SUITE_SEED);
 
