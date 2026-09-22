@@ -496,6 +496,7 @@ mod tests {
             n_embd: 6,
             n_head: 2,
             n_kv_head: 2,
+            attention_window: 0,
             n_layer: 1,
             block: 8,
             n_ff: 12,
