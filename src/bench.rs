@@ -127,6 +127,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "local-attention",
+        bin: "auralis_local_attention_bench",
+        kind: "brain-attention",
+        summary: "dense vs causal local-window quality, scaling and probability-cache memory",
+        default_args: "",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
