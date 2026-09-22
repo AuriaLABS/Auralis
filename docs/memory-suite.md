@@ -41,7 +41,7 @@ An old value is written, unrelated writes advance the history, then the target i
 
 ### Long-horizon recall
 
-The target is written before a long series of unrelated writes and must remain exactly retrievable. The full profile spans horizons from at least 32 to at least 120 intervening writes.
+The target is written before a long series of unrelated writes and must remain exactly retrievable. The full profile spans horizons from at least 32 to at least 120 intervening writes. The benchmark emits one `memory_suite_horizon` row per long-horizon fixture with exact-match, query latency, heap bytes and snapshot bytes, so results are visible at each evaluated horizon rather than only as one aggregate.
 
 ## Objective scoring
 
