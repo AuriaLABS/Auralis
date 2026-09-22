@@ -43,7 +43,7 @@ A suite definition includes:
 suite id + exact semantic version + definition fingerprint
 ```
 
-An evaluation run is valid only when its `EvaluationRunDescriptor` resolves that exact reference.
+An evaluation run is valid only when its `EvaluationRunDescriptor` resolves that exact reference. The descriptor also records the exact run seed, and validation rejects any seed not declared by the suite `SeedPolicy`.
 
 ## Version-collision rule
 
@@ -145,7 +145,7 @@ To reproduce an evaluation, another agent needs the recorded:
 - dataset id/revision/split/population/fingerprint;
 - task versions and fixture fingerprints;
 - metric versions;
-- seed policy;
+- seed policy and the exact selected run seed;
 - limits;
 - code revision;
 - model/checkpoint/config identity.
