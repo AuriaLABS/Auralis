@@ -559,7 +559,14 @@ fn arithmetic_case(
     let mut ops = Vec::with_capacity(length);
 
     for step in 0..length {
-        let selector = bounded(seed, index, 20 + step as u64, 3);
+        if difficulty >= 3 && step == 0 {
+            let factor = 2 + difficulty as i64;
+            value *= factor;
+            ops.push(format!("*{factor}"));
+            continue;
+        }
+        let operator_count = if difficulty == 1 { 2 } else { 3 };
+        let selector = bounded(seed, index, 20 + step as u64, operator_count);
         match selector {
             0 => {
                 let delta = 1 + bounded(seed, index, 100 + step as u64, 9) as i64;
@@ -572,7 +579,11 @@ fn arithmetic_case(
                 ops.push(format!("-{delta}"));
             }
             _ => {
-                let factor = 2 + bounded(seed, index, 300 + step as u64, 3) as i64;
+                let factor = if difficulty >= 3 {
+                    3 + bounded(seed, index, 300 + step as u64, 3) as i64
+                } else {
+                    2
+                };
                 value *= factor;
                 ops.push(format!("*{factor}"));
             }
@@ -593,6 +604,14 @@ fn arithmetic_case(
     }
 }
 
+fn sequence_acceleration(difficulty: u8, seed: u64, index: u64) -> i64 {
+    if difficulty >= 3 {
+        1 + bounded(seed, index, 402, 2) as i64
+    } else {
+        0
+    }
+}
+
 fn sequence_case(
     id: String,
     split: ReasoningSplit,
@@ -603,11 +622,7 @@ fn sequence_case(
 ) -> ReasoningCase {
     let start = bounded(seed, index, 400, 11) as i64 - 5;
     let delta = 1 + bounded(seed, index, 401, 7) as i64;
-    let acceleration = if difficulty >= 3 {
-        bounded(seed, index, 402, 3) as i64
-    } else {
-        0
-    };
+    let acceleration = sequence_acceleration(difficulty, seed, index);
     let visible = length.max(3);
     let mut values = Vec::with_capacity(visible + 2);
     let mut current = start;
@@ -651,18 +666,35 @@ fn binding_case(
     let mut lines = vec![format!("a={a}"), format!("b={b}"), "c=a+b".to_string()];
 
     for step in 0..length {
-        match step % 3 {
-            0 => {
-                a = c - b + 1;
-                lines.push("a=c-b+1".to_string());
+        if difficulty >= 3 {
+            match step % 3 {
+                0 => {
+                    a = c - b + difficulty as i64;
+                    lines.push(format!("a=c-b+{difficulty}"));
+                }
+                1 => {
+                    b = a + 2 * c - difficulty as i64;
+                    lines.push(format!("b=a+2*c-{difficulty}"));
+                }
+                _ => {
+                    c = 2 * a - b + difficulty as i64;
+                    lines.push(format!("c=2*a-b+{difficulty}"));
+                }
             }
-            1 => {
-                b = a + c;
-                lines.push("b=a+c".to_string());
-            }
-            _ => {
-                c = a - b;
-                lines.push("c=a-b".to_string());
+        } else {
+            match step % 3 {
+                0 => {
+                    a = b + 1;
+                    lines.push("a=b+1".to_string());
+                }
+                1 => {
+                    b = c + 1;
+                    lines.push("b=c+1".to_string());
+                }
+                _ => {
+                    c = a + 1;
+                    lines.push("c=a+1".to_string());
+                }
             }
         }
     }
@@ -699,7 +731,12 @@ fn planning_case(
     let start = bounded(seed, index, 600, state_count);
     let offset = length.min(state_count - 1).max(1);
     let target = (start + offset) % state_count;
-    let actions = shortest_plan(start, target, state_count);
+    let action_set: &[(char, usize)] = if difficulty >= 3 {
+        &[('A', 1), ('B', 2), ('C', 3)]
+    } else {
+        &[('A', 1), ('B', 2)]
+    };
+    let actions = shortest_plan(start, target, state_count, action_set);
     let final_state = apply_plan(start, &actions, state_count);
 
     ReasoningCase {
@@ -708,12 +745,22 @@ fn planning_case(
         split,
         difficulty,
         length,
-        prompt: format!(
-            "States are S0..S{}. Action A moves +1 mod {}; action B moves +2 mod {}. Start at S{start}, target S{target}. Return the lexicographically first shortest plan using A before B, exactly as plan=<AB...>;state=S<n>;steps=<n>.",
-            state_count - 1,
-            state_count,
-            state_count,
-        ),
+        prompt: if difficulty >= 3 {
+            format!(
+                "States are S0..S{}. Action A moves +1 mod {}; action B moves +2 mod {}; action C moves +3 mod {}. Start at S{start}, target S{target}. Return the lexicographically first shortest plan using A before B before C, exactly as plan=<ABC...>;state=S<n>;steps=<n>.",
+                state_count - 1,
+                state_count,
+                state_count,
+                state_count,
+            )
+        } else {
+            format!(
+                "States are S0..S{}. Action A moves +1 mod {}; action B moves +2 mod {}. Start at S{start}, target S{target}. Return the lexicographically first shortest plan using A before B, exactly as plan=<AB...>;state=S<n>;steps=<n>.",
+                state_count - 1,
+                state_count,
+                state_count,
+            )
+        },
         expected: ReasoningAnswer::Plan {
             steps: actions.len(),
             actions,
@@ -733,12 +780,17 @@ fn distractor_case(
     let x = 2 + bounded(seed, index, 700, 20) as i64;
     let y = 2 + bounded(seed, index, 701, 20) as i64;
     let correct = x + y;
+    let (base_distance, spacing, jitter) = if difficulty >= 3 {
+        (1i64, 2i64, 2usize)
+    } else {
+        (10i64, 11i64, 5usize)
+    };
     let distractors = (0..length)
         .map(|i| {
             correct
-                + 3
-                + (i as i64 * 11)
-                + bounded(seed, index, 702 + i as u64, 5) as i64
+                + base_distance
+                + (i as i64 * spacing)
+                + bounded(seed, index, 702 + i as u64, jitter) as i64
         })
         .collect::<Vec<_>>();
     let notes = distractors
@@ -764,7 +816,12 @@ fn distractor_case(
     }
 }
 
-fn shortest_plan(start: usize, target: usize, state_count: usize) -> String {
+fn shortest_plan(
+    start: usize,
+    target: usize,
+    state_count: usize,
+    action_set: &[(char, usize)],
+) -> String {
     if start == target {
         return String::new();
     }
@@ -775,7 +832,7 @@ fn shortest_plan(start: usize, target: usize, state_count: usize) -> String {
     visited[start] = true;
 
     while let Some((state, plan)) = queue.pop_front() {
-        for (action, delta) in [('A', 1usize), ('B', 2usize)] {
+        for &(action, delta) in action_set {
             let next = (state + delta) % state_count;
             let mut candidate = plan.clone();
             candidate.push(action);
@@ -796,6 +853,7 @@ fn apply_plan(start: usize, plan: &str, state_count: usize) -> usize {
     plan.chars().fold(start, |state, action| match action {
         'A' => (state + 1) % state_count,
         'B' => (state + 2) % state_count,
+        'C' => (state + 3) % state_count,
         _ => state,
     })
 }
@@ -833,7 +891,7 @@ fn parse_plan(value: &str) -> Option<(String, usize, usize)> {
         .strip_prefix("steps=")?
         .parse::<usize>()
         .ok()?;
-    if parts.next().is_some() || !plan.chars().all(|c| c == 'A' || c == 'B') {
+    if parts.next().is_some() || !plan.chars().all(|c| c == 'A' || c == 'B' || c == 'C') {
         return None;
     }
     Some((plan, state, steps))
@@ -996,6 +1054,54 @@ mod tests {
             };
             assert_eq!(actions.len(), *steps);
             assert!(score_case(case, &case.expected.canonical()).exact);
+        }
+    }
+
+    #[test]
+    fn difficulty_split_changes_structure_in_every_family() {
+        let cases = generate_suite(ReasoningProfile::Full, REASONING_SUITE_SEED);
+
+        let hard_arithmetic = cases
+            .iter()
+            .filter(|case| {
+                case.kind == ReasoningKind::ArithmeticComposition
+                    && case.split == ReasoningSplit::EvalDifficulty
+            })
+            .collect::<Vec<_>>();
+        assert!(hard_arithmetic.iter().all(|case| {
+            let forced = 2 + case.difficulty as i64;
+            case.prompt.contains(&format!("*{forced}"))
+        }));
+
+        assert!(cases.iter().filter(|case| {
+            case.kind == ReasoningKind::VariableBinding
+                && case.split == ReasoningSplit::EvalDifficulty
+        }).all(|case| case.prompt.contains("2*")));
+
+        assert!(cases.iter().filter(|case| {
+            case.kind == ReasoningKind::FiniteStatePlanning
+                && case.split == ReasoningSplit::EvalDifficulty
+        }).all(|case| case.prompt.contains("action C")));
+
+        for case in cases.iter().filter(|case| {
+            case.kind == ReasoningKind::DistractorRobustness
+                && case.split == ReasoningSplit::EvalDifficulty
+        }) {
+            let ReasoningAnswer::DistractorInteger { correct, distractors } = &case.expected else {
+                unreachable!()
+            };
+            assert!(distractors.iter().any(|value| (value - correct).abs() <= 2));
+        }
+
+        // Hard sequence cases always use non-zero acceleration; easy cases use zero.
+        for local_index in 0..ReasoningProfile::Full.cases_per_kind_split() {
+            let hard_index = 10_000 + 1_000 + local_index;
+            let easy_index = 10_000 + local_index;
+            assert!(sequence_acceleration(3, REASONING_SUITE_SEED, hard_index as u64) > 0);
+            assert_eq!(
+                sequence_acceleration(2, REASONING_SUITE_SEED, easy_index as u64),
+                0
+            );
         }
     }
 

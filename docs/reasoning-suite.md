@@ -22,19 +22,19 @@ Each profile contains five task families across three explicit splits.
 
 ### Arithmetic composition
 
-A case starts from an integer and applies a deterministic ordered sequence of additions, subtractions and small multiplications.
+A case starts from an integer and applies a deterministic ordered sequence of operations. Difficulty changes the operator structure: easy cases use a smaller operator set, while difficulty 3+ guarantees a higher-factor multiplication before the remaining composition.
 
 The answer is one exact integer.
 
 ### Algorithmic sequence
 
-A case exposes a deterministic arithmetic or accelerated-arithmetic prefix and asks for exactly the next two integers.
+A case exposes a deterministic sequence prefix and asks for exactly the next two integers. Difficulty 1–2 uses zero acceleration; difficulty 3+ always uses non-zero second-order acceleration.
 
 The answer is an ordered comma-separated integer sequence. Wrong sequence length is reported separately from wrong values.
 
 ### Variable binding
 
-A case executes assignments and rebindings left-to-right and asks for one final variable value.
+A case executes assignments and rebindings left-to-right and asks for one final variable value. Easy cases use single-source rebindings; difficulty 3+ uses weighted multi-source expressions.
 
 A numerically valid but incorrect answer is classified as `wrong-binding`.
 
@@ -43,7 +43,8 @@ A numerically valid but incorrect answer is classified as `wrong-binding`.
 The finite state-space size grows deterministically with case length. States are `S0..S<n>` for that case.
 
 - action `A`: +1 modulo the case state count;
-- action `B`: +2 modulo the case state count.
+- action `B`: +2 modulo the case state count;
+- difficulty 3+ adds action `C`: +3 modulo the case state count, increasing the branching factor.
 
 The requested target offset also grows with case length, so the `eval-length` split has a strictly longer shortest-plan horizon than the training split.
 
@@ -57,7 +58,7 @@ The oracle uses deterministic breadth-first search. Any structurally valid but i
 
 ### Distractor robustness
 
-The prompt contains relevant arithmetic facts plus a deterministic list of plausible but unrelated values. The number of distractor notes grows with case length.
+The prompt contains relevant arithmetic facts plus a deterministic list of plausible but unrelated values. The number of distractor notes grows with case length, and difficulty 3+ moves distractors much closer to the correct value.
 
 Returning any listed distractor is classified as `distractor-capture`, separately from a generic wrong value.
 
