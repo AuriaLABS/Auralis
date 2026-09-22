@@ -148,6 +148,7 @@ mod tests {
             "recurrent-reasoning.md",
             "kv-cache.md",
             "local-attention.md",
+            "eval-registry.md",
             "moe-router.md",
             "gradient-clipping.md",
             "verify.md",
@@ -560,6 +561,38 @@ mod tests {
     }
 
     #[test]
+    fn eval_registry_doc_matches_contract() {
+        let text = docs("eval-registry.md");
+        for needle in [
+            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
+            "EvaluationSuite",
+            "EvaluationTask",
+            "EvaluationMetric",
+            "Baseline",
+            "SuiteRef",
+            "SuiteVersionCollision",
+            "TaskVersionCollision",
+            "MetricVersionCollision",
+            "BaselineVersionCollision",
+            "DatasetMetadata",
+            "SeedPolicy",
+            "exact run seed",
+            "ResourceLimits",
+            "deprecate_suite",
+            "historical v1 baseline remains queryable",
+            "auralis_eval_registry_smoke",
+            "does not",
+        ] {
+            assert!(text.contains(needle), "eval-registry.md missing {needle}");
+        }
+        assert!(readme().contains("docs/eval-registry.md"));
+        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
+        let suite = crate::eval_registry::smoke_suite();
+        suite.validate().unwrap();
+        assert_ne!(suite.definition_fingerprint().unwrap(), 0);
+    }
+
+    #[test]
     fn moe_router_doc_matches_contract() {
         let text = docs("moe-router.md");
         for needle in [
@@ -625,6 +658,7 @@ mod tests {
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
+        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -648,6 +682,7 @@ mod tests {
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
             "KV_CACHE_SCHEMA_VERSION = 3",
             "MOE_ROUTER_SCHEMA_VERSION = 1",
+            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
