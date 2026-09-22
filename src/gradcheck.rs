@@ -79,11 +79,12 @@ pub fn check_random_params(
 fn loss_only(template: &Gpt, params: &[f32], x: &[usize], y: &[usize]) -> f32 {
     let mut clone = {
         let mut rng = rand::thread_rng();
-        Gpt::new_with_attention_heads(
+        Gpt::new_with_attention_policy(
             template.cfg,
             template.normalization(),
             template.position_kind(),
             template.n_kv_head(),
+            template.attention_window(),
             &mut rng,
         )
     };
@@ -98,6 +99,68 @@ mod tests {
     use crate::position::PositionKind;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    #[test]
+    fn local_attention_qkv_gradients_match_finite_differences() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
+        let x = [0usize, 1, 2, 3];
+        let y = [1usize, 2, 3, 4];
+        let eps = 1e-3f32;
+        let n_kv_head = 2usize;
+        let mut rng = StdRng::seed_from_u64(0xA11CE_1112);
+        let gpt = Gpt::new_with_attention_policy(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            n_kv_head,
+            2,
+            &mut rng,
+        );
+        let mut params = gpt.collect_params();
+        let mut grads = vec![0.0f32; params.len()];
+        let loss = gpt.backward_into(&x, &y, &mut grads);
+        assert!(loss.is_finite());
+        assert!(grads.iter().all(|g| g.is_finite()));
+
+        let d = cfg.n_embd;
+        let kv_width = (d / cfg.n_head) * n_kv_head;
+        let block_start = cfg.vocab * d + cfg.block * d;
+        let wq_start = block_start + 2 * d;
+        let wk_start = wq_start + d * d;
+        let wv_start = wk_start + d * kv_width;
+        let indices = [
+            wq_start,
+            wq_start + d * d - 1,
+            wk_start,
+            wk_start + d * kv_width - 1,
+            wv_start,
+            wv_start + d * kv_width - 1,
+        ];
+
+        for index in indices {
+            let saved = params[index];
+            params[index] = saved + eps;
+            let lp = loss_only(&gpt, &params, &x, &y);
+            params[index] = saved - eps;
+            let lm = loss_only(&gpt, &params, &x, &y);
+            params[index] = saved;
+
+            let numerical = (lp - lm) / (2.0 * eps);
+            let analytical = grads[index];
+            let abs_err = (numerical - analytical).abs();
+            assert!(
+                abs_err <= 4e-3,
+                "index={index} analytical={analytical} numerical={numerical} abs_err={abs_err}"
+            );
+        }
+    }
 
     #[test]
     fn grouped_kv_projection_gradients_match_finite_differences() {
