@@ -576,6 +576,7 @@ mod tests {
             "BaselineVersionCollision",
             "DatasetMetadata",
             "SeedPolicy",
+            "exact run seed",
             "ResourceLimits",
             "deprecate_suite",
             "historical v1 baseline remains queryable",
