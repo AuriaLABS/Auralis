@@ -20,6 +20,7 @@ use std::time::Instant;
 
 pub const BRAIN_AB_SCHEMA_VERSION: u32 = 4;
 pub const ATTENTION_HEAD_AB_SCHEMA_VERSION: u32 = 1;
+pub const ATTENTION_WINDOW_AB_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AbProtocol {
@@ -154,6 +155,67 @@ impl AttentionHeadExperimentResult {
                     m.repetition,
                     variant.config.n_head,
                     variant.n_kv_head,
+                    variant.normalization.as_str(),
+                    variant.position.as_str(),
+                    variant.optimizer.as_str(),
+                    m.final_train_loss,
+                    m.eval_loss,
+                    m.eval_perplexity,
+                    m.tokens_per_second,
+                    m.parameter_count,
+                    m.parameter_bytes,
+                    m.checkpoint_bytes,
+                    m.state_fingerprint,
+                ));
+            }
+        }
+        out
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttentionWindowVariantResult {
+    pub label: String,
+    pub config: Config,
+    pub n_kv_head: usize,
+    pub attention_window: usize,
+    pub normalization: NormalizationKind,
+    pub position: PositionKind,
+    pub optimizer: OptimizerId,
+    pub measurements: Vec<AbMeasurement>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttentionWindowExperimentResult {
+    pub schema_version: u32,
+    pub code_revision: String,
+    pub protocol: AbProtocol,
+    pub token_fingerprint: u64,
+    pub a: AttentionWindowVariantResult,
+    pub b: AttentionWindowVariantResult,
+}
+
+impl AttentionWindowExperimentResult {
+    pub fn human(&self) -> String {
+        let mut out = format!(
+            "attention_window_ab | schema={} revision={} seed={} steps={} repeats={} tokens={} token_fingerprint={:016x}\n",
+            self.schema_version,
+            self.code_revision,
+            self.protocol.seed,
+            self.protocol.steps,
+            self.protocol.repeats,
+            self.protocol.token_count,
+            self.token_fingerprint,
+        );
+        for variant in [&self.a, &self.b] {
+            for m in &variant.measurements {
+                out.push_str(&format!(
+                    "attention_window_ab_run | variant={} repetition={} n_head={} n_kv_head={} attention_window={} normalization={} position={} optimizer={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} checkpoint_bytes={} state_fingerprint={:016x}\n",
+                    variant.label,
+                    m.repetition,
+                    variant.config.n_head,
+                    variant.n_kv_head,
+                    variant.attention_window,
                     variant.normalization.as_str(),
                     variant.position.as_str(),
                     variant.optimizer.as_str(),
@@ -334,6 +396,118 @@ impl AbExperimentResult {
             self.a_vs_a_reproducible(),
         )
     }
+}
+
+pub fn run_attention_window_experiment(
+    protocol: AbProtocol,
+    a: AbVariant,
+    a_window: usize,
+    b: AbVariant,
+    b_window: usize,
+    n_kv_head: usize,
+) -> Result<AttentionWindowExperimentResult, String> {
+    let protocol = protocol.validate()?;
+    validate_variants(&a, &b, protocol.token_count)?;
+    if a.config != b.config
+        || a.normalization != b.normalization
+        || a.position != b.position
+        || a.optimizer != b.optimizer
+    {
+        return Err(
+            "attention-window A/B must differ only in label/window; model and training policy must match"
+                .into(),
+        );
+    }
+    if n_kv_head == 0
+        || n_kv_head > a.config.n_head
+        || a.config.n_head % n_kv_head != 0
+    {
+        return Err(format!(
+            "invalid attention-window A/B KV-head count: n_head={} n_kv_head={n_kv_head}",
+            a.config.n_head
+        ));
+    }
+    for (label, window) in [(&a.label, a_window), (&b.label, b_window)] {
+        if window > a.config.block {
+            return Err(format!(
+                "invalid attention window for {label}: window={window} block={}",
+                a.config.block
+            ));
+        }
+    }
+    if a_window == b_window {
+        return Err("attention-window A/B requires distinct window policies".into());
+    }
+
+    let tokens = token_stream(a.config.vocab, protocol.token_count);
+    let token_fingerprint = fingerprint_tokens(&tokens);
+    let mut a_measurements = Vec::with_capacity(protocol.repeats);
+    let mut b_measurements = Vec::with_capacity(protocol.repeats);
+
+    for repetition in 0..protocol.repeats {
+        if repetition % 2 == 0 {
+            a_measurements.push(run_variant_with_attention_policy(
+                &a,
+                n_kv_head,
+                a_window,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+            b_measurements.push(run_variant_with_attention_policy(
+                &b,
+                n_kv_head,
+                b_window,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+        } else {
+            b_measurements.push(run_variant_with_attention_policy(
+                &b,
+                n_kv_head,
+                b_window,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+            a_measurements.push(run_variant_with_attention_policy(
+                &a,
+                n_kv_head,
+                a_window,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+        }
+    }
+
+    Ok(AttentionWindowExperimentResult {
+        schema_version: ATTENTION_WINDOW_AB_SCHEMA_VERSION,
+        code_revision: build_revision().to_string(),
+        protocol,
+        token_fingerprint,
+        a: AttentionWindowVariantResult {
+            label: a.label,
+            config: a.config,
+            n_kv_head,
+            attention_window: a_window,
+            normalization: a.normalization,
+            position: a.position,
+            optimizer: a.optimizer,
+            measurements: a_measurements,
+        },
+        b: AttentionWindowVariantResult {
+            label: b.label,
+            config: b.config,
+            n_kv_head,
+            attention_window: b_window,
+            normalization: b.normalization,
+            position: b.position,
+            optimizer: b.optimizer,
+            measurements: b_measurements,
+        },
+    })
 }
 
 pub fn run_attention_head_experiment(
@@ -520,12 +694,31 @@ fn run_variant_with_kv_heads(
     tokens: &[usize],
     repetition: usize,
 ) -> Result<AbMeasurement, String> {
+    run_variant_with_attention_policy(
+        variant,
+        n_kv_head,
+        0,
+        protocol,
+        tokens,
+        repetition,
+    )
+}
+
+fn run_variant_with_attention_policy(
+    variant: &AbVariant,
+    n_kv_head: usize,
+    attention_window: usize,
+    protocol: AbProtocol,
+    tokens: &[usize],
+    repetition: usize,
+) -> Result<AbMeasurement, String> {
     let mut rng = StdRng::seed_from_u64(protocol.seed);
-    let mut gpt = Gpt::new_with_attention_heads(
+    let mut gpt = Gpt::new_with_attention_policy(
         variant.config,
         variant.normalization,
         variant.position,
         n_kv_head,
+        attention_window,
         &mut rng,
     );
     let parameter_count = gpt.collect_params().len();
@@ -955,6 +1148,83 @@ mod tests {
             resumed_opt.state().encode().unwrap(),
             continuous_opt.state().encode().unwrap()
         );
+    }
+
+    #[test]
+    fn attention_window_ab_tracks_dense_vs_local_under_identical_budget() {
+        let dense = AbVariant {
+            label: "dense".into(),
+            config: tiny(),
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::LearnedAbsolute,
+            optimizer: OptimizerId::Adam,
+        };
+        let mut local = dense.clone();
+        local.label = "local-w2".into();
+        let heads = dense.config.n_head;
+        let result = run_attention_window_experiment(
+            AbProtocol {
+                steps: 2,
+                repeats: 2,
+                token_count: 128,
+                ..AbProtocol::default()
+            },
+            dense,
+            0,
+            local,
+            2,
+            heads,
+        )
+        .unwrap();
+
+        assert_eq!(result.schema_version, ATTENTION_WINDOW_AB_SCHEMA_VERSION);
+        assert_eq!(result.a.attention_window, 0);
+        assert_eq!(result.b.attention_window, 2);
+        assert_eq!(
+            result.a.measurements[0].parameter_count,
+            result.b.measurements[0].parameter_count
+        );
+        assert!(result.a.measurements[0].eval_loss.is_finite());
+        assert!(result.b.measurements[0].eval_loss.is_finite());
+        assert!(result.human().contains("attention_window=2"));
+    }
+
+    #[test]
+    fn attention_window_ab_rejects_invalid_or_identical_windows() {
+        let dense = AbVariant {
+            label: "dense".into(),
+            config: tiny(),
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::LearnedAbsolute,
+            optimizer: OptimizerId::Adam,
+        };
+        let mut local = dense.clone();
+        local.label = "local".into();
+        let heads = dense.config.n_head;
+        let protocol = AbProtocol {
+            steps: 1,
+            repeats: 1,
+            token_count: 64,
+            ..AbProtocol::default()
+        };
+        assert!(run_attention_window_experiment(
+            protocol,
+            dense.clone(),
+            0,
+            local.clone(),
+            dense.config.block + 1,
+            heads,
+        )
+        .is_err());
+        assert!(run_attention_window_experiment(
+            protocol,
+            dense,
+            0,
+            local,
+            0,
+            heads,
+        )
+        .is_err());
     }
 
     #[test]
