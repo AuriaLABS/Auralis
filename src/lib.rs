@@ -27,6 +27,7 @@ pub mod memory;
 pub mod memory_integration;
 pub mod metrics;
 pub mod model;
+pub mod moe;
 pub mod numeric;
 pub mod numeric_state;
 pub mod optim;

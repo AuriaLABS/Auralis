@@ -97,6 +97,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/kv-cache.md](docs/kv-cache.md) — KV cache autoregresiva por sesión, equivalencia y benchmark de decode.
 - [docs/gqa-mqa.md](docs/gqa-mqa.md) — variantes experimentales MHA/GQA/MQA con K/V compactos, A/B y costes de cache.
 - [docs/local-attention.md](docs/local-attention.md) — atención causal local/window experimental, A/B, scaling y memoria de probabilidades.
+- [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
 - [docs/gradient-clipping.md](docs/gradient-clipping.md) — clipping global-norm ON/OFF, métricas y migración RunConfig.
