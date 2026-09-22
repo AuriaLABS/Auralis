@@ -3503,6 +3503,77 @@ mod tests {
     }
 
     #[test]
+    fn local_attention_full_window_matches_dense_bit_exact() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let tokens = [0usize, 1, 2, 3, 4];
+        let mut dense_rng = StdRng::seed_from_u64(0xA11CE_1110);
+        let dense = Gpt::new(cfg, &mut dense_rng);
+        let mut local_rng = StdRng::seed_from_u64(0xA11CE_1110);
+        let local = Gpt::new_with_attention_policy(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            tokens.len(),
+            &mut local_rng,
+        );
+        assert_eq!(dense.collect_params(), local.collect_params());
+        assert_eq!(local.logits(&tokens), dense.logits(&tokens));
+        assert_eq!(
+            local.loss(&tokens[..4], &tokens[1..]),
+            dense.loss(&tokens[..4], &tokens[1..])
+        );
+    }
+
+    #[test]
+    fn local_attention_cached_decode_matches_uncached_for_mha_and_gqa() {
+        let cfg = Config {
+            vocab: 13,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let tokens = [0usize, 1, 2, 3, 4, 5];
+        for n_kv_head in [4usize, 2] {
+            let mut rng = StdRng::seed_from_u64(0xA11CE_1111 + n_kv_head as u64);
+            let gpt = Gpt::new_with_attention_policy(
+                cfg,
+                NormalizationKind::LayerNorm,
+                PositionKind::LearnedAbsolute,
+                n_kv_head,
+                3,
+                &mut rng,
+            );
+            let baseline = gpt.logits(&tokens);
+            let mut cache = gpt.new_kv_cache();
+            let cached = gpt.prefill_kv_cache(&tokens, &mut cache).unwrap();
+            assert_eq!(cached, baseline, "n_kv_head={n_kv_head}");
+            assert_eq!(cache.attention_window(), 3);
+
+            let mut dense_cache = KvCache::new_with_policy(
+                cfg.n_layer,
+                gpt.kv_width(),
+                cfg.n_head,
+                n_kv_head,
+                0,
+                cfg.block,
+                PositionKind::LearnedAbsolute,
+            )
+            .unwrap();
+            assert!(gpt.prefill_kv_cache(&tokens[..2], &mut dense_cache).is_err());
+        }
+    }
+
+    #[test]
     fn kv_cache_incremental_decode_reset_clone_and_failures_are_explicit() {
         let cfg = Config {
             vocab: 11,
