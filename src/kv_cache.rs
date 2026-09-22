@@ -5,7 +5,7 @@
 
 use crate::position::PositionKind;
 
-pub const KV_CACHE_SCHEMA_VERSION: u32 = 2;
+pub const KV_CACHE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug)]
 struct LayerKvCache {
@@ -20,6 +20,7 @@ pub struct KvCache {
     width: usize,
     query_heads: usize,
     kv_heads: usize,
+    attention_window: usize,
     capacity: usize,
     position: PositionKind,
     len: usize,
@@ -33,7 +34,7 @@ impl KvCache {
         capacity: usize,
         position: PositionKind,
     ) -> Result<Self, String> {
-        Self::new_with_heads(layers, width, 1, 1, capacity, position)
+        Self::new_with_policy(layers, width, 1, 1, 0, capacity, position)
     }
 
     pub fn new_with_heads(
@@ -41,6 +42,26 @@ impl KvCache {
         width: usize,
         query_heads: usize,
         kv_heads: usize,
+        capacity: usize,
+        position: PositionKind,
+    ) -> Result<Self, String> {
+        Self::new_with_policy(
+            layers,
+            width,
+            query_heads,
+            kv_heads,
+            0,
+            capacity,
+            position,
+        )
+    }
+
+    pub fn new_with_policy(
+        layers: usize,
+        width: usize,
+        query_heads: usize,
+        kv_heads: usize,
+        attention_window: usize,
         capacity: usize,
         position: PositionKind,
     ) -> Result<Self, String> {
@@ -54,6 +75,11 @@ impl KvCache {
                 "kv cache requires compatible attention heads: width={width} query_heads={query_heads} kv_heads={kv_heads}"
             ));
         }
+        if attention_window > capacity {
+            return Err(format!(
+                "kv cache attention_window {attention_window} exceeds capacity {capacity}"
+            ));
+        }
         let _ = layers
             .checked_mul(width)
             .and_then(|n| n.checked_mul(capacity))
@@ -65,6 +91,7 @@ impl KvCache {
             width,
             query_heads,
             kv_heads,
+            attention_window,
             capacity,
             position,
             len: 0,
@@ -103,6 +130,10 @@ impl KvCache {
 
     pub fn kv_heads(&self) -> usize {
         self.kv_heads
+    }
+
+    pub fn attention_window(&self) -> usize {
+        self.attention_window
     }
 
     pub fn capacity(&self) -> usize {
@@ -208,6 +239,33 @@ impl KvCache {
             return Err(format!(
                 "kv cache attention-layout mismatch: cache=query_heads:{} kv_heads:{} model=query_heads:{} kv_heads:{}",
                 self.query_heads, self.kv_heads, query_heads, kv_heads
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_policy(
+        &self,
+        layers: usize,
+        width: usize,
+        query_heads: usize,
+        kv_heads: usize,
+        attention_window: usize,
+        capacity: usize,
+        position: PositionKind,
+    ) -> Result<(), String> {
+        self.validate_for_heads(
+            layers,
+            width,
+            query_heads,
+            kv_heads,
+            capacity,
+            position,
+        )?;
+        if self.attention_window != attention_window {
+            return Err(format!(
+                "kv cache attention-policy mismatch: cache_window={} model_window={attention_window}",
+                self.attention_window
             ));
         }
         Ok(())
@@ -326,6 +384,36 @@ mod tests {
             4,
             4,
             3,
+            8,
+            PositionKind::LearnedAbsolute,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn attention_window_identity_fails_closed() {
+        let cache = KvCache::new_with_policy(
+            2,
+            4,
+            4,
+            2,
+            3,
+            8,
+            PositionKind::LearnedAbsolute,
+        )
+        .unwrap();
+        cache
+            .validate_for_policy(2, 4, 4, 2, 3, 8, PositionKind::LearnedAbsolute)
+            .unwrap();
+        assert!(cache
+            .validate_for_policy(2, 4, 4, 2, 0, 8, PositionKind::LearnedAbsolute)
+            .is_err());
+        assert!(KvCache::new_with_policy(
+            2,
+            4,
+            4,
+            2,
+            9,
             8,
             PositionKind::LearnedAbsolute,
         )
