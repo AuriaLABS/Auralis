@@ -571,6 +571,8 @@ mod tests {
             "Baseline",
             "SuiteRef",
             "SuiteVersionCollision",
+            "TaskVersionCollision",
+            "MetricVersionCollision",
             "BaselineVersionCollision",
             "DatasetMetadata",
             "SeedPolicy",
