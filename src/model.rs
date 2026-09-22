@@ -510,6 +510,33 @@ impl Gpt {
         (self.cfg.n_embd / self.cfg.n_head) * self.n_kv_head
     }
 
+    pub fn attention_probability_slots(&self, tokens: usize) -> Result<usize, String> {
+        if tokens == 0 || tokens > self.cfg.block {
+            return Err(format!(
+                "attention probability slots require tokens in 1..={}, got {tokens}",
+                self.cfg.block
+            ));
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        if self.attention_window == 0 {
+            shape.probs_len().map_err(|e| e.to_string())
+        } else {
+            local_probability_len(shape, self.attention_window).map_err(|e| e.to_string())
+        }
+    }
+
+    pub fn attention_probability_bytes(&self, tokens: usize) -> Result<usize, String> {
+        self.attention_probability_slots(tokens)?
+            .checked_mul(self.cfg.n_layer)
+            .and_then(|n| n.checked_mul(std::mem::size_of::<f32>()))
+            .ok_or_else(|| "attention probability byte count overflow".to_string())
+    }
+
     pub fn expected_parameter_count(
         cfg: Config,
         n_kv_head: usize,
