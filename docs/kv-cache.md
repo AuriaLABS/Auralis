@@ -4,11 +4,12 @@ Issue #40 adds an explicit, per-session key/value cache for autoregressive infer
 
 ## Contract
 
-`KvCache` uses `KV_CACHE_SCHEMA_VERSION = 2` and records only session metadata and derived K/V activations:
+`KvCache` uses `KV_CACHE_SCHEMA_VERSION = 3` and records only session metadata and derived K/V activations:
 
 - physical layer count;
 - compact K/V row width;
 - query-head count and KV-head count, so equal byte width cannot disguise an incompatible attention layout;
+- attention-window identity, so K/V states produced under local attention cannot be reinterpreted as dense (or another window);
 - maximum context capacity;
 - active token count;
 - positional-policy identity;
