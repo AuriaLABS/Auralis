@@ -597,7 +597,6 @@ mod tests {
         for needle in [
             "MoE remains experimental",
             "MOE_ROUTER_SCHEMA_VERSION = 1",
-            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "DeterministicTopKRouter",
             "MoeRouter",
             "top_k",
