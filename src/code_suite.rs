@@ -689,7 +689,7 @@ fn create_sandbox(
         .map_err(CodeSuiteError::Harness)?;
     let hardened = format!("#![forbid(unsafe_code)]\n{source}");
     fs::write(&source_path, hardened)
-        .map_err(|e| CodeSuiteError::Harness(format!("write sandbox source: {e}"))?;
+        .map_err(|e| CodeSuiteError::Harness(format!("write sandbox source: {e}")))?;
 
     Ok((
         SandboxGuard { root },
