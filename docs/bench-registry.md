@@ -93,3 +93,14 @@ cargo run --release --bin auralis_local_attention_bench
 ```
 
 It compares dense causal attention with local windows 8 and 16 under the same seed, token stream, optimizer and parameter budget. It reports quality A/B plus context-length scaling at 8, 16, 32 and 64 tokens, median forward/backward latency, actual compact probability slots/bytes, finite loss and finite gradients. Dense attention remains the reference/default; timing and quality are descriptive evidence and do not auto-promote the local variant.
+
+
+## Brain MoE-router benchmark
+
+The `moe-router` entry runs:
+
+```
+cargo run --release --bin auralis_moe_router_bench
+```
+
+It measures deterministic top-k routing plus dispatch/gather against a dense identity-copy reference for multiple token/expert/top-k shapes. A forced saturation case exercises the explicit `dense-fallback` policy and verifies that every token is either routed or falls back, `dropped_tokens=0`, expert capacity is never exceeded, and identity-expert gather reconstructs the dense input within floating-point tolerance. Hosted-runner timing is descriptive evidence for #112; this benchmark does not claim a model-quality or end-to-end speed improvement.
