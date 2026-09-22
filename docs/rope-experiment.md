@@ -32,7 +32,7 @@ comparable with the learned-absolute baseline.
 
 ## Architecture metadata
 
-Architecture schema 4 records:
+Architecture schema 5 records:
 
 ```text
 position=learned_absolute
@@ -42,6 +42,7 @@ or:
 
 ```text
 position=rope
+attention_window=0
 ```
 
 Schema 1 and 2 migrate to `learned_absolute`.

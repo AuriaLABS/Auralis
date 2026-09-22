@@ -5,7 +5,9 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
-use crate::attention::{Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention};
+use crate::attention::{
+    local_probability_len, Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention,
+};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
@@ -128,6 +130,7 @@ pub struct Gpt {
     normalization: NormalizationKind,
     position: PositionKind,
     n_kv_head: usize,
+    attention_window: usize,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -224,6 +227,7 @@ struct GptGrad {
 pub(crate) struct BackwardWorkspace {
     cfg: Config,
     n_kv_head: usize,
+    attention_window: usize,
     grads: GptGrad,
     scratch: Arena,
     dx: Vec<f32>,
@@ -344,6 +348,7 @@ impl BackwardWorkspace {
         Self {
             cfg: gpt.cfg,
             n_kv_head: gpt.n_kv_head,
+            attention_window: gpt.attention_window,
             grads: gpt.zero_grads(),
             scratch: Arena::with_capacity(scratch_capacity),
             dx: vec![0.0; td],
@@ -352,7 +357,9 @@ impl BackwardWorkspace {
     }
 
     pub(crate) fn matches(&self, gpt: &Gpt) -> bool {
-        self.cfg == gpt.cfg && self.n_kv_head == gpt.n_kv_head
+        self.cfg == gpt.cfg
+            && self.n_kv_head == gpt.n_kv_head
+            && self.attention_window == gpt.attention_window
     }
 
     fn clear(&mut self) {
@@ -402,10 +409,32 @@ impl Gpt {
         n_kv_head: usize,
         rng: &mut impl Rng,
     ) -> Self {
+        Self::new_with_attention_policy(
+            cfg,
+            normalization,
+            position,
+            n_kv_head,
+            0,
+            rng,
+        )
+    }
+
+    pub fn new_with_attention_policy(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+        attention_window: usize,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
         assert!(
             n_kv_head > 0 && n_kv_head <= cfg.n_head && cfg.n_head % n_kv_head == 0,
             "n_kv_head must divide n_head"
+        );
+        assert!(
+            attention_window <= cfg.block,
+            "attention_window must be 0 (dense) or <= block"
         );
         if position == PositionKind::Rope {
             Rotary::new(cfg.block, cfg.n_embd, cfg.n_head)
@@ -435,6 +464,7 @@ impl Gpt {
             normalization,
             position,
             n_kv_head,
+            attention_window,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -461,8 +491,50 @@ impl Gpt {
         self.n_kv_head
     }
 
+    pub fn attention_window(&self) -> usize {
+        self.attention_window
+    }
+
+    pub fn set_attention_window(&mut self, attention_window: usize) -> Result<(), String> {
+        if attention_window > self.cfg.block {
+            return Err(format!(
+                "attention_window {attention_window} exceeds block {}",
+                self.cfg.block
+            ));
+        }
+        self.attention_window = attention_window;
+        Ok(())
+    }
+
     pub fn kv_width(&self) -> usize {
         (self.cfg.n_embd / self.cfg.n_head) * self.n_kv_head
+    }
+
+    pub fn attention_probability_slots(&self, tokens: usize) -> Result<usize, String> {
+        if tokens == 0 || tokens > self.cfg.block {
+            return Err(format!(
+                "attention probability slots require tokens in 1..={}, got {tokens}",
+                self.cfg.block
+            ));
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        if self.attention_window == 0 {
+            shape.probs_len().map_err(|e| e.to_string())
+        } else {
+            local_probability_len(shape, self.attention_window).map_err(|e| e.to_string())
+        }
+    }
+
+    pub fn attention_probability_bytes(&self, tokens: usize) -> Result<usize, String> {
+        self.attention_probability_slots(tokens)?
+            .checked_mul(self.cfg.n_layer)
+            .and_then(|n| n.checked_mul(std::mem::size_of::<f32>()))
+            .ok_or_else(|| "attention probability byte count overflow".to_string())
     }
 
     pub fn expected_parameter_count(
@@ -660,7 +732,7 @@ impl Gpt {
         v: &[f32],
         tokens: usize,
     ) -> Vec<f32> {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             return attention_eval(
                 q,
                 k,
@@ -684,17 +756,32 @@ impl Gpt {
         } else {
             None
         };
-        OPTIMIZED_ATTENTION
-            .forward_eval_grouped(
-                q,
-                k,
-                v,
-                shape,
-                slopes.as_deref(),
-                &mut out,
-                &mut scores,
-            )
-            .expect("grouped attention eval shapes match model");
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .forward_eval_grouped(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut scores,
+                )
+                .expect("grouped attention eval shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .forward_eval_grouped_local(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    self.attention_window,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut scores,
+                )
+                .expect("local grouped attention eval shapes match model");
+        }
         out
     }
 
@@ -705,7 +792,7 @@ impl Gpt {
         v: &[f32],
         tokens: usize,
     ) -> (Vec<f32>, Vec<f32>) {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             return attention_forward(
                 q,
                 k,
@@ -723,23 +810,44 @@ impl Gpt {
             kv_heads: self.n_kv_head,
         };
         let mut out = vec![0.0; tokens * self.cfg.n_embd];
-        let mut probs = vec![0.0; shape.probs_len().expect("validated grouped attention shape")];
+        let probs_len = if self.attention_window == 0 {
+            shape.probs_len().expect("validated grouped attention shape")
+        } else {
+            local_probability_len(shape, self.attention_window)
+                .expect("validated local attention shape")
+        };
+        let mut probs = vec![0.0; probs_len];
         let slopes = if self.position == PositionKind::Alibi {
             Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
         } else {
             None
         };
-        OPTIMIZED_ATTENTION
-            .forward_cached_grouped(
-                q,
-                k,
-                v,
-                shape,
-                slopes.as_deref(),
-                &mut out,
-                &mut probs,
-            )
-            .expect("grouped attention forward shapes match model");
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .forward_cached_grouped(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut probs,
+                )
+                .expect("grouped attention forward shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .forward_cached_grouped_local(
+                    q,
+                    k,
+                    v,
+                    shape,
+                    self.attention_window,
+                    slopes.as_deref(),
+                    &mut out,
+                    &mut probs,
+                )
+                .expect("local grouped attention forward shapes match model");
+        }
         (out, probs)
     }
 
@@ -756,7 +864,7 @@ impl Gpt {
         dv: &mut [f32],
         dp: &mut [f32],
     ) {
-        if self.n_kv_head == self.cfg.n_head {
+        if self.attention_window == 0 && self.n_kv_head == self.cfg.n_head {
             attention_backward_into(
                 dout,
                 q,
@@ -773,25 +881,35 @@ impl Gpt {
             );
             return;
         }
-        OPTIMIZED_ATTENTION
-            .backward_grouped(
-                dout,
-                q,
-                k,
-                v,
-                probs,
-                GroupedAttentionShape {
-                    tokens,
-                    width: self.cfg.n_embd,
-                    heads: self.cfg.n_head,
-                    kv_heads: self.n_kv_head,
-                },
-                dq,
-                dk,
-                dv,
-                dp,
-            )
-            .expect("grouped attention backward shapes match model");
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        if self.attention_window == 0 {
+            OPTIMIZED_ATTENTION
+                .backward_grouped(
+                    dout, q, k, v, probs, shape, dq, dk, dv, dp,
+                )
+                .expect("grouped attention backward shapes match model");
+        } else {
+            OPTIMIZED_ATTENTION
+                .backward_grouped_local(
+                    dout,
+                    q,
+                    k,
+                    v,
+                    probs,
+                    shape,
+                    self.attention_window,
+                    dq,
+                    dk,
+                    dv,
+                    dp,
+                )
+                .expect("local grouped attention backward shapes match model");
+        }
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
@@ -853,11 +971,12 @@ impl Gpt {
 
     /// Create an empty per-session KV cache matching this model.
     pub fn new_kv_cache(&self) -> KvCache {
-        KvCache::new_with_heads(
+        KvCache::new_with_policy(
             self.cfg.n_layer,
             self.kv_width(),
             self.cfg.n_head,
             self.n_kv_head,
+            self.attention_window,
             self.cfg.block,
             self.position,
         )
@@ -871,11 +990,12 @@ impl Gpt {
         tokens: &[usize],
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for_heads(
+        cache.validate_for_policy(
             self.cfg.n_layer,
             self.kv_width(),
             self.cfg.n_head,
             self.n_kv_head,
+            self.attention_window,
             self.cfg.block,
             self.position,
         )?;
@@ -910,11 +1030,12 @@ impl Gpt {
         token: usize,
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for_heads(
+        cache.validate_for_policy(
             self.cfg.n_layer,
             self.kv_width(),
             self.cfg.n_head,
             self.n_kv_head,
+            self.attention_window,
             self.cfg.block,
             self.position,
         )?;
@@ -1820,7 +1941,25 @@ impl Gpt {
             let (history_k, history_v) = cache.history(layer_index)?;
             let mut att = vec![0.0; d];
             let mut scores = vec![0.0; position + 1];
-            if self.n_kv_head == self.cfg.n_head {
+            if self.attention_window > 0 {
+                OPTIMIZED_ATTENTION
+                    .forward_decode_grouped_local(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        self.n_kv_head,
+                        self.attention_window,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            } else if self.n_kv_head == self.cfg.n_head {
                 OPTIMIZED_ATTENTION
                     .forward_decode(
                         &q,
@@ -2713,7 +2852,7 @@ fn sample_logits(logits: &[f32], temperature: f32, rng: &mut impl Rng) -> usize 
 mod tests {
     use super::{
         rmsnorm_backward_into, rmsnorm_eval, rmsnorm_forward, BackendId, BackwardWorkspace, Config,
-        CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
+        CpuBackend, Gpt, KvCache, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -3387,6 +3526,77 @@ mod tests {
             assert_eq!(cache.len(), tokens.len());
             assert_eq!(cache.logical_bytes(), tokens.len() * cfg.n_layer * cfg.n_embd * 2 * 4);
             assert_eq!(gpt.collect_params(), params_before);
+        }
+    }
+
+    #[test]
+    fn local_attention_full_window_matches_dense_bit_exact() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let tokens = [0usize, 1, 2, 3, 4];
+        let mut dense_rng = StdRng::seed_from_u64(0xA11CE_1110);
+        let dense = Gpt::new(cfg, &mut dense_rng);
+        let mut local_rng = StdRng::seed_from_u64(0xA11CE_1110);
+        let local = Gpt::new_with_attention_policy(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            tokens.len(),
+            &mut local_rng,
+        );
+        assert_eq!(dense.collect_params(), local.collect_params());
+        assert_eq!(local.logits(&tokens), dense.logits(&tokens));
+        assert_eq!(
+            local.loss(&tokens[..4], &tokens[1..]),
+            dense.loss(&tokens[..4], &tokens[1..])
+        );
+    }
+
+    #[test]
+    fn local_attention_cached_decode_matches_uncached_for_mha_and_gqa() {
+        let cfg = Config {
+            vocab: 13,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let tokens = [0usize, 1, 2, 3, 4, 5];
+        for n_kv_head in [4usize, 2] {
+            let mut rng = StdRng::seed_from_u64(0xA11CE_1111 + n_kv_head as u64);
+            let gpt = Gpt::new_with_attention_policy(
+                cfg,
+                NormalizationKind::LayerNorm,
+                PositionKind::LearnedAbsolute,
+                n_kv_head,
+                3,
+                &mut rng,
+            );
+            let baseline = gpt.logits(&tokens);
+            let mut cache = gpt.new_kv_cache();
+            let cached = gpt.prefill_kv_cache(&tokens, &mut cache).unwrap();
+            assert_eq!(cached, baseline, "n_kv_head={n_kv_head}");
+            assert_eq!(cache.attention_window(), 3);
+
+            let mut dense_cache = KvCache::new_with_policy(
+                cfg.n_layer,
+                gpt.kv_width(),
+                cfg.n_head,
+                n_kv_head,
+                0,
+                cfg.block,
+                PositionKind::LearnedAbsolute,
+            )
+            .unwrap();
+            assert!(gpt.prefill_kv_cache(&tokens[..2], &mut dense_cache).is_err());
         }
     }
 

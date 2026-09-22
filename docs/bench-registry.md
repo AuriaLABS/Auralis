@@ -82,3 +82,14 @@ cargo run --release --bin auralis_gqa_mqa_bench
 ```
 
 It compares MHA (`n_kv_head=n_head`), GQA and MQA under the same seed, token stream, optimizer and training protocol, then measures inference at contexts 8, 16 and 32. It reports eval loss/perplexity, training throughput, parameter count, compact K/V width, full/cache prefill latency, uncached/cached next-token latency and active KV-cache bytes. The benchmark is descriptive evidence for #140; it does not auto-promote GQA or MQA over the MHA default.
+
+
+## Brain local-attention benchmark
+
+The `local-attention` entry runs:
+
+```
+cargo run --release --bin auralis_local_attention_bench
+```
+
+It compares dense causal attention with local windows 8 and 16 under the same seed, token stream, optimizer and parameter budget. It reports quality A/B plus context-length scaling at 8, 16, 32 and 64 tokens, median forward/backward latency, actual compact probability slots/bytes, finite loss and finite gradients. Dense attention remains the reference/default; timing and quality are descriptive evidence and do not auto-promote the local variant.

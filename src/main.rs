@@ -75,11 +75,12 @@ fn new_model(
     let tok = AnyTok::Bpe(BpeTokenizer::fit(train_text, run.bpe_merges));
     let mut rng = StdRng::seed_from_u64(run.seed);
     let cfg = architecture.model_config(tok.vocab_size())?;
-    let gpt = Gpt::new_with_attention_heads(
+    let gpt = Gpt::new_with_attention_policy(
         cfg,
         architecture.normalization,
         architecture.position,
         architecture.n_kv_head,
+        architecture.attention_window,
         &mut rng,
     );
     Ok((gpt, tok))
@@ -97,11 +98,12 @@ fn resolve_model_architecture(
             return Err(format!(
                 "architecture metadata/model mismatch: metadata={} checkpoint={}",
                 persisted.line(),
-                ArchitectureConfig::from_model_with_kv_heads(
+                ArchitectureConfig::from_model_with_attention(
                     gpt.cfg,
                     gpt.normalization(),
                     gpt.position_kind(),
                     gpt.n_kv_head(),
+                    gpt.attention_window(),
                 ).line(),
             ));
         }
@@ -116,11 +118,12 @@ fn resolve_model_architecture(
         }
         persisted
     } else {
-        let legacy = ArchitectureConfig::from_model_with_kv_heads(
+        let legacy = ArchitectureConfig::from_model_with_attention(
                     gpt.cfg,
                     gpt.normalization(),
                     gpt.position_kind(),
                     gpt.n_kv_head(),
+                    gpt.attention_window(),
                 );
         if let Some(requested) = requested {
             if !requested.matches_model(gpt.cfg) {
@@ -148,6 +151,12 @@ fn resolve_model_architecture(
                         .into(),
                 );
             }
+            if requested.attention_window != 0 {
+                return Err(
+                    "checkpoint has no architecture metadata; local attention window cannot be inferred safely"
+                        .into(),
+                );
+            }
             requested
         } else {
             legacy
@@ -162,6 +171,7 @@ fn resolve_model_architecture(
     }
     gpt.set_normalization(selected.normalization);
     gpt.set_position_kind(selected.position);
+    gpt.set_attention_window(selected.attention_window)?;
     Ok((selected, sidecar.exists() || requested.is_some()))
 }
 

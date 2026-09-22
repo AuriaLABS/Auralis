@@ -9,13 +9,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-pub const ARCHITECTURE_CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const ARCHITECTURE_CONFIG_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArchitectureConfig {
     pub n_embd: usize,
     pub n_head: usize,
     pub n_kv_head: usize,
+    pub attention_window: usize,
     pub n_layer: usize,
     pub block: usize,
     pub n_ff: usize,
@@ -29,6 +30,7 @@ impl Default for ArchitectureConfig {
             n_embd: 32,
             n_head: 4,
             n_kv_head: 4,
+            attention_window: 0,
             n_layer: 2,
             block: 32,
             n_ff: 96,
@@ -53,10 +55,27 @@ impl ArchitectureConfig {
         position: PositionKind,
         n_kv_head: usize,
     ) -> Self {
+        Self::from_model_with_attention(
+            cfg,
+            normalization,
+            position,
+            n_kv_head,
+            0,
+        )
+    }
+
+    pub fn from_model_with_attention(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+        attention_window: usize,
+    ) -> Self {
         Self {
             n_embd: cfg.n_embd,
             n_head: cfg.n_head,
             n_kv_head,
+            attention_window,
             n_layer: cfg.n_layer,
             block: cfg.block,
             n_ff: cfg.n_ff,
@@ -77,6 +96,9 @@ impl ArchitectureConfig {
         }
         if self.n_head % self.n_kv_head != 0 {
             return Err("n_head must be divisible by n_kv_head".into());
+        }
+        if self.attention_window > self.block {
+            return Err("attention_window must be 0 (dense) or <= block".into());
         }
         if self.n_layer == 0 || self.n_layer > 64 {
             return Err("n_layer must be in 1..=64".into());
@@ -126,6 +148,7 @@ impl ArchitectureConfig {
                 "n_embd={}\n",
                 "n_head={}\n",
                 "n_kv_head={}\n",
+                "attention_window={}\n",
                 "n_layer={}\n",
                 "block={}\n",
                 "n_ff={}\n",
@@ -136,6 +159,7 @@ impl ArchitectureConfig {
             self.n_embd,
             self.n_head,
             self.n_kv_head,
+            self.attention_window,
             self.n_layer,
             self.block,
             self.n_ff,
@@ -150,6 +174,7 @@ impl ArchitectureConfig {
         let mut n_embd = None;
         let mut n_head = None;
         let mut n_kv_head = None;
+        let mut attention_window = None;
         let mut n_layer = None;
         let mut block = None;
         let mut n_ff = None;
@@ -171,6 +196,7 @@ impl ArchitectureConfig {
                 "n_embd" => set_once(&mut n_embd, value, key)?,
                 "n_head" => set_once(&mut n_head, value, key)?,
                 "n_kv_head" => set_once(&mut n_kv_head, value, key)?,
+                "attention_window" => set_once(&mut attention_window, value, key)?,
                 "n_layer" => set_once(&mut n_layer, value, key)?,
                 "block" => set_once(&mut block, value, key)?,
                 "n_ff" => set_once(&mut n_ff, value, key)?,
@@ -182,55 +208,78 @@ impl ArchitectureConfig {
 
         let version: u32 = required(version, "auralis_architecture")?;
         let n_head_value: usize = required(n_head.clone(), "n_head")?;
-        let (normalization, position, n_kv_head_value) = match version {
+        let (normalization, position, n_kv_head_value, attention_window_value) = match version {
             1 => {
-                if normalization.is_some() || position.is_some() || n_kv_head.is_some() {
+                if normalization.is_some()
+                    || position.is_some()
+                    || n_kv_head.is_some()
+                    || attention_window.is_some()
+                {
                     return Err(
-                        "architecture schema 1 must not contain normalization, position or n_kv_head".into(),
+                        "architecture schema 1 must not contain normalization, position, n_kv_head or attention_window".into(),
                     );
                 }
                 (
                     NormalizationKind::LayerNorm,
                     PositionKind::LearnedAbsolute,
                     n_head_value,
+                    0,
                 )
             }
             2 => {
-                if position.is_some() || n_kv_head.is_some() {
-                    return Err("architecture schema 2 must not contain position or n_kv_head".into());
+                if position.is_some() || n_kv_head.is_some() || attention_window.is_some() {
+                    return Err(
+                        "architecture schema 2 must not contain position, n_kv_head or attention_window".into(),
+                    );
                 }
                 (
                     required::<NormalizationKind>(normalization, "normalization")?,
                     PositionKind::LearnedAbsolute,
                     n_head_value,
+                    0,
                 )
             }
             3 => {
-                if n_kv_head.is_some() {
-                    return Err("architecture schema 3 must not contain n_kv_head".into());
+                if n_kv_head.is_some() || attention_window.is_some() {
+                    return Err(
+                        "architecture schema 3 must not contain n_kv_head or attention_window".into(),
+                    );
                 }
                 (
                     required::<NormalizationKind>(normalization, "normalization")?,
                     required::<PositionKind>(position, "position")?,
                     n_head_value,
+                    0,
+                )
+            }
+            4 => {
+                if attention_window.is_some() {
+                    return Err("architecture schema 4 must not contain attention_window".into());
+                }
+                (
+                    required::<NormalizationKind>(normalization, "normalization")?,
+                    required::<PositionKind>(position, "position")?,
+                    required::<usize>(n_kv_head, "n_kv_head")?,
+                    0,
                 )
             }
             ARCHITECTURE_CONFIG_SCHEMA_VERSION => (
                 required::<NormalizationKind>(normalization, "normalization")?,
                 required::<PositionKind>(position, "position")?,
                 required::<usize>(n_kv_head, "n_kv_head")?,
+                required::<usize>(attention_window, "attention_window")?,
             ),
             other => {
                 return Err(format!(
-                    "architecture schema version {other} is unsupported (expected 1, 2, 3 or {ARCHITECTURE_CONFIG_SCHEMA_VERSION}); explicit migration required"
+                    "architecture schema version {other} is unsupported (expected 1, 2, 3, 4 or {ARCHITECTURE_CONFIG_SCHEMA_VERSION}); explicit migration required"
                 ))
             }
         };
-
         let cfg = Self {
             n_embd: required(n_embd, "n_embd")?,
             n_head: n_head_value,
             n_kv_head: n_kv_head_value,
+            attention_window: attention_window_value,
             n_layer: required(n_layer, "n_layer")?,
             block: required(block, "block")?,
             n_ff: required(n_ff, "n_ff")?,
@@ -265,11 +314,12 @@ impl ArchitectureConfig {
 
     pub fn line(&self) -> String {
         format!(
-            "architecture | schema={} n_embd={} n_head={} n_kv_head={} n_layer={} block={} n_ff={} normalization={} position={} fingerprint={:016x}",
+            "architecture | schema={} n_embd={} n_head={} n_kv_head={} attention_window={} n_layer={} block={} n_ff={} normalization={} position={} fingerprint={:016x}",
             ARCHITECTURE_CONFIG_SCHEMA_VERSION,
             self.n_embd,
             self.n_head,
             self.n_kv_head,
+            self.attention_window,
             self.n_layer,
             self.block,
             self.n_ff,
@@ -316,6 +366,37 @@ mod tests {
         assert_eq!(a.normalization, NormalizationKind::LayerNorm);
         assert_eq!(a.position, PositionKind::LearnedAbsolute);
         assert_eq!(a.n_kv_head, a.n_head);
+        assert_eq!(a.attention_window, 0);
+    }
+
+    #[test]
+    fn local_attention_window_roundtrips_and_invalid_window_fails_closed() {
+        let mut cfg = ArchitectureConfig::default();
+        cfg.attention_window = 8;
+        cfg.validate().unwrap();
+        let decoded = ArchitectureConfig::decode(&cfg.encode()).unwrap();
+        assert_eq!(decoded.attention_window, 8);
+
+        cfg.attention_window = cfg.block + 1;
+        assert!(cfg.validate().unwrap_err().contains("attention_window"));
+    }
+
+    #[test]
+    fn schema_four_migrates_to_dense_attention() {
+        let text = concat!(
+            "auralis_architecture=4\n",
+            "n_embd=16\n",
+            "n_head=4\n",
+            "n_kv_head=2\n",
+            "n_layer=2\n",
+            "block=8\n",
+            "n_ff=32\n",
+            "normalization=layernorm\n",
+            "position=learned_absolute\n",
+        );
+        let cfg = ArchitectureConfig::decode(text).unwrap();
+        assert_eq!(cfg.n_kv_head, 2);
+        assert_eq!(cfg.attention_window, 0);
     }
 
     #[test]
@@ -356,7 +437,7 @@ mod tests {
         for cfg in [
             ArchitectureConfig { n_embd: 8, n_head: 1, n_kv_head: 1, n_layer: 1, block: 8, n_ff: 16, ..ArchitectureConfig::default() },
             ArchitectureConfig { n_embd: 16, n_head: 2, n_kv_head: 2, n_layer: 3, block: 16, n_ff: 32, ..ArchitectureConfig::default() },
-            ArchitectureConfig { n_embd: 32, n_head: 4, n_kv_head: 4, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
+            ArchitectureConfig { n_embd: 32, n_head: 4, n_kv_head: 4, attention_window: 0, n_layer: 4, block: 32, n_ff: 96, normalization: NormalizationKind::RmsNorm, position: PositionKind::Rope },
         ] {
             cfg.validate().unwrap();
             assert_eq!(ArchitectureConfig::decode(&cfg.encode()).unwrap(), cfg);
@@ -368,7 +449,7 @@ mod tests {
         let old = "auralis_architecture=1\nn_embd=32\nn_head=4\nn_layer=2\nblock=32\nn_ff=96\n";
         let decoded = ArchitectureConfig::decode(old).unwrap();
         assert_eq!(decoded, ArchitectureConfig::default());
-        assert!(decoded.encode().starts_with("auralis_architecture=4\n"));
+        assert!(decoded.encode().starts_with("auralis_architecture=5\n"));
         assert!(decoded.encode().contains("normalization=layernorm\n"));
         assert!(decoded.encode().contains("position=learned_absolute\n"));
     }
@@ -387,7 +468,7 @@ mod tests {
         let decoded = ArchitectureConfig::decode(old).unwrap();
         assert_eq!(decoded.normalization, NormalizationKind::RmsNorm);
         assert_eq!(decoded.position, PositionKind::LearnedAbsolute);
-        assert!(decoded.encode().starts_with("auralis_architecture=4\n"));
+        assert!(decoded.encode().starts_with("auralis_architecture=5\n"));
     }
 
     #[test]
@@ -396,6 +477,7 @@ mod tests {
             n_embd: 6,
             n_head: 2,
             n_kv_head: 2,
+            attention_window: 0,
             n_layer: 1,
             block: 8,
             n_ff: 12,
@@ -414,6 +496,7 @@ mod tests {
             n_embd: 6,
             n_head: 2,
             n_kv_head: 2,
+            attention_window: 0,
             n_layer: 1,
             block: 8,
             n_ff: 12,

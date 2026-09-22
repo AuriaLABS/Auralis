@@ -147,6 +147,7 @@ mod tests {
             "memory-model-integration.md",
             "recurrent-reasoning.md",
             "kv-cache.md",
+            "local-attention.md",
             "gradient-clipping.md",
             "verify.md",
             "cli.md",
@@ -234,8 +235,9 @@ mod tests {
     fn architecture_config_docs_match_code() {
         let text = docs("architecture-config.md");
         for needle in [
-            "auralis_architecture=4",
+            "auralis_architecture=5",
             "n_kv_head=4",
+            "attention_window=0",
             "normalization=layernorm",
             "architecture-rmsnorm.cfg",
             "architecture-rope.cfg",
@@ -400,7 +402,7 @@ mod tests {
         ] {
             assert!(text.contains(needle), "rope-experiment.md missing {needle}");
         }
-        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 4);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 5);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
     }
 
@@ -420,7 +422,7 @@ mod tests {
         ] {
             assert!(text.contains(needle), "alibi-experiment.md missing {needle}");
         }
-        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 4);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 5);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
     }
 
@@ -526,10 +528,34 @@ mod tests {
             assert!(text.contains(needle), "gqa-mqa.md missing {needle}");
         }
         assert!(readme().contains("docs/gqa-mqa.md"));
-        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 4);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 5);
         assert_eq!(crate::brain_ab::ATTENTION_HEAD_AB_SCHEMA_VERSION, 1);
         let bench = crate::bench::find("gqa-mqa").expect("gqa-mqa benchmark");
         assert_eq!(bench.bin, "auralis_gqa_mqa_bench");
+    }
+
+    #[test]
+    fn local_attention_doc_matches_contract() {
+        let text = docs("local-attention.md");
+        for needle in [
+            "Dense causal attention remains the reference and default",
+            "attention_window=0",
+            "max(0, i + 1 - W)..=i",
+            "compact probability storage",
+            "run_attention_window_experiment",
+            "auralis_local_attention_bench",
+            "finite-difference",
+            "probability-cache slots and bytes",
+            "does not auto-promote",
+        ] {
+            assert!(text.contains(needle), "local-attention.md missing {needle}");
+        }
+        assert!(readme().contains("docs/local-attention.md"));
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 5);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
+        assert_eq!(crate::brain_ab::ATTENTION_WINDOW_AB_SCHEMA_VERSION, 1);
+        let bench = crate::bench::find("local-attention").expect("local-attention benchmark");
+        assert_eq!(bench.bin, "auralis_local_attention_bench");
     }
 
     #[test]
@@ -554,7 +580,7 @@ mod tests {
             assert!(text.contains(needle), "kv-cache.md missing {needle}");
         }
         assert!(readme().contains("docs/kv-cache.md"));
-        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 2);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
         let bench = crate::bench::find("kv-cache").expect("kv-cache benchmark");
         assert_eq!(bench.bin, "auralis_kv_cache_bench");
     }
@@ -566,11 +592,12 @@ mod tests {
         assert!(cargo.contains("edition = \"2021\""));
         assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
         assert_eq!(crate::run_config::RUN_CONFIG_SCHEMA_VERSION, 2);
-        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 4);
+        assert_eq!(crate::architecture::ARCHITECTURE_CONFIG_SCHEMA_VERSION, 5);
         assert_eq!(crate::brain_ab::BRAIN_AB_SCHEMA_VERSION, 4);
         assert_eq!(crate::brain_ab::ATTENTION_HEAD_AB_SCHEMA_VERSION, 1);
+        assert_eq!(crate::brain_ab::ATTENTION_WINDOW_AB_SCHEMA_VERSION, 1);
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
-        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 2);
+        assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -585,13 +612,14 @@ mod tests {
             "`0.1.0`",
             "`2021`",
             "RUN_CONFIG_SCHEMA_VERSION = 2",
-            "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 4",
+            "ARCHITECTURE_CONFIG_SCHEMA_VERSION = 5",
             "BRAIN_AB_SCHEMA_VERSION = 4",
             "ATTENTION_HEAD_AB_SCHEMA_VERSION = 1",
+            "ATTENTION_WINDOW_AB_SCHEMA_VERSION = 1",
             "EXTERNAL_MEMORY_SCHEMA_VERSION = 1",
             "MEMORY_INTEGRATION_SCHEMA_VERSION = 1",
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
-            "KV_CACHE_SCHEMA_VERSION = 2",
+            "KV_CACHE_SCHEMA_VERSION = 3",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

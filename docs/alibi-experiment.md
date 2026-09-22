@@ -26,7 +26,7 @@ This deliberately keeps flat parameter count, AURLIS03 tensor order and checkpoi
 
 ## Architecture metadata
 
-Architecture schema 4 records either:
+Architecture schema 5 records either:
 
 ```text
 position=learned_absolute
@@ -36,6 +36,7 @@ or:
 
 ```text
 position=alibi
+attention_window=0
 ```
 
 Schema 1 and 2 continue to migrate to `learned_absolute`. Legacy checkpoints without a `.architecture` sidecar cannot be reinterpreted as ALiBi on resume.
