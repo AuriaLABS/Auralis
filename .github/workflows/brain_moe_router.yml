@@ -1,0 +1,107 @@
+name: Brain MoE Router
+
+on:
+  pull_request:
+    paths:
+      - "src/moe.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_moe_router_bench.rs"
+      - "docs/moe-router.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/brain_moe_router.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  moe-router:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: MoE routing correctness contracts
+        run: |
+          cargo test --lib moe::tests -- --nocapture
+          cargo test --lib docs_check::tests::moe_router_doc_matches_contract -- --nocapture
+
+      - name: Dense reference and routing overhead evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_moe_router_bench | tee /tmp/moe-router.txt
+
+          grep -q '^moe_router_protocol | schema=1 ' /tmp/moe-router.txt
+          test "$(grep -c '^moe_route |' /tmp/moe-router.txt)" -eq 3
+          test "$(grep -c '^moe_saturation |' /tmp/moe-router.txt)" -eq 1
+
+          python3 - <<'PY'
+          import math
+
+          routes = []
+          saturation = None
+          for line in open("/tmp/moe-router.txt", encoding="utf-8"):
+              if line.startswith("moe_route |"):
+                  fields = dict(
+                      token.split("=", 1)
+                      for token in line.split(" | ", 1)[1].split()
+                      if "=" in token
+                  )
+                  routes.append({
+                      "tokens": int(fields["tokens"]),
+                      "experts": int(fields["experts"]),
+                      "top_k": int(fields["top_k"]),
+                      "capacity": int(fields["capacity"]),
+                      "dense": int(fields["dense_reference_ns"]),
+                      "route": int(fields["route_ns"]),
+                      "dispatch": int(fields["dispatch_gather_ns"]),
+                      "overhead": float(fields["total_overhead_vs_dense"]),
+                      "assignments": int(fields["assignments"]),
+                      "fallback": int(fields["fallback_tokens"]),
+                      "dropped": int(fields["dropped_tokens"]),
+                      "max_load": int(fields["max_load"]),
+                      "diff": float(fields["identity_max_abs_diff"]),
+                  })
+              elif line.startswith("moe_saturation |"):
+                  fields = dict(
+                      token.split("=", 1)
+                      for token in line.split(" | ", 1)[1].split()
+                      if "=" in token
+                  )
+                  saturation = {
+                      "tokens": int(fields["tokens"]),
+                      "capacity": int(fields["capacity"]),
+                      "routed": int(fields["routed_tokens"]),
+                      "fallback": int(fields["fallback_tokens"]),
+                      "dropped": int(fields["dropped_tokens"]),
+                      "max_load": int(fields["max_load"]),
+                      "diff": float(fields["identity_max_abs_diff"]),
+                  }
+
+          assert len(routes) == 3, routes
+          for row in routes:
+              assert row["dense"] > 0 and row["route"] > 0 and row["dispatch"] > 0
+              assert math.isfinite(row["overhead"]) and row["overhead"] > 0
+              assert row["assignments"] == row["tokens"] * row["top_k"]
+              assert row["fallback"] == 0
+              assert row["dropped"] == 0
+              assert row["max_load"] <= row["capacity"]
+              assert row["diff"] <= 1e-5
+
+          assert saturation is not None
+          assert saturation["routed"] + saturation["fallback"] == saturation["tokens"]
+          assert saturation["fallback"] > 0
+          assert saturation["dropped"] == 0
+          assert saturation["max_load"] <= saturation["capacity"]
+          assert saturation["diff"] <= 1e-6
+
+          print("moe_router_gate | deterministic=true no_silent_drop=true capacity_respected=true dense_fallback=true identity_gather=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets
