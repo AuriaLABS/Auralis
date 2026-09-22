@@ -29,7 +29,7 @@ The per-session KV cache stores compact K/V width plus explicit query-head/KV-he
 
 `run_attention_head_experiment` reuses the versioned Brain A/B protocol while recording `n_kv_head` per variant. The same seed, token stream, optimizer policy, batch and number of optimizer steps are used. The harness reports quality evidence (loss/perplexity), throughput, parameter bytes and checkpoint bytes; it does not declare a winner.
 
-`cargo run --release --bin auralis_gqa_mqa_bench` adds decode and memory curves for MHA, GQA and MQA at contexts 8, 16 and 32. Hosted-runner timing is descriptive. Each context reports full-prefix prefill latency, cache-building prefill latency, uncached next-token latency and cached next-token latency separately. Correctness, targeted finite-difference gradients for compact Wk/Wv, compact parameter counts and monotonic/reduced cache memory are hard gates; quality and latency are published evidence and do not auto-promote a variant.
+`cargo run --release --bin auralis_gqa_mqa_bench` adds decode and memory curves for MHA, GQA and MQA at contexts 8, 16 and 32. Hosted-runner timing is descriptive and does not auto-promote any attention variant. Each context reports full-prefix prefill latency, cache-building prefill latency, uncached next-token latency and cached next-token latency separately. Correctness, targeted finite-difference gradients for compact Wk/Wv, compact parameter counts and monotonic/reduced cache memory are hard gates; quality and latency are published evidence and do not auto-promote a variant.
 
 ## Default and promotion
 
