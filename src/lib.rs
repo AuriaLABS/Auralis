@@ -35,6 +35,7 @@ pub mod optim;
 pub mod position;
 pub mod release;
 pub mod recurrent;
+pub mod reasoning_suite;
 pub mod run_config;
 pub mod sampling;
 pub mod scheduler;
