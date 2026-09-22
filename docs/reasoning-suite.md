@@ -40,10 +40,12 @@ A numerically valid but incorrect answer is classified as `wrong-binding`.
 
 ### Finite-state planning
 
-States are `S0..S6`.
+The finite state-space size grows deterministically with case length. States are `S0..S<n>` for that case.
 
-- action `A`: +1 mod 7;
-- action `B`: +2 mod 7.
+- action `A`: +1 modulo the case state count;
+- action `B`: +2 modulo the case state count.
+
+The requested target offset also grows with case length, so the `eval-length` split has a strictly longer shortest-plan horizon than the training split.
 
 The requested answer is the lexicographically first shortest plan, with action ordering `A` before `B`, plus final state and step count:
 
@@ -55,9 +57,9 @@ The oracle uses deterministic breadth-first search. Any structurally valid but i
 
 ### Distractor robustness
 
-The prompt contains relevant arithmetic facts plus an explicit plausible but unrelated value.
+The prompt contains relevant arithmetic facts plus a deterministic list of plausible but unrelated values. The number of distractor notes grows with case length.
 
-Returning that distractor is classified as `distractor-capture`, separately from a generic wrong value.
+Returning any listed distractor is classified as `distractor-capture`, separately from a generic wrong value.
 
 ## Difficulty and length splits
 
