@@ -1911,7 +1911,25 @@ impl Gpt {
             let (history_k, history_v) = cache.history(layer_index)?;
             let mut att = vec![0.0; d];
             let mut scores = vec![0.0; position + 1];
-            if self.n_kv_head == self.cfg.n_head {
+            if self.attention_window > 0 {
+                OPTIMIZED_ATTENTION
+                    .forward_decode_grouped_local(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        self.n_kv_head,
+                        self.attention_window,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            } else if self.n_kv_head == self.cfg.n_head {
                 OPTIMIZED_ATTENTION
                     .forward_decode(
                         &q,
