@@ -575,6 +575,7 @@ mod tests {
             "train-difficulty",
             "eval-difficulty",
             "eval-length",
+            "difficulty is fixed at 2",
             "invalid-format",
             "wrong-value",
             "wrong-length",
