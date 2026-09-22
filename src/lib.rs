@@ -16,6 +16,7 @@ pub mod cpu_matmul;
 pub mod docs_check;
 pub mod equivalence;
 pub mod eval;
+pub mod eval_registry;
 pub mod experiment;
 pub mod gradcheck;
 pub mod inspect;
