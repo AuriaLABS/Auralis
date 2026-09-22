@@ -145,6 +145,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "reasoning-suite",
+        bin: "auralis_reasoning_suite_bench",
+        kind: "research-reasoning",
+        summary: "deterministic synthetic reasoning smoke/full generation and objective scoring",
+        default_args: "both",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
