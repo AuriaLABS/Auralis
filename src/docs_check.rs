@@ -623,7 +623,6 @@ mod tests {
         }
         assert!(readme().contains("docs/memory-suite.md"));
         assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
-        assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         let suite = crate::memory_suite::suite_definition(
             crate::memory_suite::MemorySuiteProfile::Smoke,
             crate::memory_suite::MEMORY_SUITE_SEED,
@@ -665,7 +664,6 @@ mod tests {
         }
         assert!(readme().contains("docs/reasoning-suite.md"));
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
-        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
         let smoke = crate::reasoning_suite::suite_definition(
             crate::reasoning_suite::ReasoningProfile::Smoke,
             crate::reasoning_suite::REASONING_SUITE_SEED,
@@ -776,6 +774,8 @@ mod tests {
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
         assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
