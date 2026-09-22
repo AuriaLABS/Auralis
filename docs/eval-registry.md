@@ -57,7 +57,9 @@ This is the enforcement mechanism for the rule:
 
 The caller must bump the suite version explicitly.
 
-Task and metric identities are also global within the registry. Reusing a task id/version or metric id/version with different semantics is rejected with `TaskVersionCollision` or `MetricVersionCollision`; changing semantics therefore requires bumping the task/metric version as well as the suite version when applicable.\n\nThe same rule applies to baselines: an existing baseline id + version cannot silently change metrics/config/model metadata. Such drift is rejected with `BaselineVersionCollision`.
+Task and metric identities are also global within the registry. Reusing a task id/version or metric id/version with different semantics is rejected with `TaskVersionCollision` or `MetricVersionCollision`; changing semantics therefore requires bumping the task/metric version as well as the suite version when applicable.
+
+The same rule applies to baselines: an existing baseline id + version cannot silently change metrics/config/model metadata. Such drift is rejected with `BaselineVersionCollision`.
 
 ## Dataset, split, seed and population metadata
 
