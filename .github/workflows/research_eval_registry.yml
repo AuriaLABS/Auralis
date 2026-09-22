@@ -35,7 +35,29 @@ jobs:
           set -euo pipefail
           cargo run --release --bin auralis_eval_registry_smoke | tee /tmp/eval-registry.txt
 
-          grep -q '^eval_registry_protocol | schema=1 suites=2 baselines=2 exact_compatibility=false$' /tmp/eval-registry.txt
+          grep -q '^eval_registry_protocol | schema=1 suites=2 task_defs=1 metric_defs=1 baselines=2 exact_compatibility=false
+          test "$(grep -c '^suite_ref|' /tmp/eval-registry.txt)" -eq 2
+          test "$(grep -c '^baseline_ref |' /tmp/eval-registry.txt)" -eq 2
+          grep -q '^suite_deprecation | id=registry-smoke version=1.0.0 replacement=registry-smoke@2.0.0 historical_baselines=1$' /tmp/eval-registry.txt
+
+          python3 - <<'PY'
+          import re
+          text = open("/tmp/eval-registry.txt", encoding="utf-8").read().splitlines()
+          suite_refs = [line for line in text if line.startswith("suite_ref|")]
+          baseline_refs = [line for line in text if line.startswith("baseline_ref |")]
+          assert len(suite_refs) == 2
+          assert len(baseline_refs) == 2
+          for line in suite_refs + baseline_refs:
+              m = re.search(r"fingerprint=([0-9a-f]{16})", line)
+              assert m and int(m.group(1), 16) != 0, line
+          assert suite_refs[0] != suite_refs[1]
+          assert baseline_refs[0] != baseline_refs[1]
+          print("eval_registry_gate | exact_refs=true version_collision_fail_closed=true historical_baselines=true offline=true")
+          PY
+
+      - name: Full suite
+        run: cargo test --all-targets
+ /tmp/eval-registry.txt
           test "$(grep -c '^suite_ref|' /tmp/eval-registry.txt)" -eq 2
           test "$(grep -c '^baseline_ref |' /tmp/eval-registry.txt)" -eq 2
           grep -q '^suite_deprecation | id=registry-smoke version=1.0.0 replacement=registry-smoke@2.0.0 historical_baselines=1$' /tmp/eval-registry.txt
