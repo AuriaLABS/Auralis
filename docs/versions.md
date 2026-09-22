@@ -16,6 +16,7 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | Lion state schema | `LION_STATE_SCHEMA_VERSION = 1` |
 | brain A/B schema | `BRAIN_AB_SCHEMA_VERSION = 4` |
 | attention-head A/B schema | `ATTENTION_HEAD_AB_SCHEMA_VERSION = 1` |
+| attention-window A/B schema | `ATTENTION_WINDOW_AB_SCHEMA_VERSION = 1` |
 | external memory schema | `EXTERNAL_MEMORY_SCHEMA_VERSION = 1` |
 | memory integration schema | `MEMORY_INTEGRATION_SCHEMA_VERSION = 1` |
 | recurrent config schema | `RECURRENT_CONFIG_SCHEMA_VERSION = 1` |
