@@ -582,6 +582,8 @@ mod tests {
             "wrong-binding",
             "wrong-transition",
             "distractor-capture",
+            "five task families",
+            "all three splits",
             "auralis_reasoning_suite_bench",
             "model-independent",
         ] {

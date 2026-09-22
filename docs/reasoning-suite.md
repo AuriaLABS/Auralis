@@ -102,7 +102,7 @@ Failure taxonomy:
 - `wrong-transition`;
 - `distractor-capture`.
 
-A report keeps total/correct counts plus per-kind and per-split totals, so an improvement in one family cannot hide a regression in another.
+A report keeps total/correct counts plus per-kind and per-split totals. The registered metric set also includes exact-match ratios for every one of the five task families and all three splits, so a baseline cannot hide a family/split regression behind the global exact-match score.
 
 ## Registry identity
 
@@ -139,7 +139,7 @@ cargo run --release --bin auralis_reasoning_suite_bench -- both
 
 The benchmark publishes:
 
-- case/task/metric counts;
+- case/task/metric counts (15 metrics: global exact-match, six failure counts, five family exact-match ratios and three split exact-match ratios);
 - suite and fixture fingerprints;
 - generation/scoring latency;
 - training maximum length;

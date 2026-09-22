@@ -94,6 +94,38 @@ fn main() {
             oracle_report.correct,
             oracle_report.total,
         );
+        for kind in auralis::reasoning_suite::ReasoningKind::ALL {
+            let index = match kind {
+                auralis::reasoning_suite::ReasoningKind::ArithmeticComposition => 0,
+                auralis::reasoning_suite::ReasoningKind::AlgorithmicSequence => 1,
+                auralis::reasoning_suite::ReasoningKind::VariableBinding => 2,
+                auralis::reasoning_suite::ReasoningKind::FiniteStatePlanning => 3,
+                auralis::reasoning_suite::ReasoningKind::DistractorRobustness => 4,
+            };
+            println!(
+                "reasoning_suite_breakdown | profile={} dimension=kind id={} exact_match={:.6} correct={} total={}",
+                profile.as_str(),
+                kind.as_str(),
+                oracle_report.kind_exact_match_ratio(kind),
+                oracle_report.per_kind_correct[index],
+                oracle_report.per_kind_total[index],
+            );
+        }
+        for split in auralis::reasoning_suite::ReasoningSplit::ALL {
+            let index = match split {
+                auralis::reasoning_suite::ReasoningSplit::TrainDifficulty => 0,
+                auralis::reasoning_suite::ReasoningSplit::EvalDifficulty => 1,
+                auralis::reasoning_suite::ReasoningSplit::EvalLength => 2,
+            };
+            println!(
+                "reasoning_suite_breakdown | profile={} dimension=split id={} exact_match={:.6} correct={} total={}",
+                profile.as_str(),
+                split.as_str(),
+                oracle_report.split_exact_match_ratio(split),
+                oracle_report.per_split_correct[index],
+                oracle_report.per_split_total[index],
+            );
+        }
         println!(
             "reasoning_suite_regression | profile={} exact_match={:.6} invalid_format={} wrong_value={} wrong_length={} wrong_binding={} wrong_transition={} distractor_capture={}",
             profile.as_str(),

@@ -221,6 +221,16 @@ impl ReasoningReport {
             .map(|index| self.failure_counts[index])
             .unwrap_or(0)
     }
+
+    pub fn kind_exact_match_ratio(&self, kind: ReasoningKind) -> f64 {
+        let index = reasoning_kind_index(kind);
+        ratio(self.per_kind_correct[index], self.per_kind_total[index])
+    }
+
+    pub fn split_exact_match_ratio(&self, split: ReasoningSplit) -> f64 {
+        let index = reasoning_split_index(split);
+        ratio(self.per_split_correct[index], self.per_split_total[index])
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -483,6 +493,30 @@ fn reasoning_metrics() -> Vec<EvaluationMetric> {
             description: format!(
                 "number of reasoning cases classified as {}",
                 failure.as_str()
+            ),
+        });
+    }
+    for kind in ReasoningKind::ALL {
+        metrics.push(EvaluationMetric {
+            id: format!("reasoning.kind.{}.exact-match", kind.as_str()),
+            version: SemVer::new(1, 0, 0),
+            unit: "ratio".to_string(),
+            direction: MetricDirection::HigherIsBetter,
+            description: format!(
+                "exact-match ratio for the {} reasoning family",
+                kind.as_str()
+            ),
+        });
+    }
+    for split in ReasoningSplit::ALL {
+        metrics.push(EvaluationMetric {
+            id: format!("reasoning.split.{}.exact-match", split.as_str()),
+            version: SemVer::new(1, 0, 0),
+            unit: "ratio".to_string(),
+            direction: MetricDirection::HigherIsBetter,
+            description: format!(
+                "exact-match ratio for the {} reasoning split",
+                split.as_str()
             ),
         });
     }
@@ -935,6 +969,14 @@ fn bounded(seed: u64, index: u64, stream: u64, upper: usize) -> usize {
     (deterministic_u64(seed, index, stream) % upper as u64) as usize
 }
 
+fn ratio(correct: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        correct as f64 / total as f64
+    }
+}
+
 fn reasoning_kind_index(kind: ReasoningKind) -> usize {
     match kind {
         ReasoningKind::ArithmeticComposition => 0,
@@ -1297,6 +1339,45 @@ mod tests {
                 .definition_fingerprint()
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn registered_metrics_and_report_keep_kind_and_split_results_separate() {
+        let cases = generate_suite(ReasoningProfile::Full, REASONING_SUITE_SEED);
+        let mut predictions = intentional_regression_predictions(&cases);
+        for (prediction, case) in predictions.iter_mut().zip(&cases) {
+            if case.kind == ReasoningKind::ArithmeticComposition {
+                *prediction = case.expected.canonical();
+            }
+        }
+        let report = score_predictions(&cases, &predictions).unwrap();
+        assert_eq!(report.kind_exact_match_ratio(ReasoningKind::ArithmeticComposition), 1.0);
+        for kind in [
+            ReasoningKind::AlgorithmicSequence,
+            ReasoningKind::VariableBinding,
+            ReasoningKind::FiniteStatePlanning,
+            ReasoningKind::DistractorRobustness,
+        ] {
+            assert_eq!(report.kind_exact_match_ratio(kind), 0.0);
+        }
+        assert!((report.exact_match_ratio() - 0.2).abs() <= f64::EPSILON);
+
+        let suite = suite_definition(ReasoningProfile::Full, REASONING_SUITE_SEED);
+        assert_eq!(suite.metrics.len(), 15);
+        for kind in ReasoningKind::ALL {
+            assert!(suite
+                .metrics
+                .iter()
+                .any(|metric| metric.id == format!("reasoning.kind.{}.exact-match", kind.as_str())));
+        }
+        for split in ReasoningSplit::ALL {
+            assert!(suite
+                .metrics
+                .iter()
+                .any(|metric| metric.id == format!("reasoning.split.{}.exact-match", split.as_str())));
+            assert!(report.split_exact_match_ratio(split) > 0.0);
+            assert!(report.split_exact_match_ratio(split) < 1.0);
+        }
     }
 
     #[test]
