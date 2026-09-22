@@ -46,6 +46,7 @@ jobs:
           test "$(grep -c '^memory_suite_profile |' /tmp/memory-suite.txt)" -eq 2
           test "$(grep -c '^memory_suite_regression |' /tmp/memory-suite.txt)" -eq 2
           test "$(grep -c '^memory_suite_capacity |' /tmp/memory-suite.txt)" -eq 6
+          test "$(grep -c '^memory_suite_horizon |' /tmp/memory-suite.txt)" -eq 14
 
           python3 - <<'PY'
           lines = open("/tmp/memory-suite.txt", encoding="utf-8").read().splitlines()
@@ -60,6 +61,7 @@ jobs:
           profiles = {}
           regressions = {}
           capacities = []
+          horizons = []
           for line in lines:
               if line.startswith("memory_suite_profile |"):
                   row = fields(line)
@@ -69,6 +71,8 @@ jobs:
                   regressions[row["profile"]] = row
               elif line.startswith("memory_suite_capacity |"):
                   capacities.append(fields(line))
+              elif line.startswith("memory_suite_horizon |"):
+                  horizons.append(fields(line))
 
           assert set(profiles) == {"smoke", "full"}
           assert int(profiles["smoke"]["cases"]) == 10
@@ -91,6 +95,19 @@ jobs:
               for field in ["missing", "wrong_value", "wrong_order", "conflict_capture", "stale_value"]:
                   assert int(row[field]) > 0
 
+          assert len(horizons) == 14
+          for row in horizons:
+              assert int(row["exact_match"]) == 1
+              assert int(row["query_ns"]) > 0
+              assert int(row["heap_bytes"]) > 0
+              assert int(row["snapshot_bytes"]) > 0
+          full_horizons = sorted(
+              int(row["horizon"]) for row in horizons if row["profile"] == "full"
+          )
+          assert len(full_horizons) == 12
+          assert full_horizons[0] >= 32
+          assert full_horizons[-1] >= 120
+
           assert len(capacities) == 6
           for row in capacities:
               assert int(row["stored"]) == min(int(row["capacity"]), int(row["attempted"]))
@@ -104,7 +121,7 @@ jobs:
           full = [row for row in capacities if row["profile"] == "full"]
           assert [int(row["capacity"]) for row in full] == [8, 32, 128]
           assert float(full[-1]["exact_retrieval"]) == 1.0
-          print("memory_suite_ci | objective=true profile_counts=true failure_taxonomy=true capacity_curve=true")
+          print("memory_suite_ci | objective=true profile_counts=true failure_taxonomy=true horizon_curve=true capacity_curve=true")
           PY
 
       - name: Full suite
