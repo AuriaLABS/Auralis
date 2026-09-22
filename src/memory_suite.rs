@@ -365,6 +365,9 @@ pub fn score_case(case: &MemoryCase, prediction: &MemoryPrediction) -> MemoryCas
         return fail(MemoryFailureKind::Missing);
     };
 
+    if prediction.record_ids.is_empty() || prediction.selected_id.is_none() {
+        return fail(MemoryFailureKind::WrongOrder);
+    }
     if prediction.record_ids.windows(2).any(|ids| ids[0] >= ids[1]) {
         return fail(MemoryFailureKind::WrongOrder);
     }
@@ -877,6 +880,33 @@ mod tests {
                 .windows(2)
                 .all(|ids| ids[0] < ids[1]));
         }
+    }
+
+    #[test]
+    fn value_without_retrieval_trace_fails_closed() {
+        let case = generate_suite(MemorySuiteProfile::Smoke, MEMORY_SUITE_SEED)
+            .into_iter()
+            .next()
+            .unwrap();
+        let forged = MemoryPrediction {
+            value: Some(case.expected),
+            record_ids: Vec::new(),
+            selected_id: None,
+        };
+        assert_eq!(
+            score_case(&case, &forged).failure,
+            MemoryFailureKind::WrongOrder
+        );
+
+        let forged = MemoryPrediction {
+            value: Some(case.expected),
+            record_ids: vec![0],
+            selected_id: None,
+        };
+        assert_eq!(
+            score_case(&case, &forged).failure,
+            MemoryFailureKind::WrongOrder
+        );
     }
 
     #[test]
