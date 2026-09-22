@@ -10,7 +10,7 @@ The suite does **not** score textual similarity. A submission must apply cleanly
 CODE_SUITE_SCHEMA_VERSION = 1
 CODE_SUITE_SEED = 131659918
 language = Rust 2021
-patch dialect = one declared expression in main.rs
+patch dialect = single-expression replacement in main.rs
 compiler = rustc --test
 ```
 
