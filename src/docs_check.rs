@@ -658,6 +658,7 @@ mod tests {
         assert_eq!(crate::memory::EXTERNAL_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::kv_cache::KV_CACHE_SCHEMA_VERSION, 3);
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
+        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -681,6 +682,7 @@ mod tests {
             "RECURRENT_CONFIG_SCHEMA_VERSION = 1",
             "KV_CACHE_SCHEMA_VERSION = 3",
             "MOE_ROUTER_SCHEMA_VERSION = 1",
+            "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
