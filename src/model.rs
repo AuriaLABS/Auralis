@@ -5,7 +5,9 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
-use crate::attention::{Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention};
+use crate::attention::{
+    local_probability_len, Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention,
+};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
@@ -128,6 +130,7 @@ pub struct Gpt {
     normalization: NormalizationKind,
     position: PositionKind,
     n_kv_head: usize,
+    attention_window: usize,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -224,6 +227,7 @@ struct GptGrad {
 pub(crate) struct BackwardWorkspace {
     cfg: Config,
     n_kv_head: usize,
+    attention_window: usize,
     grads: GptGrad,
     scratch: Arena,
     dx: Vec<f32>,
@@ -344,6 +348,7 @@ impl BackwardWorkspace {
         Self {
             cfg: gpt.cfg,
             n_kv_head: gpt.n_kv_head,
+            attention_window: gpt.attention_window,
             grads: gpt.zero_grads(),
             scratch: Arena::with_capacity(scratch_capacity),
             dx: vec![0.0; td],
@@ -352,7 +357,9 @@ impl BackwardWorkspace {
     }
 
     pub(crate) fn matches(&self, gpt: &Gpt) -> bool {
-        self.cfg == gpt.cfg && self.n_kv_head == gpt.n_kv_head
+        self.cfg == gpt.cfg
+            && self.n_kv_head == gpt.n_kv_head
+            && self.attention_window == gpt.attention_window
     }
 
     fn clear(&mut self) {
@@ -402,10 +409,32 @@ impl Gpt {
         n_kv_head: usize,
         rng: &mut impl Rng,
     ) -> Self {
+        Self::new_with_attention_policy(
+            cfg,
+            normalization,
+            position,
+            n_kv_head,
+            0,
+            rng,
+        )
+    }
+
+    pub fn new_with_attention_policy(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+        attention_window: usize,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
         assert!(
             n_kv_head > 0 && n_kv_head <= cfg.n_head && cfg.n_head % n_kv_head == 0,
             "n_kv_head must divide n_head"
+        );
+        assert!(
+            attention_window <= cfg.block,
+            "attention_window must be 0 (dense) or <= block"
         );
         if position == PositionKind::Rope {
             Rotary::new(cfg.block, cfg.n_embd, cfg.n_head)
@@ -435,6 +464,7 @@ impl Gpt {
             normalization,
             position,
             n_kv_head,
+            attention_window,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -459,6 +489,21 @@ impl Gpt {
 
     pub fn n_kv_head(&self) -> usize {
         self.n_kv_head
+    }
+
+    pub fn attention_window(&self) -> usize {
+        self.attention_window
+    }
+
+    pub fn set_attention_window(&mut self, attention_window: usize) -> Result<(), String> {
+        if attention_window > self.cfg.block {
+            return Err(format!(
+                "attention_window {attention_window} exceeds block {}",
+                self.cfg.block
+            ));
+        }
+        self.attention_window = attention_window;
+        Ok(())
     }
 
     pub fn kv_width(&self) -> usize {
