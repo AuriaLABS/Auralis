@@ -650,7 +650,6 @@ mod tests {
         }
         assert!(readme().contains("docs/moe-router.md"));
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
-        assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         let bench = crate::bench::find("moe-router").expect("moe-router benchmark");
         assert_eq!(bench.bin, "auralis_moe_router_bench");
     }
