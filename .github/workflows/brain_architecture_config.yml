@@ -44,8 +44,8 @@ jobs:
           cargo run --quiet --release -- train-fresh 2 /tmp/explicit.bin 659918 2 1 --model-config examples/architecture-tiny.cfg | tee /tmp/explicit.txt
           cmp /tmp/implicit.bin /tmp/explicit.bin
           cmp /tmp/implicit.bin.manifest /tmp/explicit.bin.manifest
-          grep -q '^architecture | schema=3 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm position=learned_absolute ' /tmp/implicit.txt
-          grep -q '^architecture | schema=3 n_embd=32 n_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm position=learned_absolute ' /tmp/explicit.txt
+          grep -q '^architecture | schema=4 n_embd=32 n_head=4 n_kv_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm position=learned_absolute ' /tmp/implicit.txt
+          grep -q '^architecture | schema=4 n_embd=32 n_head=4 n_kv_head=4 n_layer=2 block=32 n_ff=96 normalization=layernorm position=learned_absolute ' /tmp/explicit.txt
           echo "brain_arch_baseline | checkpoint_exact=true manifest_exact=true"
 
       - name: Architecture shapes remain trainable
@@ -54,8 +54,8 @@ jobs:
           set -euo pipefail
           cargo run --quiet --release -- train-fresh 2 /tmp/arch-1x1.bin 659918 2 1 --model-config examples/architecture-small-1x1.cfg | tee /tmp/arch-1x1.txt
           cargo run --quiet --release -- train-fresh 2 /tmp/arch-3x2.bin 659918 2 1 --model-config examples/architecture-small-3x2.cfg | tee /tmp/arch-3x2.txt
-          grep -q '^architecture | schema=3 n_embd=8 n_head=1 n_layer=1 block=8 n_ff=16 normalization=layernorm position=learned_absolute ' /tmp/arch-1x1.txt
-          grep -q '^architecture | schema=3 n_embd=8 n_head=2 n_layer=3 block=8 n_ff=16 normalization=layernorm position=learned_absolute ' /tmp/arch-3x2.txt
+          grep -q '^architecture | schema=4 n_embd=8 n_head=1 n_kv_head=1 n_layer=1 block=8 n_ff=16 normalization=layernorm position=learned_absolute ' /tmp/arch-1x1.txt
+          grep -q '^architecture | schema=4 n_embd=8 n_head=2 n_kv_head=2 n_layer=3 block=8 n_ff=16 normalization=layernorm position=learned_absolute ' /tmp/arch-3x2.txt
           grep -q '^n_layer=1$' /tmp/arch-1x1.bin.manifest
           grep -q '^n_layer=3$' /tmp/arch-3x2.bin.manifest
 

@@ -79,11 +79,86 @@ pub fn check_random_params(
 fn loss_only(template: &Gpt, params: &[f32], x: &[usize], y: &[usize]) -> f32 {
     let mut clone = {
         let mut rng = rand::thread_rng();
-        Gpt::new(template.cfg, &mut rng)
+        Gpt::new_with_attention_heads(
+            template.cfg,
+            template.normalization(),
+            template.position_kind(),
+            template.n_kv_head(),
+            &mut rng,
+        )
     };
     clone.write_params(params);
-    let mut g = vec![0.0; params.len()];
-    clone.backward_into(x, y, &mut g)
+    clone.loss(x, y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::NormalizationKind;
+    use crate::position::PositionKind;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn grouped_kv_projection_gradients_match_finite_differences() {
+        let cfg = Config {
+            vocab: 7,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 1,
+            block: 4,
+            n_ff: 16,
+        };
+        let x = [0usize, 1, 2, 3];
+        let y = [1usize, 2, 3, 4];
+        let eps = 1e-3f32;
+
+        for n_kv_head in [1usize, 2] {
+            let mut rng = StdRng::seed_from_u64(0xA11CE_1403 + n_kv_head as u64);
+            let gpt = Gpt::new_with_attention_heads(
+                cfg,
+                NormalizationKind::LayerNorm,
+                PositionKind::LearnedAbsolute,
+                n_kv_head,
+                &mut rng,
+            );
+            let mut params = gpt.collect_params();
+            let mut grads = vec![0.0f32; params.len()];
+            let loss = gpt.backward_into(&x, &y, &mut grads);
+            assert!(loss.is_finite());
+            assert!(grads.iter().all(|g| g.is_finite()));
+
+            let d = cfg.n_embd;
+            let kv_width = (d / cfg.n_head) * n_kv_head;
+            let block_start = cfg.vocab * d + cfg.block * d;
+            let wk_start = block_start + 2 * d + d * d;
+            let wk_len = d * kv_width;
+            let wv_start = wk_start + wk_len;
+            let indices = [
+                wk_start,
+                wk_start + wk_len - 1,
+                wv_start,
+                wv_start + wk_len - 1,
+            ];
+
+            for index in indices {
+                let saved = params[index];
+                params[index] = saved + eps;
+                let lp = loss_only(&gpt, &params, &x, &y);
+                params[index] = saved - eps;
+                let lm = loss_only(&gpt, &params, &x, &y);
+                params[index] = saved;
+
+                let numerical = (lp - lm) / (2.0 * eps);
+                let analytical = grads[index];
+                let abs_err = (numerical - analytical).abs();
+                assert!(
+                    abs_err <= 3e-3,
+                    "n_kv_head={n_kv_head} index={index} analytical={analytical} numerical={numerical} abs_err={abs_err}"
+                );
+            }
+        }
+    }
 }
 
 pub fn tiny_check_config(vocab: usize) -> Config {

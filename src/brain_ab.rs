@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 pub const BRAIN_AB_SCHEMA_VERSION: u32 = 4;
+pub const ATTENTION_HEAD_AB_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AbProtocol {
@@ -110,6 +111,65 @@ pub struct AbVariantResult {
     pub position: PositionKind,
     pub optimizer: OptimizerId,
     pub measurements: Vec<AbMeasurement>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttentionHeadVariantResult {
+    pub label: String,
+    pub config: Config,
+    pub n_kv_head: usize,
+    pub normalization: NormalizationKind,
+    pub position: PositionKind,
+    pub optimizer: OptimizerId,
+    pub measurements: Vec<AbMeasurement>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttentionHeadExperimentResult {
+    pub schema_version: u32,
+    pub code_revision: String,
+    pub protocol: AbProtocol,
+    pub token_fingerprint: u64,
+    pub a: AttentionHeadVariantResult,
+    pub b: AttentionHeadVariantResult,
+}
+
+impl AttentionHeadExperimentResult {
+    pub fn human(&self) -> String {
+        let mut out = format!(
+            "attention_head_ab | schema={} revision={} seed={} steps={} repeats={} tokens={} token_fingerprint={:016x}\n",
+            self.schema_version,
+            self.code_revision,
+            self.protocol.seed,
+            self.protocol.steps,
+            self.protocol.repeats,
+            self.protocol.token_count,
+            self.token_fingerprint,
+        );
+        for variant in [&self.a, &self.b] {
+            for m in &variant.measurements {
+                out.push_str(&format!(
+                    "attention_head_ab_run | variant={} repetition={} n_head={} n_kv_head={} normalization={} position={} optimizer={} train_loss={:.6} eval_loss={:.6} ppl={:.6} tok_per_s={:.3} params={} parameter_bytes={} checkpoint_bytes={} state_fingerprint={:016x}\n",
+                    variant.label,
+                    m.repetition,
+                    variant.config.n_head,
+                    variant.n_kv_head,
+                    variant.normalization.as_str(),
+                    variant.position.as_str(),
+                    variant.optimizer.as_str(),
+                    m.final_train_loss,
+                    m.eval_loss,
+                    m.eval_perplexity,
+                    m.tokens_per_second,
+                    m.parameter_count,
+                    m.parameter_bytes,
+                    m.checkpoint_bytes,
+                    m.state_fingerprint,
+                ));
+            }
+        }
+        out
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -276,6 +336,91 @@ impl AbExperimentResult {
     }
 }
 
+pub fn run_attention_head_experiment(
+    protocol: AbProtocol,
+    a: AbVariant,
+    a_n_kv_head: usize,
+    b: AbVariant,
+    b_n_kv_head: usize,
+) -> Result<AttentionHeadExperimentResult, String> {
+    let protocol = protocol.validate()?;
+    validate_variants(&a, &b, protocol.token_count)?;
+    for (label, cfg, n_kv_head) in [
+        (&a.label, a.config, a_n_kv_head),
+        (&b.label, b.config, b_n_kv_head),
+    ] {
+        if n_kv_head == 0 || n_kv_head > cfg.n_head || cfg.n_head % n_kv_head != 0 {
+            return Err(format!(
+                "invalid A/B KV-head count for {label}: n_head={} n_kv_head={n_kv_head}",
+                cfg.n_head
+            ));
+        }
+    }
+
+    let tokens = token_stream(a.config.vocab, protocol.token_count);
+    let token_fingerprint = fingerprint_tokens(&tokens);
+    let mut a_measurements = Vec::with_capacity(protocol.repeats);
+    let mut b_measurements = Vec::with_capacity(protocol.repeats);
+    for repetition in 0..protocol.repeats {
+        if repetition % 2 == 0 {
+            a_measurements.push(run_variant_with_kv_heads(
+                &a,
+                a_n_kv_head,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+            b_measurements.push(run_variant_with_kv_heads(
+                &b,
+                b_n_kv_head,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+        } else {
+            b_measurements.push(run_variant_with_kv_heads(
+                &b,
+                b_n_kv_head,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+            a_measurements.push(run_variant_with_kv_heads(
+                &a,
+                a_n_kv_head,
+                protocol,
+                &tokens,
+                repetition + 1,
+            )?);
+        }
+    }
+
+    Ok(AttentionHeadExperimentResult {
+        schema_version: ATTENTION_HEAD_AB_SCHEMA_VERSION,
+        code_revision: build_revision().to_string(),
+        protocol,
+        token_fingerprint,
+        a: AttentionHeadVariantResult {
+            label: a.label,
+            config: a.config,
+            n_kv_head: a_n_kv_head,
+            normalization: a.normalization,
+            position: a.position,
+            optimizer: a.optimizer,
+            measurements: a_measurements,
+        },
+        b: AttentionHeadVariantResult {
+            label: b.label,
+            config: b.config,
+            n_kv_head: b_n_kv_head,
+            normalization: b.normalization,
+            position: b.position,
+            optimizer: b.optimizer,
+            measurements: b_measurements,
+        },
+    })
+}
+
 pub fn run_experiment(
     protocol: AbProtocol,
     a: AbVariant,
@@ -359,11 +504,28 @@ fn run_variant(
     tokens: &[usize],
     repetition: usize,
 ) -> Result<AbMeasurement, String> {
+    run_variant_with_kv_heads(
+        variant,
+        variant.config.n_head,
+        protocol,
+        tokens,
+        repetition,
+    )
+}
+
+fn run_variant_with_kv_heads(
+    variant: &AbVariant,
+    n_kv_head: usize,
+    protocol: AbProtocol,
+    tokens: &[usize],
+    repetition: usize,
+) -> Result<AbMeasurement, String> {
     let mut rng = StdRng::seed_from_u64(protocol.seed);
-    let mut gpt = Gpt::new_with_policies(
+    let mut gpt = Gpt::new_with_attention_heads(
         variant.config,
         variant.normalization,
         variant.position,
+        n_kv_head,
         &mut rng,
     );
     let parameter_count = gpt.collect_params().len();
@@ -793,6 +955,68 @@ mod tests {
             resumed_opt.state().encode().unwrap(),
             continuous_opt.state().encode().unwrap()
         );
+    }
+
+    #[test]
+    fn attention_head_ab_tracks_mha_vs_mqa_parameter_and_quality_measurements() {
+        let variant = AbVariant {
+            label: "mha".into(),
+            config: tiny(),
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::LearnedAbsolute,
+            optimizer: OptimizerId::Adam,
+        };
+        let mut mqa = variant.clone();
+        mqa.label = "mqa".into();
+        let mha_heads = variant.config.n_head;
+        let result = run_attention_head_experiment(
+            AbProtocol {
+                steps: 2,
+                repeats: 2,
+                token_count: 128,
+                ..AbProtocol::default()
+            },
+            variant,
+            mha_heads,
+            mqa,
+            1,
+        )
+        .unwrap();
+        assert_eq!(result.schema_version, ATTENTION_HEAD_AB_SCHEMA_VERSION);
+        assert_eq!(result.a.n_kv_head, mha_heads);
+        assert_eq!(result.b.n_kv_head, 1);
+        assert!(
+            result.b.measurements[0].parameter_count
+                < result.a.measurements[0].parameter_count
+        );
+        assert!(result.a.measurements[0].eval_loss.is_finite());
+        assert!(result.b.measurements[0].eval_loss.is_finite());
+        assert!(result.human().contains("n_kv_head=1"));
+    }
+
+    #[test]
+    fn attention_head_ab_rejects_non_divisible_kv_heads() {
+        let variant = AbVariant {
+            label: "bad".into(),
+            config: tiny(),
+            normalization: NormalizationKind::LayerNorm,
+            position: PositionKind::LearnedAbsolute,
+            optimizer: OptimizerId::Adam,
+        };
+        let err = run_attention_head_experiment(
+            AbProtocol {
+                steps: 1,
+                repeats: 1,
+                token_count: 64,
+                ..AbProtocol::default()
+            },
+            variant.clone(),
+            3,
+            variant,
+            4,
+        )
+        .unwrap_err();
+        assert!(err.contains("KV-head"));
     }
 
     #[test]

@@ -4,18 +4,21 @@ Brain experiments select model depth/head/width, normalization and positional po
 
 ## Contract
 
-New architecture files use schema 3:
+New architecture files use schema 4:
 
 ```text
-auralis_architecture=3
+auralis_architecture=4
 n_embd=32
 n_head=4
+n_kv_head=4
 n_layer=2
 block=32
 n_ff=96
 normalization=layernorm
 position=learned_absolute
 ```
+
+`n_kv_head` selects the K/V head layout: `n_kv_head=n_head` is the historical MHA default, a proper divisor greater than 1 selects GQA, and `n_kv_head=1` selects MQA. Zero, oversized and non-divisible values fail closed.
 
 Supported normalization policies:
 
@@ -31,7 +34,7 @@ Supported positional policies:
 
 RoPE currently obeys the configured `block`; #38 does not claim context extrapolation beyond that limit. RoPE requires an even per-head width. ALiBi also obeys the configured `block` in this experiment; #39 measures sensitivity only within that supported capacity.
 
-Schema 1 files remain valid and migrate deterministically to `normalization=layernorm` + `position=learned_absolute`. Schema 2 preserves its explicit normalization and migrates to `position=learned_absolute`. Future/unknown schemas, normalization values and positional values fail closed.
+Schema 1 files remain valid and migrate deterministically to `normalization=layernorm` + `position=learned_absolute` + MHA. Schema 2 preserves its explicit normalization and migrates to `position=learned_absolute` + MHA. Schema 3 preserves normalization/position and migrates to MHA (`n_kv_head=n_head`). Future/unknown schemas, normalization values, positional values and invalid KV-head layouts fail closed.
 
 The historical default is [`../examples/architecture-tiny.cfg`](../examples/architecture-tiny.cfg) and remains exactly equivalent to `Config::tiny(vocab)` + LayerNorm.
 
@@ -53,17 +56,18 @@ Without `--model-config`, training keeps the historical tiny LayerNorm + learned
 
 For explicit architecture configs, Auralis writes `CHECKPOINT.architecture`. Resume, eval, chat and numeric-forward restore that metadata before executing the model. A mismatch aborts before overwriting checkpoint or manifest.
 
-Legacy checkpoints without an architecture sidecar are interpreted as LayerNorm + learned-absolute only. Requesting RMSNorm, RoPE or ALiBi for such a checkpoint is rejected because those policies cannot be inferred safely.
+Legacy checkpoints without an architecture sidecar are interpreted as LayerNorm + learned-absolute. Their MHA/GQA/MQA K/V-head layout is inferred from the validated parameter count; requesting RMSNorm, RoPE or ALiBi is still rejected because those policies cannot be inferred safely.
 
 ## Invariants
 
 - `n_embd` must be divisible by `n_head`;
+- `n_kv_head` must be in `1..=n_head` and divide `n_head`;
 - all dimensions are positive and bounded by checkpoint safety limits;
 - LayerNorm remains the exact default path;
 - RMSNorm keeps the same flat parameter layout and checkpoint tensor count;
 - unknown/duplicate fields and future schemas fail closed;
 - AURLIS02/AURLIS03 checkpoint magic is unchanged;
-- normalization and positional identity are persisted/fingerprinted in the architecture sidecar;
+- normalization, positional identity and `n_kv_head` are persisted/fingerprinted in the architecture sidecar;
 - `RunConfig` keeps optimizer/data/training semantics separate from model architecture.
 
 Changing normalization or positional policy is an architecture experiment, not a compatible silent reinterpretation of an existing checkpoint.

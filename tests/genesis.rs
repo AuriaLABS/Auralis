@@ -1,6 +1,7 @@
 use auralis::checkpoint;
 use auralis::gradcheck;
-use auralis::model::{Config, Gpt};
+use auralis::model::{Config, Gpt, NormalizationKind};
+use auralis::position::PositionKind;
 use auralis::optim::Adam;
 use auralis::tokenizer::{AnyTok, CharTokenizer};
 use rand::rngs::StdRng;
@@ -119,6 +120,49 @@ fn checkpoint_roundtrip_preserves_model_tokenizer_and_adam() {
     assert_eq!(t_a, t_b);
     assert_eq!(m_a, m_b);
     assert_eq!(v_a, v_b);
+}
+
+#[test]
+fn grouped_kv_checkpoint_roundtrip_infers_compact_layout_and_adam() {
+    let tok = AnyTok::Char(CharTokenizer::fit("abc abc\n"));
+    let cfg = Config {
+        vocab: tok.vocab_size(),
+        n_embd: 8,
+        n_head: 4,
+        n_layer: 1,
+        block: 4,
+        n_ff: 16,
+    };
+    let mut rng = StdRng::seed_from_u64(140);
+    let mut gpt = Gpt::new_with_attention_heads(
+        cfg,
+        NormalizationKind::LayerNorm,
+        PositionKind::LearnedAbsolute,
+        1,
+        &mut rng,
+    );
+    let mut params = gpt.collect_params();
+    let mut grads = vec![0.0; params.len()];
+    let ids = tok.encode("abc a");
+    let _ = gpt.backward_into(&ids[..4], &ids[1..5], &mut grads);
+
+    let mut adam = Adam::new(params.len(), 3e-3);
+    adam.step(&mut params, &grads);
+    gpt.write_params(&params);
+
+    let path = std::env::temp_dir().join(format!(
+        "auralis-genesis-mqa-checkpoint-{}.bin",
+        std::process::id()
+    ));
+    checkpoint::save_full(&path, &gpt, &tok, Some(&adam)).unwrap();
+    let (loaded, _, loaded_adam) = checkpoint::load_full(&path).unwrap();
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(loaded.cfg, cfg);
+    assert_eq!(loaded.n_kv_head(), 1);
+    assert_eq!(loaded.collect_params(), gpt.collect_params());
+    let loaded_adam = loaded_adam.unwrap();
+    assert_eq!(loaded_adam.export(), adam.export());
 }
 
 #[test]

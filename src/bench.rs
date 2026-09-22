@@ -118,6 +118,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "gqa-mqa",
+        bin: "auralis_gqa_mqa_bench",
+        kind: "brain-attention",
+        summary: "MHA vs GQA/MQA quality, decode latency and KV-cache memory",
+        default_args: "",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",

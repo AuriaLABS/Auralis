@@ -5,7 +5,7 @@
 //! implemented explicitly over `Vec<f32>`.
 
 use crate::arena::Arena;
-use crate::attention::{Attention, AttentionShape, RowSlicesAttention};
+use crate::attention::{Attention, AttentionShape, GroupedAttentionShape, RowSlicesAttention};
 use crate::backend::{
     Backend, BackendId, MatrixMut, MatrixRef, OptimizedCpuBackend, ScalarCpuBackend,
 };
@@ -127,6 +127,7 @@ pub struct Gpt {
     pub cfg: Config,
     normalization: NormalizationKind,
     position: PositionKind,
+    n_kv_head: usize,
     tok_emb: Vec<f32>,
     pos_emb: Vec<f32>,
     blocks: Vec<Block>,
@@ -222,6 +223,7 @@ struct GptGrad {
 #[derive(Debug)]
 pub(crate) struct BackwardWorkspace {
     cfg: Config,
+    n_kv_head: usize,
     grads: GptGrad,
     scratch: Arena,
     dx: Vec<f32>,
@@ -232,14 +234,46 @@ fn init_vec(rng: &mut impl Rng, n: usize, scale: f32) -> Vec<f32> {
     (0..n).map(|_| rng.gen_range(-scale..scale)).collect()
 }
 
-fn zeros_block_grad(cfg: Config) -> BlockGrad {
+fn init_compact_projection(
+    rng: &mut impl Rng,
+    input_width: usize,
+    full_output_width: usize,
+    compact_output_width: usize,
+    scale: f32,
+) -> Vec<f32> {
+    assert!(compact_output_width > 0 && compact_output_width <= full_output_width);
+    let full = init_vec(
+        rng,
+        input_width
+            .checked_mul(full_output_width)
+            .expect("projection initialization size overflow"),
+        scale,
+    );
+    if compact_output_width == full_output_width {
+        return full;
+    }
+    let mut compact = Vec::with_capacity(
+        input_width
+            .checked_mul(compact_output_width)
+            .expect("compact projection initialization size overflow"),
+    );
+    for row in 0..input_width {
+        let start = row * full_output_width;
+        compact.extend_from_slice(&full[start..start + compact_output_width]);
+    }
+    compact
+}
+
+fn zeros_block_grad(cfg: Config, n_kv_head: usize) -> BlockGrad {
     let d = cfg.n_embd;
+    let head_width = d / cfg.n_head;
+    let kv_width = head_width * n_kv_head;
     BlockGrad {
         ln1_g: vec![0.0; d],
         ln1_b: vec![0.0; d],
         wq: vec![0.0; d * d],
-        wk: vec![0.0; d * d],
-        wv: vec![0.0; d * d],
+        wk: vec![0.0; d * kv_width],
+        wv: vec![0.0; d * kv_width],
         wo: vec![0.0; d * d],
         ln2_g: vec![0.0; d],
         ln2_b: vec![0.0; d],
@@ -309,6 +343,7 @@ impl BackwardWorkspace {
 
         Self {
             cfg: gpt.cfg,
+            n_kv_head: gpt.n_kv_head,
             grads: gpt.zero_grads(),
             scratch: Arena::with_capacity(scratch_capacity),
             dx: vec![0.0; td],
@@ -317,7 +352,7 @@ impl BackwardWorkspace {
     }
 
     pub(crate) fn matches(&self, gpt: &Gpt) -> bool {
-        self.cfg == gpt.cfg
+        self.cfg == gpt.cfg && self.n_kv_head == gpt.n_kv_head
     }
 
     fn clear(&mut self) {
@@ -328,10 +363,11 @@ impl BackwardWorkspace {
 
 impl Gpt {
     pub fn new(cfg: Config, rng: &mut impl Rng) -> Self {
-        Self::new_with_policies(
+        Self::new_with_attention_heads(
             cfg,
             NormalizationKind::LayerNorm,
             PositionKind::LearnedAbsolute,
+            cfg.n_head,
             rng,
         )
     }
@@ -341,7 +377,13 @@ impl Gpt {
         normalization: NormalizationKind,
         rng: &mut impl Rng,
     ) -> Self {
-        Self::new_with_policies(cfg, normalization, PositionKind::LearnedAbsolute, rng)
+        Self::new_with_attention_heads(
+            cfg,
+            normalization,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            rng,
+        )
     }
 
     pub fn new_with_policies(
@@ -350,20 +392,35 @@ impl Gpt {
         position: PositionKind,
         rng: &mut impl Rng,
     ) -> Self {
+        Self::new_with_attention_heads(cfg, normalization, position, cfg.n_head, rng)
+    }
+
+    pub fn new_with_attention_heads(
+        cfg: Config,
+        normalization: NormalizationKind,
+        position: PositionKind,
+        n_kv_head: usize,
+        rng: &mut impl Rng,
+    ) -> Self {
         cfg.validate();
+        assert!(
+            n_kv_head > 0 && n_kv_head <= cfg.n_head && cfg.n_head % n_kv_head == 0,
+            "n_kv_head must divide n_head"
+        );
         if position == PositionKind::Rope {
             Rotary::new(cfg.block, cfg.n_embd, cfg.n_head)
                 .expect("RoPE requires even per-head width");
         }
         let d = cfg.n_embd;
+        let kv_width = (d / cfg.n_head) * n_kv_head;
         let mut blocks = Vec::with_capacity(cfg.n_layer);
         for _ in 0..cfg.n_layer {
             blocks.push(Block {
                 ln1_g: vec![1.0; d],
                 ln1_b: vec![0.0; d],
                 wq: init_vec(rng, d * d, 0.02),
-                wk: init_vec(rng, d * d, 0.02),
-                wv: init_vec(rng, d * d, 0.02),
+                wk: init_compact_projection(rng, d, d, kv_width, 0.02),
+                wv: init_compact_projection(rng, d, d, kv_width, 0.02),
                 wo: init_vec(rng, d * d, 0.02),
                 ln2_g: vec![1.0; d],
                 ln2_b: vec![0.0; d],
@@ -377,6 +434,7 @@ impl Gpt {
             cfg,
             normalization,
             position,
+            n_kv_head,
             tok_emb: init_vec(rng, cfg.vocab * d, 0.02),
             pos_emb: init_vec(rng, cfg.block * d, 0.02),
             blocks,
@@ -398,6 +456,55 @@ impl Gpt {
     pub fn position_kind(&self) -> PositionKind {
         self.position
     }
+
+    pub fn n_kv_head(&self) -> usize {
+        self.n_kv_head
+    }
+
+    pub fn kv_width(&self) -> usize {
+        (self.cfg.n_embd / self.cfg.n_head) * self.n_kv_head
+    }
+
+    pub fn expected_parameter_count(
+        cfg: Config,
+        n_kv_head: usize,
+    ) -> Result<usize, String> {
+        if cfg.vocab <= 1
+            || cfg.n_embd == 0
+            || cfg.n_head == 0
+            || cfg.n_layer == 0
+            || cfg.block == 0
+            || cfg.n_ff == 0
+            || cfg.n_embd % cfg.n_head != 0
+            || n_kv_head == 0
+            || n_kv_head > cfg.n_head
+            || cfg.n_head % n_kv_head != 0
+        {
+            return Err("invalid model/KV-head shape for parameter count".into());
+        }
+        let d = cfg.n_embd;
+        let kv_width = (d / cfg.n_head)
+            .checked_mul(n_kv_head)
+            .ok_or_else(|| "KV width overflow".to_string())?;
+        let per_block = d
+            .checked_mul(d)
+            .and_then(|n| n.checked_mul(2))
+            .and_then(|n| n.checked_add(d.checked_mul(kv_width)?.checked_mul(2)?))
+            .and_then(|n| n.checked_add(d.checked_mul(5)?))
+            .and_then(|n| n.checked_add(d.checked_mul(cfg.n_ff)?.checked_mul(2)?))
+            .and_then(|n| n.checked_add(cfg.n_ff))
+            .ok_or_else(|| "block parameter count overflow".to_string())?;
+
+        cfg.vocab
+            .checked_mul(d)
+            .and_then(|n| n.checked_add(cfg.block.checked_mul(d)?))
+            .and_then(|n| n.checked_add(cfg.n_layer.checked_mul(per_block)?))
+            .and_then(|n| n.checked_add(d.checked_mul(2)?))
+            .and_then(|n| n.checked_add(d.checked_mul(cfg.vocab)?))
+            .and_then(|n| n.checked_add(cfg.vocab))
+            .ok_or_else(|| "model parameter count overflow".to_string())
+    }
+
 
     pub fn set_position_kind(&mut self, position: PositionKind) {
         if position == PositionKind::Rope {
@@ -448,34 +555,46 @@ impl Gpt {
     }
 
     fn apply_position_to_qk(&self, q: &mut [f32], k: &mut [f32], positions: usize) {
-        match self.position {
-            PositionKind::LearnedAbsolute => {
-                let positional = LearnedAbsolute::new(
-                    &self.pos_emb,
-                    self.cfg.block,
-                    self.cfg.n_embd,
-                )
-                .expect("model positional storage matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match positional contract");
+        if self.n_kv_head == self.cfg.n_head {
+            match self.position {
+                PositionKind::LearnedAbsolute => {
+                    let positional = LearnedAbsolute::new(
+                        &self.pos_emb,
+                        self.cfg.block,
+                        self.cfg.n_embd,
+                    )
+                    .expect("model positional storage matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match positional contract");
+                }
+                PositionKind::Rope => {
+                    let positional =
+                        Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model RoPE shape matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match RoPE contract");
+                }
+                PositionKind::Alibi => {
+                    let positional =
+                        Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model ALiBi shape matches config");
+                    positional
+                        .apply_qk(q, k, positions, self.cfg.n_head)
+                        .expect("model Q/K shapes match ALiBi contract");
+                }
             }
-            PositionKind::Rope => {
-                let positional =
-                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model RoPE shape matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match RoPE contract");
-            }
-            PositionKind::Alibi => {
-                let positional =
-                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model ALiBi shape matches config");
-                positional
-                    .apply_qk(q, k, positions, self.cfg.n_head)
-                    .expect("model Q/K shapes match ALiBi contract");
-            }
+            return;
+        }
+
+        assert_eq!(q.len(), positions * self.cfg.n_embd);
+        assert_eq!(k.len(), positions * self.kv_width());
+        if self.position == PositionKind::Rope {
+            Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                .expect("model RoPE shape matches config")
+                .apply_grouped_qk(q, k, positions, self.cfg.n_head, self.n_kv_head)
+                .expect("grouped model Q/K shapes match RoPE contract");
         }
     }
 
@@ -485,35 +604,194 @@ impl Gpt {
         dk: &mut [f32],
         positions: usize,
     ) {
-        match self.position {
-            PositionKind::LearnedAbsolute => {
-                let positional = LearnedAbsolute::new(
-                    &self.pos_emb,
-                    self.cfg.block,
-                    self.cfg.n_embd,
-                )
-                .expect("model positional storage matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match positional contract");
+        if self.n_kv_head == self.cfg.n_head {
+            match self.position {
+                PositionKind::LearnedAbsolute => {
+                    let positional = LearnedAbsolute::new(
+                        &self.pos_emb,
+                        self.cfg.block,
+                        self.cfg.n_embd,
+                    )
+                    .expect("model positional storage matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match positional contract");
+                }
+                PositionKind::Rope => {
+                    let positional =
+                        Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model RoPE shape matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match RoPE contract");
+                }
+                PositionKind::Alibi => {
+                    let positional =
+                        Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                            .expect("model ALiBi shape matches config");
+                    positional
+                        .backward_qk(dq, dk, positions, self.cfg.n_head)
+                        .expect("model Q/K gradient shapes match ALiBi contract");
+                }
             }
-            PositionKind::Rope => {
-                let positional =
-                    Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model RoPE shape matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match RoPE contract");
-            }
-            PositionKind::Alibi => {
-                let positional =
-                    Alibi::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
-                        .expect("model ALiBi shape matches config");
-                positional
-                    .backward_qk(dq, dk, positions, self.cfg.n_head)
-                    .expect("model Q/K gradient shapes match ALiBi contract");
-            }
+            return;
         }
+
+        assert_eq!(dq.len(), positions * self.cfg.n_embd);
+        assert_eq!(dk.len(), positions * self.kv_width());
+        if self.position == PositionKind::Rope {
+            Rotary::new(self.cfg.block, self.cfg.n_embd, self.cfg.n_head)
+                .expect("model RoPE shape matches config")
+                .backward_grouped_qk(
+                    dq,
+                    dk,
+                    positions,
+                    self.cfg.n_head,
+                    self.n_kv_head,
+                )
+                .expect("grouped model Q/K gradient shapes match RoPE contract");
+        }
+    }
+
+    fn attention_eval_current(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        tokens: usize,
+    ) -> Vec<f32> {
+        if self.n_kv_head == self.cfg.n_head {
+            return attention_eval(
+                q,
+                k,
+                v,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                self.position,
+            );
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        let mut out = vec![0.0; tokens * self.cfg.n_embd];
+        let mut scores = vec![0.0; tokens];
+        let slopes = if self.position == PositionKind::Alibi {
+            Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
+        } else {
+            None
+        };
+        OPTIMIZED_ATTENTION
+            .forward_eval_grouped(
+                q,
+                k,
+                v,
+                shape,
+                slopes.as_deref(),
+                &mut out,
+                &mut scores,
+            )
+            .expect("grouped attention eval shapes match model");
+        out
+    }
+
+    fn attention_forward_current(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        tokens: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        if self.n_kv_head == self.cfg.n_head {
+            return attention_forward(
+                q,
+                k,
+                v,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                self.position,
+            );
+        }
+        let shape = GroupedAttentionShape {
+            tokens,
+            width: self.cfg.n_embd,
+            heads: self.cfg.n_head,
+            kv_heads: self.n_kv_head,
+        };
+        let mut out = vec![0.0; tokens * self.cfg.n_embd];
+        let mut probs = vec![0.0; shape.probs_len().expect("validated grouped attention shape")];
+        let slopes = if self.position == PositionKind::Alibi {
+            Some(alibi_slopes(self.cfg.n_head).expect("validated ALiBi heads"))
+        } else {
+            None
+        };
+        OPTIMIZED_ATTENTION
+            .forward_cached_grouped(
+                q,
+                k,
+                v,
+                shape,
+                slopes.as_deref(),
+                &mut out,
+                &mut probs,
+            )
+            .expect("grouped attention forward shapes match model");
+        (out, probs)
+    }
+
+    fn attention_backward_current(
+        &self,
+        dout: &[f32],
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        probs: &[f32],
+        tokens: usize,
+        dq: &mut [f32],
+        dk: &mut [f32],
+        dv: &mut [f32],
+        dp: &mut [f32],
+    ) {
+        if self.n_kv_head == self.cfg.n_head {
+            attention_backward_into(
+                dout,
+                q,
+                k,
+                v,
+                probs,
+                tokens,
+                self.cfg.n_embd,
+                self.cfg.n_head,
+                dq,
+                dk,
+                dv,
+                dp,
+            );
+            return;
+        }
+        OPTIMIZED_ATTENTION
+            .backward_grouped(
+                dout,
+                q,
+                k,
+                v,
+                probs,
+                GroupedAttentionShape {
+                    tokens,
+                    width: self.cfg.n_embd,
+                    heads: self.cfg.n_head,
+                    kv_heads: self.n_kv_head,
+                },
+                dq,
+                dk,
+                dv,
+                dp,
+            )
+            .expect("grouped attention backward shapes match model");
     }
 
     pub fn collect_params(&self) -> Vec<f32> {
@@ -575,9 +853,11 @@ impl Gpt {
 
     /// Create an empty per-session KV cache matching this model.
     pub fn new_kv_cache(&self) -> KvCache {
-        KvCache::new(
+        KvCache::new_with_heads(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )
@@ -591,9 +871,11 @@ impl Gpt {
         tokens: &[usize],
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for(
+        cache.validate_for_heads(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )?;
@@ -628,9 +910,11 @@ impl Gpt {
         token: usize,
         cache: &mut KvCache,
     ) -> Result<Vec<f32>, String> {
-        cache.validate_for(
+        cache.validate_for_heads(
             self.cfg.n_layer,
-            self.cfg.n_embd,
+            self.kv_width(),
+            self.cfg.n_head,
+            self.n_kv_head,
             self.cfg.block,
             self.position,
         )?;
@@ -1108,21 +1392,20 @@ impl Gpt {
             matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
 
             scratch.reset();
+            let kv_width = self.kv_width();
             let dq_slot = scratch.alloc(td);
-            let dk_slot = scratch.alloc(td);
-            let dv_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(t * kv_width);
+            let dv_slot = scratch.alloc(t * kv_width);
             let dp_slot = scratch.alloc(t);
             {
                 let (dq, dk, dv, dp) = scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
-                attention_backward_into(
+                self.attention_backward_current(
                     dx,
                     &c.q,
                     &c.k,
                     &c.v,
                     &c.probs,
                     t,
-                    d,
-                    self.cfg.n_head,
                     dq,
                     dk,
                     dv,
@@ -1131,12 +1414,12 @@ impl Gpt {
                 self.backward_position_qk(dq, dk, t);
 
                 matmul_grad_b(&c.h1, t, d, dq, d, &mut bg.wq);
-                matmul_grad_b(&c.h1, t, d, dk, d, &mut bg.wk);
-                matmul_grad_b(&c.h1, t, d, dv, d, &mut bg.wv);
+                matmul_grad_b(&c.h1, t, d, dk, kv_width, &mut bg.wk);
+                matmul_grad_b(&c.h1, t, d, dv, kv_width, &mut bg.wv);
 
                 matmul_b_t_into(dq, t, d, &b.wq, d, dx);
-                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
-                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+                matmul_b_t_add_into(dk, t, kv_width, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, kv_width, &b.wv, d, dx);
             }
 
             scratch.reset();
@@ -1368,22 +1651,21 @@ impl Gpt {
             matmul_b_t_into(dproj, t, d, &b.wo, d, dx);
 
             scratch.reset();
+            let kv_width = self.kv_width();
             let dq_slot = scratch.alloc(td);
-            let dk_slot = scratch.alloc(td);
-            let dv_slot = scratch.alloc(td);
+            let dk_slot = scratch.alloc(t * kv_width);
+            let dv_slot = scratch.alloc(t * kv_width);
             let dp_slot = scratch.alloc(t);
             {
                 let (dq, dk, dv, dp) =
                     scratch.get4_mut(dq_slot, dk_slot, dv_slot, dp_slot);
-                attention_backward_into(
+                self.attention_backward_current(
                     dx,
                     &c.q,
                     &c.k,
                     &c.v,
                     &c.probs,
                     t,
-                    d,
-                    self.cfg.n_head,
                     dq,
                     dk,
                     dv,
@@ -1392,12 +1674,12 @@ impl Gpt {
                 self.backward_position_qk(dq, dk, t);
 
                 matmul_grad_b_add_reference(&c.h1, t, d, dq, d, &mut bg.wq);
-                matmul_grad_b_add_reference(&c.h1, t, d, dk, d, &mut bg.wk);
-                matmul_grad_b_add_reference(&c.h1, t, d, dv, d, &mut bg.wv);
+                matmul_grad_b_add_reference(&c.h1, t, d, dk, kv_width, &mut bg.wk);
+                matmul_grad_b_add_reference(&c.h1, t, d, dv, kv_width, &mut bg.wv);
 
                 matmul_b_t_into(dq, t, d, &b.wq, d, dx);
-                matmul_b_t_add_into(dk, t, d, &b.wk, d, dx);
-                matmul_b_t_add_into(dv, t, d, &b.wv, d, dx);
+                matmul_b_t_add_into(dk, t, kv_width, &b.wk, d, dx);
+                matmul_b_t_add_into(dv, t, kv_width, &b.wv, d, dx);
             }
 
             scratch.reset();
@@ -1508,37 +1790,70 @@ impl Gpt {
         };
         let mut staged = Vec::with_capacity(self.blocks.len());
 
+        let kv_width = self.kv_width();
         for (layer_index, b) in self.blocks.iter().enumerate() {
             let h1 = normalization_eval(self.normalization, &x, 1, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, 1, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, 1, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, 1, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, 1, d, &b.wk, kv_width);
+            let v = matmul_with_backend(backend, &h1, 1, d, &b.wv, kv_width);
 
             if self.position == PositionKind::Rope {
-                Rotary::new(self.cfg.block, d, self.cfg.n_head)
-                    .map_err(|e| e.to_string())?
-                    .apply_qk_at_position(&mut q, &mut k, position, self.cfg.n_head)
+                let rotary = Rotary::new(self.cfg.block, d, self.cfg.n_head)
                     .map_err(|e| e.to_string())?;
+                if self.n_kv_head == self.cfg.n_head {
+                    rotary
+                        .apply_qk_at_position(&mut q, &mut k, position, self.cfg.n_head)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    rotary
+                        .apply_grouped_qk_at_position(
+                            &mut q,
+                            &mut k,
+                            position,
+                            self.cfg.n_head,
+                            self.n_kv_head,
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
             }
 
             let (history_k, history_v) = cache.history(layer_index)?;
             let mut att = vec![0.0; d];
             let mut scores = vec![0.0; position + 1];
-            OPTIMIZED_ATTENTION
-                .forward_decode(
-                    &q,
-                    history_k,
-                    history_v,
-                    &k,
-                    &v,
-                    position,
-                    d,
-                    self.cfg.n_head,
-                    head_slopes.as_deref(),
-                    &mut att,
-                    &mut scores,
-                )
-                .map_err(|e| e.to_string())?;
+            if self.n_kv_head == self.cfg.n_head {
+                OPTIMIZED_ATTENTION
+                    .forward_decode(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            } else {
+                OPTIMIZED_ATTENTION
+                    .forward_decode_grouped(
+                        &q,
+                        history_k,
+                        history_v,
+                        &k,
+                        &v,
+                        position,
+                        d,
+                        self.cfg.n_head,
+                        self.n_kv_head,
+                        head_slopes.as_deref(),
+                        &mut att,
+                        &mut scores,
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
 
             let mut proj = matmul_with_backend(backend, &att, 1, d, &b.wo, d);
             let mut r1 = x;
@@ -1591,10 +1906,10 @@ impl Gpt {
         for b in &self.blocks {
             let h1 = normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let att = attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+            let att = self.attention_eval_current(&q, &k, &v, t);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
@@ -1656,11 +1971,10 @@ impl Gpt {
                 let h1 =
                     normalization_eval(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
                 let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
                 self.apply_position_to_qk(&mut q, &mut k, t);
-                let att =
-                    attention_eval(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let att = self.attention_eval_current(&q, &k, &v, t);
                 let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
                 let mut r1 = x;
                 add_inplace(&mut r1, &proj);
@@ -1710,11 +2024,10 @@ impl Gpt {
                 let (h1, ln1) =
                     normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
                 let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+                let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+                let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
                 self.apply_position_to_qk(&mut q, &mut k, t);
-                let (att, probs) =
-                    attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+                let (att, probs) = self.attention_forward_current(&q, &k, &v, t);
                 let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
                 let mut r1 = x;
                 add_inplace(&mut r1, &proj);
@@ -1785,11 +2098,10 @@ impl Gpt {
         for b in &self.blocks {
             let (h1, ln1) = normalization_forward(self.normalization, &x, t, d, &b.ln1_g, &b.ln1_b);
             let mut q = matmul_with_backend(backend, &h1, t, d, &b.wq, d);
-            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, d);
-            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, d);
+            let mut k = matmul_with_backend(backend, &h1, t, d, &b.wk, self.kv_width());
+            let v = matmul_with_backend(backend, &h1, t, d, &b.wv, self.kv_width());
             self.apply_position_to_qk(&mut q, &mut k, t);
-            let (att, probs) =
-                attention_forward(&q, &k, &v, t, d, self.cfg.n_head, self.position);
+            let (att, probs) = self.attention_forward_current(&q, &k, &v, t);
             let mut proj = matmul_with_backend(backend, &att, t, d, &b.wo, d);
             let mut r1 = x;
             add_inplace(&mut r1, &proj);
@@ -1838,7 +2150,7 @@ impl Gpt {
             tok_emb: vec![0.0; self.tok_emb.len()],
             pos_emb: vec![0.0; self.pos_emb.len()],
             blocks: (0..self.cfg.n_layer)
-                .map(|_| zeros_block_grad(self.cfg))
+                .map(|_| zeros_block_grad(self.cfg, self.n_kv_head))
                 .collect(),
             ln_f_g: vec![0.0; self.ln_f_g.len()],
             ln_f_b: vec![0.0; self.ln_f_b.len()],
@@ -1849,7 +2161,9 @@ impl Gpt {
 
     fn block_param_count(&self) -> usize {
         let d = self.cfg.n_embd;
-        4 * d * d
+        let kv_width = self.kv_width();
+        2 * d * d
+            + 2 * d * kv_width
             + 2 * d
             + 2 * d
             + d * self.cfg.n_ff
@@ -1859,14 +2173,8 @@ impl Gpt {
     }
 
     fn param_count(&self) -> usize {
-        let per_block = self.block_param_count();
-        self.tok_emb.len()
-            + self.pos_emb.len()
-            + self.cfg.n_layer * per_block
-            + self.ln_f_g.len()
-            + self.ln_f_b.len()
-            + self.w_out.len()
-            + self.b_out.len()
+        Self::expected_parameter_count(self.cfg, self.n_kv_head)
+            .expect("validated model shape has finite parameter count")
     }
 }
 
@@ -2408,7 +2716,7 @@ mod tests {
         CpuBackend, Gpt, NormalizationKind, PositionKind, RecurrentConfig,
     };
     use rand::rngs::StdRng;
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
 
     #[test]
     fn explicit_layernorm_policy_is_bit_exact_with_historical_default() {
@@ -2960,6 +3268,77 @@ mod tests {
         }
         assert_eq!(CpuBackend::Optimized.id(), BackendId::OptimizedCpu);
         assert_eq!(CpuBackend::Scalar.id(), BackendId::ScalarCpu);
+    }
+
+    #[test]
+    fn grouped_kv_constructor_preserves_mha_default_and_compacts_parameters() {
+        let cfg = Config {
+            vocab: 11,
+            n_embd: 8,
+            n_head: 4,
+            n_layer: 2,
+            block: 8,
+            n_ff: 16,
+        };
+        let mut rng_a = StdRng::seed_from_u64(0xA11CE_1401);
+        let mut rng_b = StdRng::seed_from_u64(0xA11CE_1401);
+        let mha = Gpt::new(cfg, &mut rng_a);
+        let explicit_mha = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            cfg.n_head,
+            &mut rng_b,
+        );
+        assert_eq!(mha.collect_params(), explicit_mha.collect_params());
+        assert_eq!(mha.n_kv_head(), cfg.n_head);
+        assert_eq!(mha.kv_width(), cfg.n_embd);
+
+        let mut rng_gqa = StdRng::seed_from_u64(0xA11CE_1401);
+        let gqa = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            2,
+            &mut rng_gqa,
+        );
+        assert_eq!(gqa.n_kv_head(), 2);
+        assert_eq!(gqa.kv_width(), 4);
+        assert!(gqa.collect_params().len() < mha.collect_params().len());
+
+        let mut rng_mqa = StdRng::seed_from_u64(0xA11CE_1401);
+        let mqa = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            1,
+            &mut rng_mqa,
+        );
+        assert_eq!(mqa.kv_width(), 2);
+        assert!(mqa.collect_params().len() < gqa.collect_params().len());
+
+        // Compact variants consume the same RNG budget as MHA, so everything
+        // initialized after Wk/Wv remains directly comparable.
+        let mut rng_mha_next = StdRng::seed_from_u64(0xA11CE_1402);
+        let mha_next = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            4,
+            &mut rng_mha_next,
+        );
+        let after_mha: u64 = rng_mha_next.gen();
+        let mut rng_mqa_next = StdRng::seed_from_u64(0xA11CE_1402);
+        let _mqa_next = Gpt::new_with_attention_heads(
+            cfg,
+            NormalizationKind::LayerNorm,
+            PositionKind::LearnedAbsolute,
+            1,
+            &mut rng_mqa_next,
+        );
+        let after_mqa: u64 = rng_mqa_next.gen();
+        assert_eq!(after_mqa, after_mha);
+        assert_eq!(mha_next.n_kv_head(), 4);
     }
 
     #[test]
