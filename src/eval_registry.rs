@@ -395,6 +395,7 @@ impl Baseline {
         nonempty("baseline id", &self.id)?;
         nonempty("baseline capability", &self.capability)?;
         nonempty("baseline created_date", &self.created_date)?;
+        validate_iso_date(&self.created_date)?;
         nonempty("baseline code_revision", &self.code_revision)?;
         nonempty("baseline model_id", &self.model_id)?;
         if self.values.len() != suite.metrics.len() {
@@ -817,6 +818,39 @@ pub fn smoke_baseline(suite: SuiteRef, version: SemVer) -> Baseline {
     }
 }
 
+fn validate_iso_date(value: &str) -> Result<(), RegistryError> {
+    let bytes = value.as_bytes();
+    let shape = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(i, byte)| i == 4 || i == 7 || byte.is_ascii_digit());
+    if !shape {
+        return Err(RegistryError::InvalidDefinition(
+            "baseline created_date must be YYYY-MM-DD",
+        ));
+    }
+    let year = value[0..4].parse::<u32>().unwrap();
+    let month = value[5..7].parse::<u32>().unwrap();
+    let day = value[8..10].parse::<u32>().unwrap();
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if day == 0 || day > max_day {
+        return Err(RegistryError::InvalidDefinition(
+            "baseline created_date must be a valid calendar date",
+        ));
+    }
+    Ok(())
+}
+
 fn nonempty(what: &'static str, value: &str) -> Result<(), RegistryError> {
     if value.trim().is_empty() {
         Err(RegistryError::EmptyField(what))
@@ -1128,6 +1162,24 @@ mod tests {
             registry.register_baseline(wrong),
             Err(RegistryError::SuiteFingerprintMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn baseline_date_is_canonical_and_calendar_valid() {
+        let (mut registry, suite_ref) = registered_smoke();
+
+        for bad in ["2026-9-22", "22-09-2026", "2026-02-30", "2025-02-29"] {
+            let mut baseline = smoke_baseline(suite_ref.clone(), SemVer::new(1, 0, 0));
+            baseline.created_date = bad.to_string();
+            assert!(matches!(
+                registry.register_baseline(baseline),
+                Err(RegistryError::InvalidDefinition(_))
+            ));
+        }
+
+        let mut leap = smoke_baseline(suite_ref, SemVer::new(1, 0, 0));
+        leap.created_date = "2024-02-29".to_string();
+        registry.register_baseline(leap).unwrap();
     }
 
     #[test]
