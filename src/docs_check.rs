@@ -778,6 +778,7 @@ mod tests {
         assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -811,6 +812,7 @@ mod tests {
             "CODE_SUITE_SCHEMA_VERSION = 1",
             "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
             "TOOL_REGISTRY_SCHEMA_VERSION = 1",
+            "PLAN_SCHEMA_VERSION = 1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -865,6 +867,24 @@ mod tests {
         }
         assert!(readme().contains("docs/tool-registry.md"));
         assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn planner_doc_matches_contract() {
+        let text = docs("planner.md");
+        for needle in [
+            "PLAN_SCHEMA_VERSION = 1",
+            "Plan::canonical()",
+            "ReferencePlanner::replan",
+            "Budget exhaustion fails closed",
+            "direct strategy does not replan",
+            "full executor state machine/rollback (#114)",
+            "does not make the planner the default",
+        ] {
+            assert!(text.contains(needle), "planner.md missing {needle}");
+        }
+        assert!(readme().contains("docs/planner.md"));
+        assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
     }
 
     #[test]
