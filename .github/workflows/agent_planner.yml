@@ -1,0 +1,52 @@
+name: Agent Planner
+
+on:
+  pull_request:
+    paths:
+      - "src/planner.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_planner_bench.rs"
+      - "src/docs_check.rs"
+      - "docs/planner.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/agent_planner.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  planner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Planner contract tests
+        run: cargo test --lib planner::tests -- --nocapture
+
+      - name: Controlled direct-vs-planner suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_planner_bench | tee /tmp/planner.txt
+          grep -q '^planner_protocol | schema=1 ' /tmp/planner.txt
+          test "$(grep -c '^planner_case |' /tmp/planner.txt)" -eq 4
+          test "$(grep -c '^planner_plan |' /tmp/planner.txt)" -eq 2
+          grep -q 'id=lookup strategy=direct success=true' /tmp/planner.txt
+          grep -q 'id=lookup strategy=planner success=true' /tmp/planner.txt
+          grep -q 'id=recover strategy=direct success=false' /tmp/planner.txt
+          grep -q 'id=recover strategy=planner success=true' /tmp/planner.txt
+          grep -q 'id=recover strategy=planner .*replans=1' /tmp/planner.txt
+          grep -q '^planner_summary | direct_success=1/2 planner_success=2/2 .*no_auto_promotion=true$' /tmp/planner.txt
+
+      - name: Existing Agent contracts
+        run: |
+          cargo test --lib tool_protocol::tests -- --nocapture
+          cargo test --lib agent_permissions::tests -- --nocapture
+          cargo test --lib tool_registry::tests -- --nocapture
+          cargo test --lib agent_eval::tests -- --nocapture
+
+      - name: Full suite
+        run: cargo test --all-targets
