@@ -1,0 +1,31 @@
+name: Agent Eval
+
+on:
+  pull_request:
+    paths:
+      - "src/agent_eval.rs"
+      - "src/lib.rs"
+      - "src/bin/auralis_agent_eval_bench.rs"
+      - "docs/agent-eval.md"
+      - ".github/workflows/agent_eval.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  agent-eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Agent eval contracts
+        run: cargo test --lib agent_eval::tests -- --nocapture
+      - name: Smoke bench
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_agent_eval_bench -- smoke | tee /tmp/agent-eval.txt
+          grep -q '^agent_eval_protocol | schema=1 seed=47659918' /tmp/agent-eval.txt
+          grep -q 'exact_pass=1.000000' /tmp/agent-eval.txt
+          grep -q '^agent_eval_regression | profile=smoke exact_pass=0.000000$' /tmp/agent-eval.txt
+          grep -q '^agent_eval_gate | replay_no_effects=true redaction=true isolated_regression=true$' /tmp/agent-eval.txt
