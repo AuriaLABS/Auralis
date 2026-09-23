@@ -137,3 +137,14 @@ cargo run --release --bin auralis_code_suite_bench -- both
 ```
 
 It executes #131 standalone Rust fixtures through a confined single-expression patch dialect, `rustc --test` and protected tests. It publishes exact/compile/test pass ratios, compiler/test latency, failure taxonomy and compiler-error classes. Timing is descriptive; successful patch application, compilation and protected tests are the gate.
+
+
+## Research integrated capability battery
+
+The `capability-suite` entry runs:
+
+```
+cargo run --release --bin auralis_capability_suite_bench -- smoke
+```
+
+It composes the #130/#131/#135 child suites under #75, reports each capability separately, keeps agent reserved until #47, and proves an isolated reasoning regression cannot be hidden by exact code/memory scores. The descriptive mean is published and is not a gate.
