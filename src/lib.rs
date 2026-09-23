@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_eval;
+pub mod agent_permissions;
 pub mod arena;
 pub mod architecture;
 pub mod attention;
