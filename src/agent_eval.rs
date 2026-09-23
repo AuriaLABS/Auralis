@@ -121,20 +121,20 @@ impl SessionTrace {
     pub fn canonical(&self) -> String {
         let mut out = format!(
             "session={}|schema={}|commit={}|config={}|model={}|checkpoint={}\n",
-            self.session_id,
+            trace_escape(&self.session_id),
             self.schema_version,
-            self.commit,
-            self.config,
-            self.model,
-            self.checkpoint
+            trace_escape(&self.commit),
+            trace_escape(&self.config),
+            trace_escape(&self.model),
+            trace_escape(&self.checkpoint)
         );
         for event in &self.events {
             out.push_str(&format!(
                 "{}|{}|{}|{}|{}\n",
-                event.step_id,
-                event.call_id,
+                trace_escape(&event.step_id),
+                trace_escape(&event.call_id),
                 event.kind.as_str(),
-                event.payload,
+                trace_escape(&event.payload),
                 event.elapsed_ms
             ));
         }
@@ -205,12 +205,31 @@ impl Error for AgentEvalError {}
 
 pub fn redact(value: &str) -> String {
     let mut out = value.to_string();
-    for secret in ["sk-live-", "password=", "token=", "SECRET"] {
-        if out.contains(secret) {
-            out = out.replace(secret, "[REDACTED]");
+    for marker in ["sk-live-", "password=", "token="] {
+        while let Some(start) = out.find(marker) {
+            let tail = &out[start..];
+            let end = tail
+                .char_indices()
+                .find_map(|(offset, ch)| {
+                    if offset > 0 && ch.is_whitespace() {
+                        Some(start + offset)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(out.len());
+            out.replace_range(start..end, "[REDACTED]");
         }
     }
-    out
+    out.replace("SECRET", "[REDACTED]")
+}
+
+fn trace_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn goal_key(goal: &str, fallback: &str) -> String {
@@ -533,8 +552,41 @@ mod tests {
     }
 
     #[test]
-    fn secrets_are_redacted() {
-        assert_eq!(redact("token=abc SECRET"), "[REDACTED]abc [REDACTED]");
+    fn secrets_are_redacted_without_leaking_values() {
+        let redacted = redact(
+            "token=abc123 password=hunter2 sk-live-supersecret SECRET visible",
+        );
+        assert_eq!(
+            redacted,
+            "[REDACTED] [REDACTED] [REDACTED] [REDACTED] visible"
+        );
+        for leaked in ["abc123", "hunter2", "supersecret", "SECRET"] {
+            assert!(!redacted.contains(leaked), "secret leaked: {leaked}");
+        }
+    }
+
+    #[test]
+    fn canonical_trace_escapes_record_delimiters() {
+        let trace = SessionTrace {
+            session_id: "s|1".to_string(),
+            schema_version: AGENT_EVAL_SCHEMA_VERSION,
+            commit: "c\n2".to_string(),
+            config: "cfg".to_string(),
+            model: "mock".to_string(),
+            checkpoint: "none".to_string(),
+            events: vec![TraceEvent {
+                step_id: "step|1".to_string(),
+                call_id: "call\n1".to_string(),
+                kind: TraceKind::Message,
+                payload: "line1\nline2|tail".to_string(),
+                elapsed_ms: 1,
+            }],
+        };
+        let canonical = trace.canonical();
+        assert!(canonical.contains("session=s\\|1"));
+        assert!(canonical.contains("commit=c\\n2"));
+        assert!(canonical.contains("step\\|1|call\\n1|message|line1\\nline2\\|tail|1"));
+        assert_eq!(canonical.lines().count(), 2);
     }
 
     #[test]
