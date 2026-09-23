@@ -265,6 +265,15 @@ impl AuthorizedToolRuntime {
         &self.audit
     }
 
+    pub fn decision_for_call(&self, call_id: &str) -> Option<&AuthorizationDecision> {
+        self.audit.iter().rev().find(|decision| decision.call_id == call_id)
+    }
+
+    pub fn explain_call(&self, call_id: &str) -> Option<String> {
+        self.decision_for_call(call_id)
+            .map(AuthorizationDecision::canonical)
+    }
+
     pub fn clear_audit(&mut self) {
         self.audit.clear();
     }
@@ -685,6 +694,22 @@ mod tests {
             runtime.audit()[0].policy_fingerprint,
             runtime.audit()[1].policy_fingerprint
         );
+    }
+
+    #[test]
+    fn authorization_can_be_explained_by_stable_call_id() {
+        let policy = PermissionPolicy::default().allow_tool("fixture.read", 1);
+        let mut runtime =
+            AuthorizedToolRuntime::new(vec![read_definition()], policy).unwrap();
+        let mut executor =
+            DeterministicMockExecutor::new(MockMode::FixedResult("ok".into()));
+        let req = request("fixture.read", "key", "x");
+        let _ = runtime.invoke(&req, false, &mut executor);
+        let explanation = runtime.explain_call(&req.call_id).unwrap();
+        assert!(explanation.contains("outcome=allow"));
+        assert!(explanation.contains("reason=allowed-tool"));
+        assert!(explanation.contains(&req.call_id));
+        assert!(runtime.explain_call("missing-call").is_none());
     }
 
     #[test]
