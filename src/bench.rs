@@ -209,6 +209,7 @@ pub const BENCHES: &[BenchSpec] = &[
     },
 ];
 
+
 pub const INTERNAL_ONLY_BINS: &[&str] = &[
     "auralis_bench_result_smoke",
     "auralis_workspace_profile",
@@ -268,11 +269,7 @@ impl BenchSpec {
         } else {
             format!(
                 "cargo run --release{} --bin {} -- {}",
-                if self.requires_alloc_profile {
-                    " --features alloc-profile"
-                } else {
-                    ""
-                },
+                if self.requires_alloc_profile { " --features alloc-profile" } else { "" },
                 self.bin,
                 self.default_args
             )
@@ -292,7 +289,7 @@ impl BenchSpec {
 
     pub fn json(&self) -> String {
         format!(
-            "{{\"id\":\"{}\",\"bin\":\"{}\",\"kind\":\"{}\",\"summary\":\"{}\",\"default_args\":\"{}\",\"requires_alloc_profile":{}}}",
+            "{{\"id\":\"{}\",\"bin\":\"{}\",\"kind\":\"{}\",\"summary\":\"{}\",\"default_args\":\"{}\",\"requires_alloc_profile\":{}}}",
             json_escape(self.id),
             json_escape(self.bin),
             json_escape(self.kind),
