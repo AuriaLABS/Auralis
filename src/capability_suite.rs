@@ -1,3 +1,8 @@
+use crate::agent_eval::{
+    generate_suite as generate_agent_suite, score_suite as score_agent,
+    suite_definition as agent_suite, AgentEvalProfile, AgentReport,
+    AGENT_EVAL_SCHEMA_VERSION, AGENT_EVAL_SEED,
+};
 use crate::code_suite::{
     evaluate_submissions, generate_suite as generate_code_suite,
     intentional_regression_submissions, oracle_submissions, suite_definition as code_suite,
@@ -23,7 +28,7 @@ use crate::reasoning_suite::{
 use std::error::Error;
 use std::fmt;
 
-pub const CAPABILITY_SUITE_SCHEMA_VERSION: u32 = 1;
+pub const CAPABILITY_SUITE_SCHEMA_VERSION: u32 = 2;
 pub const CAPABILITY_SUITE_SEED: u64 = 75_659_918;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +63,13 @@ impl CapabilityProfile {
         match self {
             Self::Smoke => CodeSuiteProfile::Smoke,
             Self::Full => CodeSuiteProfile::Full,
+        }
+    }
+
+    pub fn agent(self) -> AgentEvalProfile {
+        match self {
+            Self::Smoke => AgentEvalProfile::Smoke,
+            Self::Full => AgentEvalProfile::Full,
         }
     }
 }
@@ -145,16 +157,12 @@ impl CapabilityBatteryReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapabilitySuiteError {
     Child(&'static str),
-    AgentNotIntegrated,
 }
 
 impl fmt::Display for CapabilitySuiteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Child(name) => write!(f, "child suite failed: {name}"),
-            Self::AgentNotIntegrated => {
-                write!(f, "agent capability is reserved until #47 traces/replay exist")
-            }
         }
     }
 }
@@ -165,15 +173,18 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
     let reasoning = reasoning_suite(profile.reasoning(), REASONING_SUITE_SEED);
     let code = code_suite(profile.code(), CODE_SUITE_SEED);
     let memory = memory_suite(profile.memory(), MEMORY_SUITE_SEED);
+    let agent = agent_suite(profile.agent(), AGENT_EVAL_SEED);
     let sample_count = reasoning.dataset.sample_count
         + code.dataset.sample_count
-        + memory.dataset.sample_count;
+        + memory.dataset.sample_count
+        + agent.dataset.sample_count;
     let fingerprint = fingerprint_bytes(
         format!(
-            "capability|reasoning={:016x}|code={:016x}|memory={:016x}|agent=blocked-47\n",
+            "capability|reasoning={:016x}|code={:016x}|memory={:016x}|agent={:016x}\n",
             reasoning.dataset.fixture_fingerprint,
             code.dataset.fixture_fingerprint,
-            memory.dataset.fixture_fingerprint
+            memory.dataset.fixture_fingerprint,
+            agent.dataset.fixture_fingerprint
         )
         .as_bytes(),
     );
@@ -182,14 +193,14 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
         id: format!("capability-battery-{}", profile.as_str()),
         version: SemVer::new(1, 0, 0),
         description: format!(
-            "modular #75 battery over reasoning/code/memory {}; agent reserved until #47",
+            "modular #75 battery over reasoning/code/memory/agent {}",
             profile.as_str()
         ),
         dataset: DatasetMetadata {
             id: "auralis-capability-battery".to_string(),
             revision: "1".to_string(),
             split: profile.as_str().to_string(),
-            population: "composed child suites; agent profile blocked".to_string(),
+            population: "composed reasoning/code/memory/agent child suites".to_string(),
             fixture_fingerprint: fingerprint,
             sample_count,
         },
@@ -197,14 +208,7 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
             child_task("reasoning", TaskKind::Reasoning, &reasoning),
             child_task("code", TaskKind::Code, &code),
             child_task("memory", TaskKind::Memory, &memory),
-            EvaluationTask {
-                id: "capability.agent.reserved".to_string(),
-                version: SemVer::new(1, 0, 0),
-                kind: TaskKind::Agent,
-                description: "reserved until #47 trace/replay/agent suite exists".to_string(),
-                fixture_fingerprint: fingerprint_bytes(b"agent-reserved-issue-47"),
-                fixture_count: 1,
-            },
+            child_task("agent", TaskKind::Agent, &agent),
         ],
         metrics: battery_metrics(),
         seed_policy: SeedPolicy {
@@ -213,6 +217,7 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
                 REASONING_SUITE_SEED,
                 CODE_SUITE_SEED,
                 MEMORY_SUITE_SEED,
+                AGENT_EVAL_SEED,
             ],
         },
         limits: ResourceLimits {
@@ -220,10 +225,12 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
             max_steps: 1,
             max_tokens: reasoning.limits.max_tokens
                 + code.limits.max_tokens
-                + memory.limits.max_tokens,
+                + memory.limits.max_tokens
+                + agent.limits.max_tokens,
             max_wall_ms: reasoning.limits.max_wall_ms
                 + code.limits.max_wall_ms
-                + memory.limits.max_wall_ms,
+                + memory.limits.max_wall_ms
+                + agent.limits.max_wall_ms,
         },
     }
 }
@@ -244,7 +251,7 @@ fn battery_metrics() -> Vec<EvaluationMetric> {
         ("reasoning.exact-pass", "ratio", MetricDirection::HigherIsBetter),
         ("code.exact-pass", "ratio", MetricDirection::HigherIsBetter),
         ("memory.exact-pass", "ratio", MetricDirection::HigherIsBetter),
-        ("agent.status", "enum", MetricDirection::ExactTarget),
+        ("agent.exact-pass", "ratio", MetricDirection::HigherIsBetter),
         ("executed-capabilities", "count", MetricDirection::ExactTarget),
         ("descriptive-mean-executed", "ratio", MetricDirection::HigherIsBetter),
     ]
@@ -269,9 +276,6 @@ pub fn evaluate_isolated_regression(
     profile: CapabilityProfile,
     broken: CapabilityKind,
 ) -> Result<CapabilityBatteryReport, CapabilitySuiteError> {
-    if broken == CapabilityKind::Agent {
-        return Err(CapabilitySuiteError::AgentNotIntegrated);
-    }
     evaluate_with(profile, CapabilityMode::Regress(broken))
 }
 
@@ -288,26 +292,12 @@ fn evaluate_with(
     let reasoning = run_reasoning(profile, matches!(mode, CapabilityMode::Regress(CapabilityKind::Reasoning)))?;
     let code = run_code(profile, matches!(mode, CapabilityMode::Regress(CapabilityKind::Code)))?;
     let memory = run_memory(profile, matches!(mode, CapabilityMode::Regress(CapabilityKind::Memory)))?;
+    let agent = run_agent(profile, matches!(mode, CapabilityMode::Regress(CapabilityKind::Agent)))?;
 
     Ok(CapabilityBatteryReport {
         profile,
         seed: CAPABILITY_SUITE_SEED,
-        capabilities: vec![
-            reasoning,
-            code,
-            memory,
-            CapabilityScore {
-                kind: CapabilityKind::Agent,
-                status: CapabilityStatus::Blocked,
-                suite_id: "agent-reserved".to_string(),
-                suite_version: "0.0.0".to_string(),
-                schema_version: 0,
-                suite_fingerprint: 0,
-                cases: 0,
-                exact_ratio: 0.0,
-                note: "#47 traces/replay not integrated; agent is not scored".to_string(),
-            },
-        ],
+        capabilities: vec![reasoning, code, memory, agent],
     })
 }
 
@@ -381,6 +371,24 @@ fn run_memory(
     ))
 }
 
+fn run_agent(
+    profile: CapabilityProfile,
+    regress: bool,
+) -> Result<CapabilityScore, CapabilitySuiteError> {
+    let suite = agent_suite(profile.agent(), AGENT_EVAL_SEED);
+    suite.validate().map_err(|_| CapabilitySuiteError::Child("agent"))?;
+    let cases = generate_agent_suite(profile.agent(), AGENT_EVAL_SEED);
+    let (_traces, report): (_, AgentReport) =
+        score_agent(&cases, regress).map_err(|_| CapabilitySuiteError::Child("agent"))?;
+    Ok(child_score(
+        CapabilityKind::Agent,
+        &suite,
+        AGENT_EVAL_SCHEMA_VERSION,
+        cases.len(),
+        report.exact_ratio(),
+    ))
+}
+
 fn child_score(
     kind: CapabilityKind,
     suite: &EvaluationSuite,
@@ -412,18 +420,21 @@ mod tests {
     }
 
     #[test]
-    fn suite_definition_is_valid_and_keeps_agent_reserved() {
+    fn suite_definition_is_valid_and_executes_agent_child() {
         let suite = suite_definition(CapabilityProfile::Smoke);
         suite.validate().unwrap();
         assert_eq!(suite.tasks.len(), 4);
         assert_eq!(suite.metrics.len(), 6);
         assert_eq!(suite.tasks[3].kind, TaskKind::Agent);
-        assert_eq!(suite.tasks[3].fixture_count, 1);
+        assert_eq!(
+            suite.tasks[3].fixture_count,
+            generate_agent_suite(AgentEvalProfile::Smoke, AGENT_EVAL_SEED).len()
+        );
         assert!(suite.seed_policy.seeds.contains(&CAPABILITY_SUITE_SEED));
     }
 
     #[test]
-    fn smoke_oracle_executes_three_capabilities_and_blocks_agent() {
+    fn smoke_oracle_executes_all_four_capabilities() {
         let report = evaluate_oracle(CapabilityProfile::Smoke).unwrap();
         let reasoning = report.score(CapabilityKind::Reasoning).unwrap();
         let code = report.score(CapabilityKind::Code).unwrap();
@@ -432,12 +443,12 @@ mod tests {
         assert_eq!(reasoning.status, CapabilityStatus::Executed);
         assert_eq!(code.status, CapabilityStatus::Executed);
         assert_eq!(memory.status, CapabilityStatus::Executed);
-        assert_eq!(agent.status, CapabilityStatus::Blocked);
+        assert_eq!(agent.status, CapabilityStatus::Executed);
         assert_eq!(reasoning.exact_ratio, 1.0);
         assert_eq!(code.exact_ratio, 1.0);
         assert_eq!(memory.exact_ratio, 1.0);
-        assert_eq!(agent.exact_ratio, 0.0);
-        assert_eq!(report.executed_exact_ratios().len(), 3);
+        assert_eq!(agent.exact_ratio, 1.0);
+        assert_eq!(report.executed_exact_ratios().len(), 4);
     }
 
     #[test]
@@ -454,28 +465,35 @@ mod tests {
             1.0
         );
         assert_eq!(
-            report.score(CapabilityKind::Agent).unwrap().status,
-            CapabilityStatus::Blocked
+            report.score(CapabilityKind::Agent).unwrap().exact_ratio,
+            1.0
         );
     }
 
     #[test]
-    fn agent_regression_is_fail_closed() {
-        let err = evaluate_isolated_regression(CapabilityProfile::Smoke, CapabilityKind::Agent)
-            .unwrap_err();
-        assert_eq!(err, CapabilitySuiteError::AgentNotIntegrated);
+    fn isolated_agent_regression_does_not_hide_behind_other_capabilities() {
+        let report =
+            evaluate_isolated_regression(CapabilityProfile::Smoke, CapabilityKind::Agent).unwrap();
+        assert_eq!(report.score(CapabilityKind::Agent).unwrap().exact_ratio, 0.0);
+        for kind in [
+            CapabilityKind::Reasoning,
+            CapabilityKind::Code,
+            CapabilityKind::Memory,
+        ] {
+            assert_eq!(report.score(kind).unwrap().exact_ratio, 1.0);
+        }
     }
 
     #[test]
     fn docs_and_bench_match_contract() {
         let text = fs::read_to_string(root().join("docs/capability-suite.md")).unwrap();
         for needle in [
-            "CAPABILITY_SUITE_SCHEMA_VERSION = 1",
+            "CAPABILITY_SUITE_SCHEMA_VERSION = 2",
             "CAPABILITY_SUITE_SEED = 75659918",
             "evaluate_isolated_regression",
             "descriptive-mean-executed",
             "auralis_capability_suite_bench",
-            "reserved / blocked until #47",
+            "agent_eval",
         ] {
             assert!(text.contains(needle), "capability-suite.md missing {needle}");
         }
