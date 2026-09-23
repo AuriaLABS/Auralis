@@ -777,6 +777,7 @@ mod tests {
         assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
+        assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -809,6 +810,7 @@ mod tests {
             "MEMORY_SUITE_SCHEMA_VERSION = 1",
             "CODE_SUITE_SCHEMA_VERSION = 1",
             "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
+            "TOOL_REGISTRY_SCHEMA_VERSION = 1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -841,6 +843,28 @@ mod tests {
         }
         assert!(readme().contains("docs/tool-protocol.md"));
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn tool_registry_doc_matches_contract() {
+        let text = docs("tool-registry.md");
+        for needle in [
+            "TOOL_REGISTRY_SCHEMA_VERSION = 1",
+            "ToolRegistry",
+            "register_definition",
+            "unregister",
+            "resolve(name, version)",
+            "grants no authority",
+            "AuthorizedToolRuntime",
+            "ReferenceToolExecutor",
+            "unknown tool cannot reach the executor",
+            "lookup@1",
+            "No shell, network, browser",
+        ] {
+            assert!(text.contains(needle), "tool-registry.md missing {needle}");
+        }
+        assert!(readme().contains("docs/tool-registry.md"));
+        assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
     }
 
     #[test]
