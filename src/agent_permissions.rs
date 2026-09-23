@@ -439,18 +439,7 @@ impl AuthorizedToolRuntime {
 }
 
 fn request_argument_bytes(request: &ToolRequest) -> usize {
-    request
-        .arguments
-        .iter()
-        .map(|argument| {
-            argument.name.len()
-                + match &argument.value {
-                    crate::tool_protocol::ToolValue::String(value) => value.len(),
-                    crate::tool_protocol::ToolValue::Integer(_) => std::mem::size_of::<i64>(),
-                    crate::tool_protocol::ToolValue::Boolean(_) => 1,
-                }
-        })
-        .sum()
+    request.encoded_argument_bytes()
 }
 
 fn tool_identity(name: &str, version: u32) -> String {
@@ -702,6 +691,64 @@ mod tests {
         );
         assert_eq!(runtime.audit()[2].reason, AuthorizationReason::ArgumentBudget);
         assert_eq!(executor.invocations, 0);
+    }
+
+    #[test]
+    fn argument_budget_uses_canonical_encoded_bytes_for_non_string_values() {
+        let definition = ToolDefinition::new(
+            "fixture.typed",
+            1,
+            "fixture.typed",
+            false,
+            500,
+            128,
+            vec![
+                ToolArgSpec {
+                    name: "integer".into(),
+                    required: true,
+                    kind: ToolArgKind::Integer {
+                        min: i64::MIN,
+                        max: i64::MAX,
+                    },
+                },
+                ToolArgSpec {
+                    name: "flag".into(),
+                    required: true,
+                    kind: ToolArgKind::Boolean,
+                },
+            ],
+        )
+        .unwrap();
+        let request = ToolRequest::new(
+            "call:typed-budget",
+            "fixture.typed",
+            1,
+            vec![
+                ToolArgument {
+                    name: "integer".into(),
+                    value: ToolValue::Integer(i64::MIN),
+                },
+                ToolArgument {
+                    name: "flag".into(),
+                    value: ToolValue::Boolean(false),
+                },
+            ],
+        );
+        let canonical_bytes = request.encoded_argument_bytes();
+
+        let mut policy = PermissionPolicy::default().allow_tool("fixture.typed", 1);
+        policy.max_argument_bytes = canonical_bytes - 1;
+        let mut runtime = AuthorizedToolRuntime::new(vec![definition], policy).unwrap();
+        let mut executor =
+            DeterministicMockExecutor::new(MockMode::FixedResult("never".into()));
+
+        let _ = runtime.invoke(&request, false, &mut executor);
+        assert_eq!(executor.invocations, 0);
+        assert_eq!(
+            runtime.audit()[0].reason,
+            AuthorizationReason::ArgumentBudget
+        );
+        assert_eq!(runtime.audit()[0].argument_bytes, canonical_bytes);
     }
 
     #[test]
