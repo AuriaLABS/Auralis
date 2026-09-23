@@ -1,0 +1,42 @@
+name: Tool Registry
+
+on:
+  pull_request:
+    paths:
+      - "src/tool_registry.rs"
+      - "src/lib.rs"
+      - "src/tool_protocol.rs"
+      - "src/agent_permissions.rs"
+      - "src/agent_eval.rs"
+      - "src/docs_check.rs"
+      - "docs/tool-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/tool_registry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tool-registry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Registry contracts
+        run: cargo test --lib tool_registry::tests -- --nocapture
+
+      - name: Permission and agent-eval compatibility
+        run: |
+          cargo test --lib agent_permissions::tests -- --nocapture
+          cargo test --lib agent_eval::tests -- --nocapture
+
+      - name: Documentation contracts
+        run: |
+          cargo test --lib docs_check::tests::tool_registry_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Full suite
+        run: cargo test --all-targets

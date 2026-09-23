@@ -50,4 +50,5 @@ pub mod sec_path;
 pub mod tensor;
 pub mod tokenizer;
 pub mod tool_protocol;
+pub mod tool_registry;
 pub mod training;
