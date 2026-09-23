@@ -366,13 +366,15 @@ pub fn replay_case(
     }
     let exact = failure == case.expected_failure
         && (failure != FailureClass::None || answer == case.expected_answer);
+    let steps = trace.events.len();
+    let latency_ms: u64 = trace.events.iter().map(|e| e.elapsed_ms).sum();
     Ok((
         trace,
         AgentCaseScore {
             exact,
-            steps: trace.events.len(),
+            steps,
             tool_calls,
-            latency_ms: trace.events.iter().map(|e| e.elapsed_ms).sum(),
+            latency_ms,
             failure,
             redacted: true,
         },
