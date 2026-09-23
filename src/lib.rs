@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_eval;
 pub mod arena;
 pub mod architecture;
 pub mod attention;
