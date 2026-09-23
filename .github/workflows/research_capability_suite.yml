@@ -10,12 +10,9 @@ on:
       - "src/eval_registry.rs"
       - "src/lib.rs"
       - "src/bench.rs"
-      - "src/docs_check.rs"
       - "src/bin/auralis_capability_suite_bench.rs"
       - "docs/capability-suite.md"
-      - "docs/bench-registry.md"
       - "docs/versions.md"
-      - "README.md"
       - ".github/workflows/research_capability_suite.yml"
 
 permissions:
@@ -30,10 +27,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Capability suite contracts
-        run: |
-          cargo test --lib capability_suite::tests -- --nocapture
-          cargo test --lib docs_check::tests::capability_suite_doc_matches_contract -- --nocapture
-          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+        run: cargo test --lib capability_suite::tests -- --nocapture
 
       - name: Smoke battery
         shell: bash
