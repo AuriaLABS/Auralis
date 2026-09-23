@@ -28,6 +28,7 @@ Subir un número aquí **no** es un release; el tag `v1.0.0` sigue el gate #84.
 | code suite schema | `CODE_SUITE_SCHEMA_VERSION = 1` |
 | capability suite schema | `CAPABILITY_SUITE_SCHEMA_VERSION = 1` |
 | tool protocol schema | `TOOL_PROTOCOL_SCHEMA_VERSION = 1` |
+| agent permission policy schema | `PERMISSION_POLICY_SCHEMA_VERSION = 1` |
 | experiment manifest | `MANIFEST_VERSION = 4` |
 | release manifest | `RELEASE_MANIFEST_VERSION = 1` |
 
