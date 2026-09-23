@@ -408,6 +408,20 @@ impl ToolRequest {
         Ok(())
     }
 
+    pub fn encoded_argument_bytes(&self) -> usize {
+        self.arguments
+            .iter()
+            .map(|argument| {
+                escape(&argument.name).len()
+                    + match &argument.value {
+                        ToolValue::String(value) => escape(value).len(),
+                        ToolValue::Integer(value) => value.to_string().len(),
+                        ToolValue::Boolean(value) => bool_text(*value).len(),
+                    }
+            })
+            .sum()
+    }
+
     pub fn encode(&self) -> String {
         let mut out = String::new();
         field(&mut out, "auralis_tool_request", &self.schema_version.to_string());
@@ -973,6 +987,37 @@ mod tests {
             "try again",
         );
         assert_eq!(ToolResponse::decode(&error.encode()).unwrap(), error);
+    }
+
+    #[test]
+    fn encoded_argument_bytes_matches_canonical_serialized_name_and_value_bytes() {
+        let request = ToolRequest::new(
+            "call:budget",
+            "fixture",
+            1,
+            vec![
+                ToolArgument {
+                    name: "text".into(),
+                    value: ToolValue::String("a=b%ç".into()),
+                },
+                ToolArgument {
+                    name: "integer".into(),
+                    value: ToolValue::Integer(i64::MIN),
+                },
+                ToolArgument {
+                    name: "flag".into(),
+                    value: ToolValue::Boolean(false),
+                },
+            ],
+        );
+        let fields = parse_fields(&request.encode()).unwrap();
+        let expected = (0..request.arguments.len())
+            .map(|i| {
+                fields[&format!("arg.{i}.name")].len()
+                    + fields[&format!("arg.{i}.value")].len()
+            })
+            .sum::<usize>();
+        assert_eq!(request.encoded_argument_bytes(), expected);
     }
 
     #[test]
