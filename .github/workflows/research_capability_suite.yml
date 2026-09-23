@@ -1,0 +1,47 @@
+name: Research Capability Suite
+
+on:
+  pull_request:
+    paths:
+      - "src/capability_suite.rs"
+      - "src/code_suite.rs"
+      - "src/memory_suite.rs"
+      - "src/reasoning_suite.rs"
+      - "src/eval_registry.rs"
+      - "src/lib.rs"
+      - "src/bench.rs"
+      - "src/docs_check.rs"
+      - "src/bin/auralis_capability_suite_bench.rs"
+      - "docs/capability-suite.md"
+      - "docs/bench-registry.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/research_capability_suite.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  capability-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Capability suite contracts
+        run: |
+          cargo test --lib capability_suite::tests -- --nocapture
+          cargo test --lib docs_check::tests::capability_suite_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Smoke battery
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --release --bin auralis_capability_suite_bench -- smoke | tee /tmp/capability-suite.txt
+          grep -q '^capability_suite_protocol | schema=1 seed=75659918 capabilities=reasoning,code,memory,agent' /tmp/capability-suite.txt
+          grep -q '^capability_suite_gate | modular=true no_global_score_gate=true isolated_regression=true agent_blocked=true$' /tmp/capability-suite.txt
+          test "$(grep -c '^capability_suite_capability |' /tmp/capability-suite.txt)" -eq 4
+          grep -q 'kind=agent status=blocked' /tmp/capability-suite.txt
+          grep -q 'broken=reasoning' /tmp/capability-suite.txt
