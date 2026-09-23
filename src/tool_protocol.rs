@@ -354,18 +354,30 @@ impl ToolRequest {
         }
     }
 
-    pub fn validate_against(&self, definition: &ToolDefinition) -> Result<(), ToolProtocolError> {
-        definition.validate()?;
+    pub fn validate_envelope(&self) -> Result<(), ToolProtocolError> {
         if self.schema_version != TOOL_PROTOCOL_SCHEMA_VERSION {
             return Err(ToolProtocolError::Request("unsupported request schema".into()));
         }
         validate_identifier("call id", &self.call_id, MAX_CALL_ID_LEN)
             .map_err(|e| ToolProtocolError::Request(e.to_string()))?;
-        if self.tool_name != definition.name || self.tool_version != definition.version {
-            return Err(ToolProtocolError::Request("tool identity mismatch".into()));
+        validate_identifier("tool name", &self.tool_name, MAX_TOOL_NAME_LEN)
+            .map_err(|e| ToolProtocolError::Request(e.to_string()))?;
+        if self.tool_version == 0 {
+            return Err(ToolProtocolError::Request(
+                "tool version must be positive".into(),
+            ));
         }
         if self.arguments.len() > MAX_ARGS {
             return Err(ToolProtocolError::Request("too many arguments".into()));
+        }
+        Ok(())
+    }
+
+    pub fn validate_against(&self, definition: &ToolDefinition) -> Result<(), ToolProtocolError> {
+        definition.validate()?;
+        self.validate_envelope()?;
+        if self.tool_name != definition.name || self.tool_version != definition.version {
+            return Err(ToolProtocolError::Request("tool identity mismatch".into()));
         }
         let specs = definition
             .args
@@ -394,6 +406,20 @@ impl ToolRequest {
             }
         }
         Ok(())
+    }
+
+    pub fn encoded_argument_bytes(&self) -> usize {
+        self.arguments
+            .iter()
+            .map(|argument| {
+                escape(&argument.name).len()
+                    + match &argument.value {
+                        ToolValue::String(value) => escape(value).len(),
+                        ToolValue::Integer(value) => value.to_string().len(),
+                        ToolValue::Boolean(value) => bool_text(*value).len(),
+                    }
+            })
+            .sum()
     }
 
     pub fn encode(&self) -> String {
@@ -961,6 +987,52 @@ mod tests {
             "try again",
         );
         assert_eq!(ToolResponse::decode(&error.encode()).unwrap(), error);
+    }
+
+    #[test]
+    fn encoded_argument_bytes_matches_canonical_serialized_name_and_value_bytes() {
+        let request = ToolRequest::new(
+            "call:budget",
+            "fixture",
+            1,
+            vec![
+                ToolArgument {
+                    name: "text".into(),
+                    value: ToolValue::String("a=b%ç".into()),
+                },
+                ToolArgument {
+                    name: "integer".into(),
+                    value: ToolValue::Integer(i64::MIN),
+                },
+                ToolArgument {
+                    name: "flag".into(),
+                    value: ToolValue::Boolean(false),
+                },
+            ],
+        );
+        let fields = parse_fields(&request.encode()).unwrap();
+        let expected = (0..request.arguments.len())
+            .map(|i| {
+                fields[&format!("arg.{i}.name")].len()
+                    + fields[&format!("arg.{i}.value")].len()
+            })
+            .sum::<usize>();
+        assert_eq!(request.encoded_argument_bytes(), expected);
+    }
+
+    #[test]
+    fn request_envelope_rejects_malformed_identity_without_definition() {
+        let mut request = req();
+        request.call_id = "bad\ncall".into();
+        assert!(request.validate_envelope().is_err());
+
+        let mut request = req();
+        request.tool_name = "bad tool".into();
+        assert!(request.validate_envelope().is_err());
+
+        let mut request = req();
+        request.tool_version = 0;
+        assert!(request.validate_envelope().is_err());
     }
 
     #[test]

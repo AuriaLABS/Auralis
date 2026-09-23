@@ -778,6 +778,10 @@ mod tests {
         assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
         assert_eq!(
+            crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
+            1
+        );
+        assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
         );
@@ -805,6 +809,7 @@ mod tests {
             "MEMORY_SUITE_SCHEMA_VERSION = 1",
             "CODE_SUITE_SCHEMA_VERSION = 1",
             "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
+            "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
@@ -836,6 +841,32 @@ mod tests {
         }
         assert!(readme().contains("docs/tool-protocol.md"));
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn agent_permissions_doc_matches_contract() {
+        let text = docs("agent-permissions.md");
+        for needle in [
+            "PERMISSION_POLICY_SCHEMA_VERSION = 1",
+            "deny-by-default",
+            "AuthorizedToolRuntime::invoke",
+            "validate, authorize, audit, then execute",
+            "RequireConfirmation",
+            "authorization-denied",
+            "protocol-validation",
+            "decision_for_call()",
+            "explain_call()",
+            "Argument **values are never copied",
+            "DeterministicMockExecutor",
+            "No denial path performs partial tool execution",
+        ] {
+            assert!(text.contains(needle), "agent-permissions.md missing {needle}");
+        }
+        assert!(readme().contains("docs/agent-permissions.md"));
+        assert_eq!(
+            crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
+            1
+        );
     }
 
     #[test]
