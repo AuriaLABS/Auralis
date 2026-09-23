@@ -106,6 +106,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/tool-protocol.md](docs/tool-protocol.md) — protocolo tipado/versionado de tools, validación previa y runtime mock #44.
 - [docs/agent-permissions.md](docs/agent-permissions.md) — autorización deny-by-default, budgets y auditoría de tool calls #45.
 - [docs/tool-registry.md](docs/tool-registry.md) — registry versionado, discovery y tools reference locales/deterministas #49.
+- [docs/planner.md](docs/planner.md) — planner explícito versionado, budgets y replanificación controlada #46.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
