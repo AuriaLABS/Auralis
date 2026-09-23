@@ -44,7 +44,7 @@ Budget exhaustion fails closed before the next tool invocation. These are additi
 auralis_planner_bench runs the same two local tasks under the same registry and allowlist:
 
 - lookup: both direct and planner can complete;
-- recover: direct executes the first tool once and stops on the recoverable error; planner performs one explicit replan and can complete via the deterministic fallback.
+- recover: direct strategy does not replan; it executes the first tool once and stops on the recoverable error. The planner performs one explicit replan and can complete via the deterministic fallback.
 
 Reported metrics:
 - exact task success;
@@ -66,7 +66,7 @@ The comparison does not make the planner the default and does not claim general 
 - self-editing;
 - shell/network/filesystem tools;
 - sessions or persistence (#48);
-- cancellation/rollback/retry state machine (#114);
+- full executor state machine/rollback (#114), including cancellation and retry policy;
 - local HTTP API (#50).
 
 The minimal runner is deliberately narrower than #114.
