@@ -47,4 +47,5 @@ pub mod sec_overflow;
 pub mod sec_path;
 pub mod tensor;
 pub mod tokenizer;
+pub mod tool_protocol;
 pub mod training;
