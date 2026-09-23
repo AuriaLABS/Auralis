@@ -1,0 +1,23 @@
+name: Tool Registry
+
+on:
+  pull_request:
+    paths:
+      - "src/tool_registry.rs"
+      - "src/lib.rs"
+      - "src/tool_protocol.rs"
+      - "docs/tool-registry.md"
+      - ".github/workflows/tool_registry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tool-registry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tool registry contracts
+        run: cargo test --lib tool_registry::tests -- --nocapture
