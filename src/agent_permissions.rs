@@ -284,6 +284,15 @@ impl AuthorizedToolRuntime {
         mutation_confirmed: bool,
         executor: &mut E,
     ) -> ToolResponse {
+        if let Err(error) = request.validate_envelope() {
+            return ToolResponse::error(
+                "invalid-call",
+                ToolErrorSeverity::Fatal,
+                "protocol-validation",
+                error.to_string(),
+            );
+        }
+
         let definition = match self.definition_for(request) {
             Some(definition) => definition.clone(),
             None => {
@@ -570,6 +579,28 @@ mod tests {
             assert_eq!(executor.invocations, 1);
             assert_eq!(response, ToolResponse::result("session:call:fixture.read", "abc"));
             assert_eq!(runtime.audit()[0].outcome, AuthorizationOutcome::Allow);
+        }
+    }
+
+    #[test]
+    fn malformed_envelope_is_rejected_before_lookup_or_audit() {
+        let policy = PermissionPolicy::default().allow_capability("fixture.read");
+        let mut runtime =
+            AuthorizedToolRuntime::new(vec![read_definition()], policy).unwrap();
+        let mut executor =
+            DeterministicMockExecutor::new(MockMode::FixedResult("never".into()));
+        let mut malformed = request("fixture.read", "key", "x");
+        malformed.call_id = "bad\ncall".into();
+
+        let response = runtime.invoke(&malformed, false, &mut executor);
+        assert_eq!(executor.invocations, 0);
+        assert!(runtime.audit().is_empty());
+        match response {
+            ToolResponse::Error(error) => {
+                assert_eq!(error.call_id, "invalid-call");
+                assert_eq!(error.code, "protocol-validation");
+            }
+            other => panic!("expected protocol error, got {other:?}"),
         }
     }
 
