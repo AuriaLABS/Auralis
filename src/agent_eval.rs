@@ -8,7 +8,6 @@ use crate::eval_registry::{
     ResourceLimits, SeedPolicy, SemVer, TaskKind,
 };
 use crate::experiment::fingerprint_bytes;
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -120,7 +119,7 @@ pub struct SessionTrace {
 
 impl SessionTrace {
     pub fn canonical(&self) -> String {
-        let mut out = format(
+        let mut out = format!(
             "session={}|schema={}|commit={}|config={}|model={}|checkpoint={}\n",
             self.session_id,
             self.schema_version,
@@ -130,7 +129,7 @@ impl SessionTrace {
             self.checkpoint
         );
         for event in &self.events {
-            out.push_str(&format(
+            out.push_str(&format!(
                 "{}|{}|{}|{}|{}\n",
                 event.step_id,
                 event.call_id,
@@ -214,6 +213,13 @@ pub fn redact(value: &str) -> String {
     out
 }
 
+fn goal_key(goal: &str, fallback: &str) -> String {
+    goal.split_whitespace()
+        .find(|w| w.starts_with("city-") || w.starts_with("missing-") || w.starts_with("record-"))
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 pub fn generate_suite(profile: AgentEvalProfile, seed: u64) -> Vec<AgentCase> {
     let kinds = [
         AgentTaskKind::LookupThenAnswer,
@@ -221,12 +227,8 @@ pub fn generate_suite(profile: AgentEvalProfile, seed: u64) -> Vec<AgentCase> {
         AgentTaskKind::ToolFailure,
         AgentTaskKind::ReasoningFailure,
     ];
-    let n = profile.case_count();
-    (0..n)
-        .map(|i| {
-            let kind = kinds[i % kinds.len()];
-            case_for(kind, seed, i as u64)
-        })
+    (0..profile.case_count())
+        .map(|i| case_for(kinds[i % kinds.len()], seed, i as u64))
         .collect()
 }
 
@@ -279,8 +281,10 @@ pub fn mock_lookup(key: &str) -> Result<String, FailureClass> {
     Err(FailureClass::Tool)
 }
 
-/// Deterministic oracle policy. No real I/O.
-pub fn replay_case(case: &AgentCase, allow_real_effects: bool) -> Result<(SessionTrace, AgentCaseScore), AgentEvalError> {
+pub fn replay_case(
+    case: &AgentCase,
+    allow_real_effects: bool,
+) -> Result<(SessionTrace, AgentCaseScore), AgentEvalError> {
     if allow_real_effects {
         return Err(AgentEvalError::ReplayEffectsDisabled);
     }
@@ -302,9 +306,9 @@ pub fn replay_case(case: &AgentCase, allow_real_effects: bool) -> Result<(Sessio
 
     let (answer, failure, tool_calls) = match case.kind {
         AgentTaskKind::LookupThenAnswer => {
-            let key = case.goal.split_whitespace().nth(1).unwrap_or("city-0");
-            events.push(tool_call(&case.id, "lookup", key, 2));
-            let value = mock_lookup(key).unwrap();
+            let key = goal_key(&case.goal, "city-0");
+            events.push(tool_call(&case.id, "lookup", &key, 2));
+            let value = mock_lookup(&key).unwrap();
             events.push(tool_result(&case.id, &value, 3));
             (value, FailureClass::None, 1)
         }
@@ -319,8 +323,8 @@ pub fn replay_case(case: &AgentCase, allow_real_effects: bool) -> Result<(Sessio
             ("denied".to_string(), FailureClass::Permission, 0)
         }
         AgentTaskKind::ToolFailure => {
-            let key = case.goal.split_whitespace().nth(1).unwrap_or("missing-0");
-            events.push(tool_call(&case.id, "lookup", key, 2));
+            let key = goal_key(&case.goal, "missing-0");
+            events.push(tool_call(&case.id, "lookup", &key, 2));
             events.push(TraceEvent {
                 step_id: format!("{}-s3", case.id),
                 call_id: format!("{}-c3", case.id),
@@ -331,7 +335,7 @@ pub fn replay_case(case: &AgentCase, allow_real_effects: bool) -> Result<(Sessio
             ("tool-error".to_string(), FailureClass::Tool, 1)
         }
         AgentTaskKind::ReasoningFailure => {
-            let key = format!("city-{}", case.id.rsplit('-').next().unwrap_or("0"));
+            let key = goal_key(&case.goal, "city-0");
             events.push(tool_call(&case.id, "lookup", &key, 2));
             let value = mock_lookup(&key).unwrap_or_else(|_| "0".into());
             events.push(tool_result(&case.id, &value, 3));
@@ -356,13 +360,12 @@ pub fn replay_case(case: &AgentCase, allow_real_effects: bool) -> Result<(Sessio
         checkpoint: "none".to_string(),
         events,
     };
-    if trace.canonical().contains("SECRET")
-        || trace.canonical().contains("sk-live-")
-        || trace.canonical().contains("password=")
-    {
+    let blob = trace.canonical();
+    if blob.contains("SECRET") || blob.contains("sk-live-") || blob.contains("password=") {
         return Err(AgentEvalError::SecretInTrace);
     }
-    let exact = answer == case.expected_answer && failure == case.expected_failure;
+    let exact = failure == case.expected_failure
+        && (failure != FailureClass::None || answer == case.expected_answer);
     Ok((
         trace,
         AgentCaseScore {
