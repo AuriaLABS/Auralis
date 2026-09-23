@@ -191,14 +191,14 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
 
     EvaluationSuite {
         id: format!("capability-battery-{}", profile.as_str()),
-        version: SemVer::new(1, 0, 0),
+        version: SemVer::new(2, 0, 0),
         description: format!(
             "modular #75 battery over reasoning/code/memory/agent {}",
             profile.as_str()
         ),
         dataset: DatasetMetadata {
             id: "auralis-capability-battery".to_string(),
-            revision: "1".to_string(),
+            revision: "2".to_string(),
             split: profile.as_str().to_string(),
             population: "composed reasoning/code/memory/agent child suites".to_string(),
             fixture_fingerprint: fingerprint,
@@ -222,7 +222,10 @@ pub fn suite_definition(profile: CapabilityProfile) -> EvaluationSuite {
         },
         limits: ResourceLimits {
             max_examples: sample_count,
-            max_steps: 1,
+            max_steps: reasoning.limits.max_steps
+                + code.limits.max_steps
+                + memory.limits.max_steps
+                + agent.limits.max_steps,
             max_tokens: reasoning.limits.max_tokens
                 + code.limits.max_tokens
                 + memory.limits.max_tokens
@@ -430,7 +433,10 @@ mod tests {
             suite.tasks[3].fixture_count,
             generate_agent_suite(AgentEvalProfile::Smoke, AGENT_EVAL_SEED).len()
         );
+        assert_eq!(suite.version, SemVer::new(2, 0, 0));
+        assert_eq!(suite.dataset.revision, "2");
         assert!(suite.seed_policy.seeds.contains(&CAPABILITY_SUITE_SEED));
+        assert!(suite.limits.max_steps >= 8);
     }
 
     #[test]
@@ -500,7 +506,7 @@ mod tests {
         let readme = fs::read_to_string(root().join("README.md")).unwrap();
         assert!(readme.contains("docs/capability-suite.md"));
         let versions = fs::read_to_string(root().join("docs/versions.md")).unwrap();
-        assert!(versions.contains("CAPABILITY_SUITE_SCHEMA_VERSION = 1"));
+        assert!(versions.contains("CAPABILITY_SUITE_SCHEMA_VERSION = 2"));
         let registry = fs::read_to_string(root().join("docs/bench-registry.md")).unwrap();
         assert!(registry.contains("auralis_capability_suite_bench"));
         let bench = crate::bench::find("capability-suite").expect("capability-suite benchmark");
