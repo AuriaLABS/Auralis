@@ -147,4 +147,4 @@ The `capability-suite` entry runs:
 cargo run --release --bin auralis_capability_suite_bench -- smoke
 ```
 
-It composes the #130/#131/#135 child suites under #75, reports each capability separately, keeps agent reserved until #47, and proves an isolated reasoning regression cannot be hidden by exact code/memory scores. The descriptive mean is published and is not a gate.
+It composes the #130/#131/#135 suites plus #47 agent mock-replay evaluation under #75, reports each capability separately, and proves isolated reasoning or agent regressions cannot be hidden by exact sibling capabilities. The descriptive mean is published and is not a gate.
