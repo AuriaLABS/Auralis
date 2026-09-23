@@ -1,0 +1,36 @@
+name: Agent Tool Protocol
+
+on:
+  pull_request:
+    paths:
+      - "src/tool_protocol.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/tool-protocol.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/agent_tool_protocol.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tool-protocol:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Protocol contract
+        run: |
+          cargo test --lib tool_protocol::tests -- --nocapture
+          cargo test --lib docs_check::tests::tool_protocol_doc_matches_contract -- --nocapture
+          cargo test --lib docs_check::tests::documented_versions_match_code -- --nocapture
+
+      - name: Existing Agent smoke
+        run: |
+          cargo test --lib agent -- --nocapture
+
+      - name: Full suite
+        run: cargo test --all-targets
