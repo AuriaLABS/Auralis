@@ -11,6 +11,7 @@ pub mod bench_runner;
 pub mod bpe;
 pub mod brain_ab;
 pub mod checkpoint;
+pub mod code_suite;
 pub mod ci_matrix;
 pub mod cpu_matmul;
 pub mod docs_check;

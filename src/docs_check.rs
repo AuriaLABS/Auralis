@@ -151,6 +151,7 @@ mod tests {
             "eval-registry.md",
             "reasoning-suite.md",
             "memory-suite.md",
+            "code-suite.md",
             "moe-router.md",
             "gradient-clipping.md",
             "verify.md",
@@ -563,6 +564,41 @@ mod tests {
     }
 
     #[test]
+    fn code_suite_doc_matches_contract() {
+        let text = docs("code-suite.md");
+        for needle in [
+            "CODE_SUITE_SCHEMA_VERSION = 1",
+            "CODE_SUITE_SEED = 131659918",
+            "Code comprehension",
+            "Compile repair",
+            "Unit-test repair",
+            "Bug-fix patch",
+            "single-expression",
+            "rustc --test",
+            "protected tests",
+            "compile-error",
+            "borrow-check",
+            "patch-rejected",
+            "compile timeout 10 s",
+            "auralis_code_suite_bench",
+            "16 metrics",
+        ] {
+            assert!(text.contains(needle), "code-suite.md missing {needle}");
+        }
+        assert!(readme().contains("docs/code-suite.md"));
+        assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
+        let suite = crate::code_suite::suite_definition(
+            crate::code_suite::CodeSuiteProfile::Smoke,
+            crate::code_suite::CODE_SUITE_SEED,
+        );
+        suite.validate().unwrap();
+        assert_eq!(suite.metrics.len(), 16);
+        let bench = crate::bench::find("code-suite").expect("code-suite benchmark");
+        assert_eq!(bench.bin, "auralis_code_suite_bench");
+        assert_eq!(bench.default_args, "both");
+    }
+
+    #[test]
     fn memory_suite_doc_matches_contract() {
         let text = docs("memory-suite.md");
         for needle in [
@@ -628,7 +664,6 @@ mod tests {
         }
         assert!(readme().contains("docs/reasoning-suite.md"));
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
-        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
         let smoke = crate::reasoning_suite::suite_definition(
             crate::reasoning_suite::ReasoningProfile::Smoke,
             crate::reasoning_suite::REASONING_SUITE_SEED,
@@ -739,6 +774,8 @@ mod tests {
         assert_eq!(crate::moe::MOE_ROUTER_SCHEMA_VERSION, 1);
         assert_eq!(crate::eval_registry::EVALUATION_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -765,6 +802,7 @@ mod tests {
             "EVALUATION_REGISTRY_SCHEMA_VERSION = 1",
             "REASONING_SUITE_SCHEMA_VERSION = 1",
             "MEMORY_SUITE_SCHEMA_VERSION = 1",
+            "CODE_SUITE_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",

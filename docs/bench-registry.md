@@ -126,3 +126,14 @@ cargo run --release --bin auralis_memory_suite_bench -- both
 ```
 
 It executes the #135 deterministic smoke/full external-memory profiles over exact retrieval, temporal ordering, conflict/stale resolution and long-horizon recall. It also publishes the memory-off control plus reject-new capacity sweeps with retrieval ratio, query latency, heap bytes, snapshot bytes and observed evictions. Correctness and explicit capacity semantics are gates; hosted-runner latency is descriptive.
+
+
+## Research executable code evaluation suite
+
+The `code-suite` entry runs:
+
+```
+cargo run --release --bin auralis_code_suite_bench -- both
+```
+
+It executes #131 standalone Rust fixtures through a confined single-expression patch dialect, `rustc --test` and protected tests. It publishes exact/compile/test pass ratios, compiler/test latency, failure taxonomy and compiler-error classes. Timing is descriptive; successful patch application, compilation and protected tests are the gate.
