@@ -14,7 +14,7 @@ fn profiles(arg: Option<&str>) -> Vec<CapabilityProfile> {
 
 fn main() {
     println!(
-        "capability_suite_protocol | schema={} seed={} capabilities=reasoning,code,memory,agent profiles=smoke,full agent=blocked-47",
+        "capability_suite_protocol | schema={} seed={} capabilities=reasoning,code,memory,agent profiles=smoke,full agent=integrated",
         CAPABILITY_SUITE_SCHEMA_VERSION, CAPABILITY_SUITE_SEED
     );
 
@@ -28,6 +28,8 @@ fn main() {
         let oracle = evaluate_oracle(profile).expect("oracle capability battery");
         let reasoning_reg =
             evaluate_isolated_regression(profile, CapabilityKind::Reasoning).expect("reasoning isolation");
+        let agent_reg =
+            evaluate_isolated_regression(profile, CapabilityKind::Agent).expect("agent isolation");
 
         println!(
             "capability_suite_profile | profile={} tasks={} metrics={} suite_fingerprint={:016x} fixture_fingerprint={:016x} descriptive_mean={:.6}",
@@ -57,25 +59,31 @@ fn main() {
         let broken = reasoning_reg.score(CapabilityKind::Reasoning).unwrap();
         let code = reasoning_reg.score(CapabilityKind::Code).unwrap();
         let memory = reasoning_reg.score(CapabilityKind::Memory).unwrap();
+        let agent = reasoning_reg.score(CapabilityKind::Agent).unwrap();
         println!(
-            "capability_suite_isolation | profile={} broken=reasoning broken_exact={:.6} code_exact={:.6} memory_exact={:.6} agent={}",
+            "capability_suite_isolation | profile={} broken=reasoning broken_exact={:.6} code_exact={:.6} memory_exact={:.6} agent_exact={:.6}",
             profile.as_str(),
             broken.exact_ratio,
             code.exact_ratio,
             memory.exact_ratio,
-            reasoning_reg
-                .score(CapabilityKind::Agent)
-                .unwrap()
-                .status
-                .as_str(),
+            agent.exact_ratio,
         );
-        assert_eq!(
-            reasoning_reg.score(CapabilityKind::Agent).unwrap().status,
-            CapabilityStatus::Blocked
+        assert_eq!(agent.status, CapabilityStatus::Executed);
+        assert_eq!(agent.exact_ratio, 1.0);
+
+        let agent_broken = agent_reg.score(CapabilityKind::Agent).unwrap();
+        println!(
+            "capability_suite_isolation | profile={} broken=agent broken_exact={:.6} reasoning_exact={:.6} code_exact={:.6} memory_exact={:.6}",
+            profile.as_str(),
+            agent_broken.exact_ratio,
+            agent_reg.score(CapabilityKind::Reasoning).unwrap().exact_ratio,
+            agent_reg.score(CapabilityKind::Code).unwrap().exact_ratio,
+            agent_reg.score(CapabilityKind::Memory).unwrap().exact_ratio,
         );
+        assert_eq!(agent_broken.exact_ratio, 0.0);
     }
 
     println!(
-        "capability_suite_gate | modular=true no_global_score_gate=true isolated_regression=true agent_blocked=true"
+        "capability_suite_gate | modular=true no_global_score_gate=true isolated_regression=true agent_integrated=true"
     );
 }

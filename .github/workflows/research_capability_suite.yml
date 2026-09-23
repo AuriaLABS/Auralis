@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/capability_suite.rs"
+      - "src/agent_eval.rs"
       - "src/code_suite.rs"
       - "src/memory_suite.rs"
       - "src/reasoning_suite.rs"
@@ -34,8 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --release --bin auralis_capability_suite_bench -- smoke | tee /tmp/capability-suite.txt
-          grep -q '^capability_suite_protocol | schema=1 seed=75659918 capabilities=reasoning,code,memory,agent' /tmp/capability-suite.txt
-          grep -q '^capability_suite_gate | modular=true no_global_score_gate=true isolated_regression=true agent_blocked=true$' /tmp/capability-suite.txt
+          grep -q '^capability_suite_protocol | schema=2 seed=75659918 capabilities=reasoning,code,memory,agent profiles=smoke,full agent=integrated$' /tmp/capability-suite.txt
+          grep -q '^capability_suite_gate | modular=true no_global_score_gate=true isolated_regression=true agent_integrated=true$' /tmp/capability-suite.txt
           test "$(grep -c '^capability_suite_capability |' /tmp/capability-suite.txt)" -eq 4
-          grep -q 'kind=agent status=blocked' /tmp/capability-suite.txt
+          grep -q 'kind=agent status=executed' /tmp/capability-suite.txt
           grep -q 'broken=reasoning' /tmp/capability-suite.txt
+          grep -q 'broken=agent broken_exact=0.000000' /tmp/capability-suite.txt

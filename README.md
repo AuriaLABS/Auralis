@@ -101,7 +101,8 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/reasoning-suite.md](docs/reasoning-suite.md) — suite sintética determinista de razonamiento con scoring objetivo y splits de generalización.
 - [docs/memory-suite.md](docs/memory-suite.md) — suite objetiva de memoria externa: retrieval, temporalidad, conflicto, stale data, capacidad y memory-off.
 - [docs/code-suite.md](docs/code-suite.md) — suite ejecutable de código Rust con patch estructurado, compilación, tests y taxonomía objetiva de fallos.
-- [docs/capability-suite.md](docs/capability-suite.md) — batería modular #75 de razonamiento/código/memoria con regresiones aisladas y agente reservado.
+- [docs/capability-suite.md](docs/capability-suite.md) — batería modular #75 de razonamiento/código/memoria/agente con regresiones aisladas.
+- [docs/agent-eval.md](docs/agent-eval.md) — trazas agenticas versionadas, replay mock-only, redacción y evaluación objetiva #47.
 - [docs/tool-protocol.md](docs/tool-protocol.md) — protocolo tipado/versionado de tools, validación previa y runtime mock #44.
 - [docs/agent-permissions.md](docs/agent-permissions.md) — autorización deny-by-default, budgets y auditoría de tool calls #45.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
