@@ -404,6 +404,12 @@ fn child_score(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    fn root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
 
     #[test]
     fn suite_definition_is_valid_and_keeps_agent_reserved() {
@@ -458,5 +464,29 @@ mod tests {
         let err = evaluate_isolated_regression(CapabilityProfile::Smoke, CapabilityKind::Agent)
             .unwrap_err();
         assert_eq!(err, CapabilitySuiteError::AgentNotIntegrated);
+    }
+
+    #[test]
+    fn docs_and_bench_match_contract() {
+        let text = fs::read_to_string(root().join("docs/capability-suite.md")).unwrap();
+        for needle in [
+            "CAPABILITY_SUITE_SCHEMA_VERSION = 1",
+            "CAPABILITY_SUITE_SEED = 75659918",
+            "evaluate_isolated_regression",
+            "descriptive-mean-executed",
+            "auralis_capability_suite_bench",
+            "reserved / blocked until #47",
+        ] {
+            assert!(text.contains(needle), "capability-suite.md missing {needle}");
+        }
+        let readme = fs::read_to_string(root().join("README.md")).unwrap();
+        assert!(readme.contains("docs/capability-suite.md"));
+        let versions = fs::read_to_string(root().join("docs/versions.md")).unwrap();
+        assert!(versions.contains("CAPABILITY_SUITE_SCHEMA_VERSION = 1"));
+        let registry = fs::read_to_string(root().join("docs/bench-registry.md")).unwrap();
+        assert!(registry.contains("auralis_capability_suite_bench"));
+        let bench = crate::bench::find("capability-suite").expect("capability-suite benchmark");
+        assert_eq!(bench.bin, "auralis_capability_suite_bench");
+        assert_eq!(bench.default_args, "smoke");
     }
 }
