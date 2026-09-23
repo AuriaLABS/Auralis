@@ -659,7 +659,7 @@ pub fn run_direct(
             plan_revision: 0,
             steps_executed: 1,
             tool_calls: 1,
-            recoverable_errors: usize::from(error.severity == ToolErrorSeverity::Recoverable),
+            recoverable_errors: if error.severity == ToolErrorSeverity::Recoverable { 1 } else { 0 },
             replans: 0,
             declared_timeout_ms: definition.timeout_ms.min(budget.max_timeout_ms),
             plan_fingerprint: 0,
