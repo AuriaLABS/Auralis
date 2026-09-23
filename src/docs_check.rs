@@ -776,6 +776,7 @@ mod tests {
         assert_eq!(crate::reasoning_suite::REASONING_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::memory_suite::MEMORY_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::code_suite::CODE_SUITE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::memory_integration::MEMORY_INTEGRATION_SCHEMA_VERSION,
             1
@@ -803,6 +804,7 @@ mod tests {
             "REASONING_SUITE_SCHEMA_VERSION = 1",
             "MEMORY_SUITE_SCHEMA_VERSION = 1",
             "CODE_SUITE_SCHEMA_VERSION = 1",
+            "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_STATE_SCHEMA_VERSION = 1",
@@ -811,6 +813,29 @@ mod tests {
         ] {
             assert!(versions.contains(needle), "docs/versions.md missing {needle}");
         }
+    }
+
+    #[test]
+    fn tool_protocol_doc_matches_contract() {
+        let text = docs("tool-protocol.md");
+        for needle in [
+            "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
+            "ToolDefinition",
+            "ToolRequest",
+            "ToolResult",
+            "ToolError",
+            "ValidatedToolCall",
+            "invoke_validated",
+            "protocol-validation",
+            "invalid-tool-response",
+            "DeterministicMockExecutor",
+            "grants **no authority**",
+            "no tool execution through the public protocol path before strict validation",
+        ] {
+            assert!(text.contains(needle), "tool-protocol.md missing {needle}");
+        }
+        assert!(readme().contains("docs/tool-protocol.md"));
+        assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
     }
 
     #[test]
