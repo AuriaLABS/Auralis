@@ -10,6 +10,7 @@ pub mod bench_result;
 pub mod bench_runner;
 pub mod bpe;
 pub mod brain_ab;
+pub mod capability_suite;
 pub mod checkpoint;
 pub mod code_suite;
 pub mod ci_matrix;
