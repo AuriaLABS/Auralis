@@ -291,7 +291,7 @@ struct ReferenceExecutor {
 impl ToolExecutor for ReferenceExecutor {
     fn execute(&mut self, call: ValidatedToolCall<'_>) -> ToolResponse {
         self.invocations += 1;
-        let request = call.request;
+        let request = call.request();
         match self.kind {
             ReferenceKind::Echo => {
                 let text = arg_string(request, "text").unwrap_or_default();
