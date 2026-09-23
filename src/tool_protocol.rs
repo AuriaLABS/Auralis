@@ -425,7 +425,12 @@ impl ToolRequest {
 
     pub fn decode(text: &str) -> Result<Self, ToolProtocolError> {
         let mut m = parse_fields(text)?;
-        let schema_version = take_parse(&mut m, "auralis_tool_request")?;
+        let schema_version: u32 = take_parse(&mut m, "auralis_tool_request")?;
+        if schema_version != TOOL_PROTOCOL_SCHEMA_VERSION {
+            return Err(ToolProtocolError::Decode(format!(
+                "tool request schema {schema_version} is unsupported"
+            )));
+        }
         let call_id = unescape(&take(&mut m, "call_id")?)?;
         let tool_name = unescape(&take(&mut m, "tool_name")?)?;
         let tool_version = take_parse(&mut m, "tool_version")?;
@@ -556,7 +561,12 @@ impl ToolResponse {
     pub fn decode(text: &str) -> Result<Self, ToolProtocolError> {
         let mut m = parse_fields(text)?;
         if m.contains_key("auralis_tool_result") {
-            let schema_version = take_parse(&mut m, "auralis_tool_result")?;
+            let schema_version: u32 = take_parse(&mut m, "auralis_tool_result")?;
+            if schema_version != TOOL_PROTOCOL_SCHEMA_VERSION {
+                return Err(ToolProtocolError::Decode(format!(
+                    "tool result schema {schema_version} is unsupported"
+                )));
+            }
             let call_id = unescape(&take(&mut m, "call_id")?)?;
             let content = unescape(&take(&mut m, "content")?)?;
             reject_leftovers(m)?;
@@ -567,7 +577,12 @@ impl ToolResponse {
             }));
         }
         if m.contains_key("auralis_tool_error") {
-            let schema_version = take_parse(&mut m, "auralis_tool_error")?;
+            let schema_version: u32 = take_parse(&mut m, "auralis_tool_error")?;
+            if schema_version != TOOL_PROTOCOL_SCHEMA_VERSION {
+                return Err(ToolProtocolError::Decode(format!(
+                    "tool error schema {schema_version} is unsupported"
+                )));
+            }
             let call_id = unescape(&take(&mut m, "call_id")?)?;
             let severity = ToolErrorSeverity::parse(&take(&mut m, "severity")?)?;
             let code = unescape(&take(&mut m, "code")?)?;
@@ -999,6 +1014,26 @@ mod tests {
             .encode()
             .replacen("auralis_tool_definition=1", "auralis_tool_definition=999", 1);
         assert!(ToolDefinition::decode(&future).is_err());
+
+        let future_request = req()
+            .encode()
+            .replacen("auralis_tool_request=1", "auralis_tool_request=999", 1);
+        assert!(ToolRequest::decode(&future_request).is_err());
+
+        let future_result = ToolResponse::result("call-1", "ok")
+            .encode()
+            .replacen("auralis_tool_result=1", "auralis_tool_result=999", 1);
+        assert!(ToolResponse::decode(&future_result).is_err());
+
+        let future_error = ToolResponse::error(
+            "call-1",
+            ToolErrorSeverity::Recoverable,
+            "retry",
+            "again",
+        )
+        .encode()
+        .replacen("auralis_tool_error=1", "auralis_tool_error=999", 1);
+        assert!(ToolResponse::decode(&future_error).is_err());
 
         let malformed = req().encode().replace("hello%3Dworld", "hello%QZworld");
         assert!(ToolRequest::decode(&malformed).is_err());
