@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn planner_doc_matches_contract() {
-        let text = docs("planner.md");
+        let text = docs("agent-planner.md");
         for needle in [
             "PLAN_SCHEMA_VERSION = 1",
             "Plan::canonical()",
@@ -881,9 +881,9 @@ mod tests {
             "full executor state machine/rollback (#114)",
             "does not make the planner the default",
         ] {
-            assert!(text.contains(needle), "planner.md missing {needle}");
+            assert!(text.contains(needle), "agent-planner.md missing {needle}");
         }
-        assert!(readme().contains("docs/planner.md"));
+        assert!(readme().contains("docs/agent-planner.md"));
         assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
     }
 
