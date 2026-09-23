@@ -8,10 +8,13 @@ The battery does **not** collapse those capabilities into a single acceptance sc
 
 ```text
 CAPABILITY_SUITE_SCHEMA_VERSION = 2
+suite version = 2.0.0
 CAPABILITY_SUITE_SEED = 75659918
 capabilities = reasoning, code, memory, agent
 agent = #47 mock-replay suite integrated
 ```
+
+The schema-2 composition is a new exact suite definition (`2.0.0`, dataset revision `2`) because the agent fixtures/tasks/metrics change the registry identity.
 
 Profiles:
 
