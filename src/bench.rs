@@ -172,6 +172,15 @@ pub const BENCHES: &[BenchSpec] = &[
         requires_alloc_profile: false,
     },
     BenchSpec {
+        id: "capability-suite",
+        bin: "auralis_capability_suite_bench",
+        kind: "research-capability",
+        summary: "modular reasoning/code/memory battery with isolated regressions and reserved agent",
+        default_args: "smoke",
+        runner: None,
+        requires_alloc_profile: false,
+    },
+    BenchSpec {
         id: "profile-alloc",
         bin: "auralis-profile",
         kind: "memory",
