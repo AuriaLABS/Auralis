@@ -25,7 +25,7 @@ A policy may allow an exact `name@version`, a capability, or both. The policy ca
 4. append an `AuthorizationDecision` audit record;
 5. only when the decision is `allow`, call #44 `invoke_validated`.
 
-Unknown tools, malformed arguments and denied policies never reach the executor. Tests assert the deterministic mock executor invocation count remains zero for those paths.
+Malformed request envelopes with an untrusted/invalid call ID or tool identity are rejected before catalog lookup and before a correlatable authorization audit is created. Once the envelope identity is valid, unknown tools, malformed arguments and denied policies never reach the executor; those paths are auditable by stable call ID. Tests assert the deterministic mock executor invocation count remains zero for all of them.
 
 The runtime catalog in #45 is intentionally fixed at construction. Dynamic register/unregister/discovery belongs to #49.
 
