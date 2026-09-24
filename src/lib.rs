@@ -21,6 +21,7 @@ pub mod docs_check;
 pub mod equivalence;
 pub mod eval;
 pub mod eval_registry;
+pub mod event_stream;
 pub mod experiment;
 pub mod gradcheck;
 pub mod inspect;

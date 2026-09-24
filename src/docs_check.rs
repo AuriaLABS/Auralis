@@ -167,6 +167,7 @@ mod tests {
             "session.md",
             "local-api.md",
             "agent-eval.md",
+            "event-stream.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -785,6 +786,7 @@ mod tests {
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::session::SESSION_SCHEMA_VERSION, 1);
         assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
+        assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -822,6 +824,7 @@ mod tests {
             "EXECUTOR_SCHEMA_VERSION = 1",
             "SESSION_SCHEMA_VERSION = 1",
             "LOCAL_API_SCHEMA_VERSION = 1",
+            "EVENT_STREAM_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -915,6 +918,23 @@ mod tests {
     }
 
     #[test]
+
+    #[test]
+    fn event_stream_doc_matches_contract() {
+        let text = docs("event-stream.md");
+        for needle in [
+            "EVENT_STREAM_SCHEMA_VERSION = 1",
+            "monotonic sequence IDs",
+            "Backpressured",
+            "Cancelled",
+            "does not grow",
+        ] {
+            assert!(text.contains(needle), "event-stream.md missing {needle}");
+        }
+        assert!(readme().contains("docs/event-stream.md"));
+        assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
+    }
+
     fn agent_eval_doc_matches_contract() {
         let text = docs("agent-eval.md");
         for needle in [
