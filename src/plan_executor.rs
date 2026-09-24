@@ -619,14 +619,15 @@ impl PlanMachine {
     }
 
     fn validate_dependencies(&mut self, step_id: &str) -> Result<(), ExecutorError> {
-        let step = self
+        let depends_on = self
             .plan
             .steps
             .iter()
             .find(|candidate| candidate.id == step_id)
+            .map(|step| step.depends_on.clone())
             .ok_or_else(|| ExecutorError::InvalidPlan(format!("missing {step_id}")))?;
-        for dep in &step.depends_on {
-            match self.states.get(dep).copied() {
+        for dep in depends_on {
+            match self.states.get(&dep).copied() {
                 Some(ExecutorStepState::Done) => {}
                 Some(state) => {
                     self.record(
@@ -756,18 +757,18 @@ impl PlanMachine {
         });
     }
 
-    fn succeed(mut self, answer: Option<String>) -> ExecutorReport {
+    fn succeed(&mut self, answer: Option<String>) -> ExecutorReport {
         self.status = MachineStatus::Succeeded;
         self.finish_report(true, answer, None)
     }
 
-    fn fail(mut self, error: ExecutorError) -> ExecutorReport {
+    fn fail(&mut self, error: ExecutorError) -> ExecutorReport {
         self.status = MachineStatus::Failed;
         self.finish_report(false, None, Some(error.to_string()))
     }
 
     fn finish_report(
-        self,
+        &mut self,
         success: bool,
         answer: Option<String>,
         error: Option<String>,
@@ -796,7 +797,7 @@ impl PlanMachine {
             skipped,
             cancelled,
             declared_timeout_ms: self.declared_timeout_ms,
-            decisions: self.decisions,
+            decisions: std::mem::take(&mut self.decisions),
             error,
         }
     }
