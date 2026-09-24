@@ -26,6 +26,7 @@ pub mod gradcheck;
 pub mod inspect;
 pub mod kernels;
 pub mod kv_cache;
+pub mod local_api;
 pub mod layer_diagnostics;
 pub mod manifest;
 pub mod memory;

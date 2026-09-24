@@ -165,6 +165,7 @@ mod tests {
             "ENGINE_ARCHITECTURE.md",
             "ENGINE_LAYOUT.md",
             "session.md",
+            "local-api.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -782,6 +783,7 @@ mod tests {
         assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::session::SESSION_SCHEMA_VERSION, 1);
+        assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -818,6 +820,7 @@ mod tests {
             "PLAN_SCHEMA_VERSION = 1",
             "EXECUTOR_SCHEMA_VERSION = 1",
             "SESSION_SCHEMA_VERSION = 1",
+            "LOCAL_API_SCHEMA_VERSION = 1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -906,6 +909,22 @@ mod tests {
             assert!(text.contains(needle), "plan-executor.md missing {needle}");
         }
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn local_api_doc_matches_contract() {
+        let text = docs("local-api.md");
+        for needle in [
+            "LOCAL_API_SCHEMA_VERSION = 1",
+            "LocalAgentApi::handle",
+            "127.0.0.1",
+            "X-Correlation-Id",
+            "does **not** add a",
+        ] {
+            assert!(text.contains(needle), "local-api.md missing {needle}");
+        }
+        assert!(readme().contains("docs/local-api.md"));
+        assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
     }
 
     #[test]
