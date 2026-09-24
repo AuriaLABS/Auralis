@@ -8,11 +8,106 @@ use crate::eval_registry::{
     ResourceLimits, SeedPolicy, SemVer, TaskKind,
 };
 use crate::experiment::fingerprint_bytes;
+use crate::local_api::LOCAL_API_SCHEMA_VERSION;
+use crate::plan_executor::EXECUTOR_SCHEMA_VERSION;
+use crate::planner::PLAN_SCHEMA_VERSION;
+use crate::session::SESSION_SCHEMA_VERSION;
+use crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION;
+use crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION;
+use crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION;
 use std::error::Error;
 use std::fmt;
 
 pub const AGENT_EVAL_SCHEMA_VERSION: u32 = 1;
 pub const AGENT_EVAL_SEED: u64 = 47_659_918;
+pub const COMMON_BASELINE_ID: &str = "agent-common-baseline-1";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommonBaseline {
+    pub protocol: u32,
+    pub permissions: u32,
+    pub planner: u32,
+    pub executor: u32,
+    pub registry: u32,
+    pub session: u32,
+    pub local_api: u32,
+    pub eval: u32,
+}
+
+impl CommonBaseline {
+    pub fn current() -> Self {
+        Self {
+            protocol: TOOL_PROTOCOL_SCHEMA_VERSION,
+            permissions: PERMISSION_POLICY_SCHEMA_VERSION,
+            planner: PLAN_SCHEMA_VERSION,
+            executor: EXECUTOR_SCHEMA_VERSION,
+            registry: TOOL_REGISTRY_SCHEMA_VERSION,
+            session: SESSION_SCHEMA_VERSION,
+            local_api: LOCAL_API_SCHEMA_VERSION,
+            eval: AGENT_EVAL_SCHEMA_VERSION,
+        }
+    }
+
+    pub fn canonical(&self) -> String {
+        format!(
+            "{COMMON_BASELINE_ID} protocol={} permissions={} planner={} executor={} registry={} session={} api={} eval={}",
+            self.protocol,
+            self.permissions,
+            self.planner,
+            self.executor,
+            self.registry,
+            self.session,
+            self.local_api,
+            self.eval
+        )
+    }
+
+    pub fn fingerprint(&self) -> u64 {
+        fingerprint_bytes(self.canonical().as_bytes())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvalStrategy {
+    Direct,
+    Planned,
+}
+
+impl EvalStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Planned => "planned",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StrategyCompare {
+    pub case_id: String,
+    pub baseline: String,
+    pub same_exact: bool,
+    pub same_failure: bool,
+}
+
+pub fn compare_direct_and_planned(
+    case: &AgentCase,
+) -> Result<StrategyCompare, AgentEvalError> {
+    let (_, direct) = replay_case(case, false)?;
+    let (trace, planned) = replay_case(case, false)?;
+    if !trace.events.iter().any(|event| event.kind == TraceKind::Plan) {
+        return Err(AgentEvalError::Invalid("planned replay missing plan event".into()));
+    }
+    if trace.config != CommonBaseline::current().canonical() {
+        return Err(AgentEvalError::Invalid("trace is not on the common baseline".into()));
+    }
+    Ok(StrategyCompare {
+        case_id: case.id.clone(),
+        baseline: trace.config,
+        same_exact: direct.exact == planned.exact,
+        same_failure: direct.failure == planned.failure,
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentEvalProfile {
@@ -189,6 +284,7 @@ pub enum AgentEvalError {
     ReplayEffectsDisabled,
     SecretInTrace,
     UnknownCase,
+    Invalid(String),
 }
 
 impl fmt::Display for AgentEvalError {
@@ -197,6 +293,7 @@ impl fmt::Display for AgentEvalError {
             Self::ReplayEffectsDisabled => write!(f, "replay refuses real tool effects"),
             Self::SecretInTrace => write!(f, "trace contained an unredacted secret"),
             Self::UnknownCase => write!(f, "unknown agent case"),
+            Self::Invalid(msg) => write!(f, "invalid: {msg}"),
         }
     }
 }
@@ -374,7 +471,7 @@ pub fn replay_case(
         session_id: case.id.clone(),
         schema_version: AGENT_EVAL_SCHEMA_VERSION,
         commit: "local".to_string(),
-        config: "agent-eval-1".to_string(),
+        config: CommonBaseline::current().canonical(),
         model: "mock".to_string(),
         checkpoint: "none".to_string(),
         events,
@@ -610,5 +707,23 @@ mod tests {
         let (a, _) = score_suite(&cases, false).unwrap();
         let (b, _) = score_suite(&cases, false).unwrap();
         assert_eq!(a[0].canonical(), b[0].canonical());
+        assert!(a[0].config.starts_with(COMMON_BASELINE_ID));
+    }
+
+    #[test]
+    fn common_baseline_pins_protocol_permission_and_planner_schemas() {
+        let baseline = CommonBaseline::current();
+        assert_eq!(baseline.protocol, 1);
+        assert_eq!(baseline.permissions, 1);
+        assert_eq!(baseline.planner, 1);
+        assert_eq!(baseline.executor, 1);
+        assert_eq!(baseline.fingerprint(), CommonBaseline::current().fingerprint());
+        let cases = generate_suite(AgentEvalProfile::Smoke, AGENT_EVAL_SEED);
+        for case in &cases {
+            let compare = compare_direct_and_planned(case).unwrap();
+            assert_eq!(compare.baseline, baseline.canonical());
+            assert!(compare.same_exact);
+            assert!(compare.same_failure);
+        }
     }
 }

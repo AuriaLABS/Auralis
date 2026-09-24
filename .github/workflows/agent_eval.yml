@@ -7,6 +7,8 @@ on:
       - "src/lib.rs"
       - "src/bin/auralis_agent_eval_bench.rs"
       - "docs/agent-eval.md"
+      - "src/docs_check.rs"
+      - "docs/versions.md"
       - ".github/workflows/agent_eval.yml"
 
 permissions:
