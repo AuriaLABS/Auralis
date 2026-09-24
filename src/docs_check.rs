@@ -166,6 +166,7 @@ mod tests {
             "ENGINE_LAYOUT.md",
             "session.md",
             "local-api.md",
+            "agent-eval.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -821,6 +822,8 @@ mod tests {
             "EXECUTOR_SCHEMA_VERSION = 1",
             "SESSION_SCHEMA_VERSION = 1",
             "LOCAL_API_SCHEMA_VERSION = 1",
+            "AGENT_EVAL_SCHEMA_VERSION = 1",
+            "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -909,6 +912,23 @@ mod tests {
             assert!(text.contains(needle), "plan-executor.md missing {needle}");
         }
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn agent_eval_doc_matches_contract() {
+        let text = docs("agent-eval.md");
+        for needle in [
+            "AGENT_EVAL_SCHEMA_VERSION = 1",
+            "COMMON_BASELINE_ID = agent-common-baseline-1",
+            "CommonBaseline",
+            "Direct and Planned",
+            "replay = mock / recorded results only",
+        ] {
+            assert!(text.contains(needle), "agent-eval.md missing {needle}");
+        }
+        assert!(readme().contains("docs/agent-eval.md"));
+        assert_eq!(crate::agent_eval::AGENT_EVAL_SCHEMA_VERSION, 1);
+        assert_eq!(crate::agent_eval::COMMON_BASELINE_ID, "agent-common-baseline-1");
     }
 
     #[test]
