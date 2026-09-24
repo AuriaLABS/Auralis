@@ -164,6 +164,7 @@ mod tests {
             "e3-cpu-parallelism.md",
             "ENGINE_ARCHITECTURE.md",
             "ENGINE_LAYOUT.md",
+            "session.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -780,6 +781,7 @@ mod tests {
         assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
+        assert_eq!(crate::session::SESSION_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -815,6 +817,7 @@ mod tests {
             "TOOL_REGISTRY_SCHEMA_VERSION = 1",
             "PLAN_SCHEMA_VERSION = 1",
             "EXECUTOR_SCHEMA_VERSION = 1",
+            "SESSION_SCHEMA_VERSION = 1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -903,6 +906,22 @@ mod tests {
             assert!(text.contains(needle), "plan-executor.md missing {needle}");
         }
         assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn session_doc_matches_contract() {
+        let text = docs("session.md");
+        for needle in [
+            "SESSION_SCHEMA_VERSION = 1",
+            "SessionRepl::handle",
+            "does **not** store model",
+            "incompatible `auralis_session`",
+            "Tools and planner start **off**",
+        ] {
+            assert!(text.contains(needle), "session.md missing {needle}");
+        }
+        assert!(readme().contains("docs/session.md"));
+        assert_eq!(crate::session::SESSION_SCHEMA_VERSION, 1);
     }
 
     #[test]
