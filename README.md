@@ -113,6 +113,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/session-memory.md](docs/session-memory.md) — memoria de sesión opcional, evict-oldest y memory-off #98.
 - [docs/tool-provider.md](docs/tool-provider.md) — frontera de proveedores de tools y contract tests #113.
 - [docs/adversarial.md](docs/adversarial.md) — suite adversarial fail-closed de tools y permisos #144.
+- [docs/lab-registry.md](docs/lab-registry.md) — registro versionado de hipótesis, experimentos y resultados negativos #52.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
