@@ -921,10 +921,6 @@ mod tests {
     }
 
     #[test]
-
-    #[test]
-
-    #[test]
     fn session_memory_doc_matches_contract() {
         let text = docs("session-memory.md");
         for needle in [
@@ -939,6 +935,7 @@ mod tests {
         assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
     }
 
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -954,6 +951,7 @@ mod tests {
         assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
     }
 
+    #[test]
     fn agent_eval_doc_matches_contract() {
         let text = docs("agent-eval.md");
         for needle in [

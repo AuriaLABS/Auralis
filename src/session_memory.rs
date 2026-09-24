@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(recent[0].tag, "lookup");
         assert_eq!(recent[1].tag, "user");
         let blob = memory.canonical();
-        let loaded = SessionMemory::load(&blob).unwrap();
+        let mut loaded = SessionMemory::load(&blob).unwrap();
         assert_eq!(loaded.retrieve(None, None, 8), memory.retrieve(None, None, 8));
         memory.reset();
         assert_eq!(memory.len(), 0);
