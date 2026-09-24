@@ -172,6 +172,7 @@ mod tests {
             "tool-provider.md",
             "adversarial.md",
             "lab-registry.md",
+            "lab-runner.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -795,6 +796,7 @@ mod tests {
         assert_eq!(crate::tool_provider::TOOL_PROVIDER_SCHEMA_VERSION, 1);
         assert_eq!(crate::adversarial::ADVERSARIAL_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_registry::LAB_REGISTRY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -837,6 +839,7 @@ mod tests {
             "TOOL_PROVIDER_SCHEMA_VERSION = 1",
             "ADVERSARIAL_SUITE_SCHEMA_VERSION = 1",
             "LAB_REGISTRY_SCHEMA_VERSION = 1",
+            "LAB_RUNNER_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -987,6 +990,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-registry.md"));
         assert_eq!(crate::lab_registry::LAB_REGISTRY_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn lab_runner_doc_matches_contract() {
+        let text = docs("lab-runner.md");
+        for needle in [
+            "LAB_RUNNER_SCHEMA_VERSION = 1",
+            "mock-eval",
+            "fail closed",
+            "Does **not** run arbitrary",
+        ] {
+            assert!(text.contains(needle), "lab-runner.md missing {needle}");
+        }
+        assert!(readme().contains("docs/lab-runner.md"));
+        assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
     }
 
     #[test]

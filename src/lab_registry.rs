@@ -126,6 +126,10 @@ impl LabRegistry {
         self.experiments.insert(experiment.id.clone(), experiment);
     }
 
+    pub fn experiment(&self, id: &str) -> Option<&ExperimentRecord> {
+        self.experiments.get(id)
+    }
+
     pub fn start(&mut self, spec_id: &str) -> Result<(), LabError> {
         let experiment = self
             .experiments
