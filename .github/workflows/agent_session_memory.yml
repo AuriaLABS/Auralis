@@ -1,0 +1,32 @@
+name: Agent Session Memory
+
+on:
+  pull_request:
+    paths:
+      - "src/session_memory.rs"
+      - "src/session.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/session-memory.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_session_memory.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  session-memory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Session memory contracts
+        run: cargo test --lib session_memory::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::session_memory_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

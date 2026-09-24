@@ -168,6 +168,7 @@ mod tests {
             "local-api.md",
             "agent-eval.md",
             "event-stream.md",
+            "session-memory.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -787,6 +788,7 @@ mod tests {
         assert_eq!(crate::session::SESSION_SCHEMA_VERSION, 1);
         assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
         assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
+        assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -825,6 +827,7 @@ mod tests {
             "SESSION_SCHEMA_VERSION = 1",
             "LOCAL_API_SCHEMA_VERSION = 1",
             "EVENT_STREAM_SCHEMA_VERSION = 1",
+            "SESSION_MEMORY_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -918,6 +921,19 @@ mod tests {
     }
 
     #[test]
+    fn session_memory_doc_matches_contract() {
+        let text = docs("session-memory.md");
+        for needle in [
+            "SESSION_MEMORY_SCHEMA_VERSION = 1",
+            "evict-oldest",
+            "SessionMemory::off",
+            "does **not** touch",
+        ] {
+            assert!(text.contains(needle), "session-memory.md missing {needle}");
+        }
+        assert!(readme().contains("docs/session-memory.md"));
+        assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
+    }
 
     #[test]
     fn event_stream_doc_matches_contract() {
@@ -935,6 +951,7 @@ mod tests {
         assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
     }
 
+    #[test]
     fn agent_eval_doc_matches_contract() {
         let text = docs("agent-eval.md");
         for needle in [

@@ -49,6 +49,7 @@ pub mod run_config;
 pub mod sampling;
 pub mod scheduler;
 pub mod session;
+pub mod session_memory;
 pub mod sec;
 pub mod sec_overflow;
 pub mod sec_path;
