@@ -111,6 +111,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/local-api.md](docs/local-api.md) — API local in-process/loopback que comparte SessionRepl #50.
 - [docs/event-stream.md](docs/event-stream.md) — stream de eventos versionado con backpressure y cancelación #97.
 - [docs/session-memory.md](docs/session-memory.md) — memoria de sesión opcional, evict-oldest y memory-off #98.
+- [docs/tool-provider.md](docs/tool-provider.md) — frontera de proveedores de tools y contract tests #113.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
