@@ -1,0 +1,34 @@
+name: Agent Adversarial Suite
+
+on:
+  pull_request:
+    paths:
+      - "src/adversarial.rs"
+      - "src/agent_permissions.rs"
+      - "src/tool_protocol.rs"
+      - "src/event_stream.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/adversarial.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_adversarial.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  adversarial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Adversarial contracts
+        run: cargo test --lib adversarial::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::adversarial_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
