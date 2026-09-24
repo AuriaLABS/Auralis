@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::time::Instant;
 
 pub const LOCAL_API_SCHEMA_VERSION: u32 = 1;
@@ -272,6 +272,7 @@ fn handle_http(mut stream: TcpStream, api: &mut LocalAgentApi) -> std::io::Resul
         response.body
     );
     stream.write_all(out.as_bytes())?;
+    let _ = stream.shutdown(Shutdown::Write);
     Ok(())
 }
 
@@ -279,9 +280,10 @@ fn handle_http(mut stream: TcpStream, api: &mut LocalAgentApi) -> std::io::Resul
 mod tests {
     use super::*;
     use crate::session::SessionRepl;
-    use std::io::Write;
-    use std::net::TcpListener;
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::thread;
+    use std::time::Duration;
 
     fn req(method: &str, path: &str, body: &str, corr: &str) -> ApiRequest {
         ApiRequest {
@@ -370,13 +372,16 @@ mod tests {
             serve_one(&listener, &mut api).unwrap();
         });
         let mut stream = TcpStream::connect(addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
         let body = "id=http-50";
-        write!(
-            stream,
+        let payload = format!(
             "POST /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Correlation-Id: corr-50\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
-        )
-        .unwrap();
+        );
+        stream.write_all(payload.as_bytes()).unwrap();
+        let _ = stream.shutdown(Shutdown::Write);
         let mut buf = String::new();
         stream.read_to_string(&mut buf).unwrap();
         assert!(buf.contains("X-Correlation-Id: corr-50"));

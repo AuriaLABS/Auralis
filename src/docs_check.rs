@@ -912,8 +912,6 @@ mod tests {
     }
 
     #[test]
-
-    #[test]
     fn local_api_doc_matches_contract() {
         let text = docs("local-api.md");
         for needle in [
@@ -929,6 +927,7 @@ mod tests {
         assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
     }
 
+    #[test]
     fn session_doc_matches_contract() {
         let text = docs("session.md");
         for needle in [
