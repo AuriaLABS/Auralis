@@ -1,0 +1,31 @@
+name: Scientist Lab Registry
+
+on:
+  pull_request:
+    paths:
+      - "src/lab_registry.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/lab-registry.md"
+      - "docs/versions.md"
+      - ".github/workflows/scientist_lab_registry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lab-registry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lab registry contracts
+        run: cargo test --lib lab_registry::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::lab_registry_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
