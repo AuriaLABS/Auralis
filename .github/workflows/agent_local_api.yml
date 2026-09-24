@@ -1,0 +1,33 @@
+name: Agent Local API
+
+on:
+  pull_request:
+    paths:
+      - "src/local_api.rs"
+      - "src/session.rs"
+      - "src/tool_registry.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/local-api.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_local_api.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  local-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Local API contracts
+        run: cargo test --lib local_api::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::local_api_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
