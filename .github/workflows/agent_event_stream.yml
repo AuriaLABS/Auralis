@@ -1,0 +1,32 @@
+name: Agent Event Stream
+
+on:
+  pull_request:
+    paths:
+      - "src/event_stream.rs"
+      - "src/agent_eval.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/event-stream.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_event_stream.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  event-stream:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Event stream contracts
+        run: cargo test --lib event_stream::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::event_stream_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
