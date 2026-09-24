@@ -169,6 +169,7 @@ mod tests {
             "agent-eval.md",
             "event-stream.md",
             "session-memory.md",
+            "tool-provider.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -789,6 +790,7 @@ mod tests {
         assert_eq!(crate::local_api::LOCAL_API_SCHEMA_VERSION, 1);
         assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
         assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::tool_provider::TOOL_PROVIDER_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -828,6 +830,7 @@ mod tests {
             "LOCAL_API_SCHEMA_VERSION = 1",
             "EVENT_STREAM_SCHEMA_VERSION = 1",
             "SESSION_MEMORY_SCHEMA_VERSION = 1",
+            "TOOL_PROVIDER_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -933,6 +936,21 @@ mod tests {
         }
         assert!(readme().contains("docs/session-memory.md"));
         assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn tool_provider_doc_matches_contract() {
+        let text = docs("tool-provider.md");
+        for needle in [
+            "TOOL_PROVIDER_SCHEMA_VERSION = 1",
+            "run_provider_contract",
+            "does not grant permissions",
+            "do **not**",
+        ] {
+            assert!(text.contains(needle), "tool-provider.md missing {needle}");
+        }
+        assert!(readme().contains("docs/tool-provider.md"));
+        assert_eq!(crate::tool_provider::TOOL_PROVIDER_SCHEMA_VERSION, 1);
     }
 
     #[test]

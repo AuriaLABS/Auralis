@@ -1,0 +1,34 @@
+name: Agent Tool Provider
+
+on:
+  pull_request:
+    paths:
+      - "src/tool_provider.rs"
+      - "src/tool_registry.rs"
+      - "src/tool_protocol.rs"
+      - "src/agent_permissions.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/tool-provider.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_tool_provider.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tool-provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Provider contracts
+        run: cargo test --lib tool_provider::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::tool_provider_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
