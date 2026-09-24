@@ -779,6 +779,7 @@ mod tests {
         assert_eq!(crate::tool_protocol::TOOL_PROTOCOL_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_registry::TOOL_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
+        assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -813,6 +814,7 @@ mod tests {
             "TOOL_PROTOCOL_SCHEMA_VERSION = 1",
             "TOOL_REGISTRY_SCHEMA_VERSION = 1",
             "PLAN_SCHEMA_VERSION = 1",
+            "EXECUTOR_SCHEMA_VERSION = 1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
             "SCHEDULER_CONFIG_SCHEMA_VERSION = 1",
             "OPTIMIZER_CONFIG_SCHEMA_VERSION = 1",
@@ -885,6 +887,22 @@ mod tests {
         }
         assert!(readme().contains("docs/agent-planner.md"));
         assert_eq!(crate::planner::PLAN_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn plan_executor_doc_matches_contract() {
+        let text = docs("plan-executor.md");
+        for needle in [
+            "EXECUTOR_SCHEMA_VERSION = 1",
+            "pending, running, done, failed, skipped, cancelled",
+            "ExecutorReport::decision_log()",
+            "allow_mutative_replay",
+            "unconfirmed running step is rolled back",
+            "does not add",
+        ] {
+            assert!(text.contains(needle), "plan-executor.md missing {needle}");
+        }
+        assert_eq!(crate::plan_executor::EXECUTOR_SCHEMA_VERSION, 1);
     }
 
     #[test]
