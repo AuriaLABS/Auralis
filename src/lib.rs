@@ -38,6 +38,7 @@ pub mod numeric;
 pub mod numeric_state;
 pub mod optim;
 pub mod position;
+pub mod plan_executor;
 pub mod planner;
 pub mod release;
 pub mod recurrent;
