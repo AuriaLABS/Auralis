@@ -170,6 +170,7 @@ mod tests {
             "event-stream.md",
             "session-memory.md",
             "tool-provider.md",
+            "adversarial.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -791,6 +792,7 @@ mod tests {
         assert_eq!(crate::event_stream::EVENT_STREAM_SCHEMA_VERSION, 1);
         assert_eq!(crate::session_memory::SESSION_MEMORY_SCHEMA_VERSION, 1);
         assert_eq!(crate::tool_provider::TOOL_PROVIDER_SCHEMA_VERSION, 1);
+        assert_eq!(crate::adversarial::ADVERSARIAL_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -831,6 +833,7 @@ mod tests {
             "EVENT_STREAM_SCHEMA_VERSION = 1",
             "SESSION_MEMORY_SCHEMA_VERSION = 1",
             "TOOL_PROVIDER_SCHEMA_VERSION = 1",
+            "ADVERSARIAL_SUITE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -951,6 +954,21 @@ mod tests {
         }
         assert!(readme().contains("docs/tool-provider.md"));
         assert_eq!(crate::tool_provider::TOOL_PROVIDER_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn adversarial_doc_matches_contract() {
+        let text = docs("adversarial.md");
+        for needle in [
+            "ADVERSARIAL_SUITE_SCHEMA_VERSION = 1",
+            "lookalike name",
+            "does **not** increment",
+            "No silent partial execution",
+        ] {
+            assert!(text.contains(needle), "adversarial.md missing {needle}");
+        }
+        assert!(readme().contains("docs/adversarial.md"));
+        assert_eq!(crate::adversarial::ADVERSARIAL_SUITE_SCHEMA_VERSION, 1);
     }
 
     #[test]

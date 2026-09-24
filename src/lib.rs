@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod adversarial;
 pub mod agent_eval;
 pub mod agent_permissions;
 pub mod arena;
