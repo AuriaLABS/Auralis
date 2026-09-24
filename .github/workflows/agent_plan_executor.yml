@@ -1,0 +1,39 @@
+name: Agent Plan Executor
+
+on:
+  pull_request:
+    paths:
+      - "src/plan_executor.rs"
+      - "src/planner.rs"
+      - "src/tool_registry.rs"
+      - "src/agent_permissions.rs"
+      - "src/tool_protocol.rs"
+      - "src/agent_eval.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/plan-executor.md"
+      - "docs/versions.md"
+      - ".github/workflows/agent_plan_executor.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  executor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Executor contracts
+        run: cargo test --lib plan_executor::tests -- --nocapture
+
+      - name: Planner contracts remain intact
+        run: cargo test --lib planner::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::plan_executor_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
