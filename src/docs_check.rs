@@ -181,6 +181,7 @@ mod tests {
             "lab-branch.md",
             "lab-catalog.md",
             "modality.md",
+            "mm-dataset.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -813,6 +814,7 @@ mod tests {
         assert_eq!(crate::lab_branch::LAB_BRANCH_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
         assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
+        assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -864,6 +866,7 @@ mod tests {
             "LAB_BRANCH_SCHEMA_VERSION = 1",
             "LAB_CATALOG_SCHEMA_VERSION = 1",
             "MODALITY_SCHEMA_VERSION = 1",
+            "MM_DATASET_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1149,6 +1152,21 @@ mod tests {
         }
         assert!(readme().contains("docs/modality.md"));
         assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn mm_dataset_doc_matches_contract() {
+        let text = docs("mm-dataset.md");
+        for needle in [
+            "MM_DATASET_SCHEMA_VERSION = 1",
+            "fingerprints are stable",
+            "missing or corrupt assets fail closed",
+            "Does **not** download large datasets",
+        ] {
+            assert!(text.contains(needle), "mm-dataset.md missing {needle}");
+        }
+        assert!(readme().contains("docs/mm-dataset.md"));
+        assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
     }
 
     #[test]
