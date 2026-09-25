@@ -30,6 +30,7 @@ pub mod gradcheck;
 pub mod inspect;
 pub mod kernels;
 pub mod kv_cache;
+pub mod lab_branch;
 pub mod lab_orchestrator;
 pub mod lab_proposal;
 pub mod lab_registry;
