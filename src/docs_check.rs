@@ -180,6 +180,7 @@ mod tests {
             "campaign-scheduler.md",
             "lab-branch.md",
             "lab-catalog.md",
+            "modality.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -811,6 +812,7 @@ mod tests {
         assert_eq!(crate::campaign_scheduler::CAMPAIGN_SCHEDULER_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_branch::LAB_BRANCH_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
+        assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -861,6 +863,7 @@ mod tests {
             "CAMPAIGN_SCHEDULER_SCHEMA_VERSION = 1",
             "LAB_BRANCH_SCHEMA_VERSION = 1",
             "LAB_CATALOG_SCHEMA_VERSION = 1",
+            "MODALITY_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1131,6 +1134,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-catalog.md"));
         assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn modality_doc_matches_contract() {
+        let text = docs("modality.md");
+        for needle in [
+            "MODALITY_SCHEMA_VERSION = 1",
+            "text backend is an identity",
+            "modality=off",
+            "Does **not** implement visual",
+        ] {
+            assert!(text.contains(needle), "modality.md missing {needle}");
+        }
+        assert!(readme().contains("docs/modality.md"));
+        assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
     }
 
     #[test]
