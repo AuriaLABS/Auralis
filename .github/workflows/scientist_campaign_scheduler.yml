@@ -1,0 +1,32 @@
+name: Scientist Campaign Scheduler
+
+on:
+  pull_request:
+    paths:
+      - "src/campaign_scheduler.rs"
+      - "src/campaign.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/campaign-scheduler.md"
+      - "docs/versions.md"
+      - ".github/workflows/scientist_campaign_scheduler.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  campaign-scheduler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Campaign scheduler contracts
+        run: cargo test --lib campaign_scheduler::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::campaign_scheduler_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

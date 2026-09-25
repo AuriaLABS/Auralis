@@ -177,6 +177,7 @@ mod tests {
             "lab-proposal.md",
             "lab-orchestrator.md",
             "campaign.md",
+            "campaign-scheduler.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -805,6 +806,7 @@ mod tests {
         assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_orchestrator::LAB_ORCHESTRATOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::campaign::CAMPAIGN_SCHEMA_VERSION, 1);
+        assert_eq!(crate::campaign_scheduler::CAMPAIGN_SCHEDULER_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -852,6 +854,7 @@ mod tests {
             "LAB_PROPOSAL_SCHEMA_VERSION = 1",
             "LAB_ORCHESTRATOR_SCHEMA_VERSION = 1",
             "CAMPAIGN_SCHEMA_VERSION = 1",
+            "CAMPAIGN_SCHEDULER_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1077,6 +1080,21 @@ mod tests {
         }
         assert!(readme().contains("docs/campaign.md"));
         assert_eq!(crate::campaign::CAMPAIGN_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn campaign_scheduler_doc_matches_contract() {
+        let text = docs("campaign-scheduler.md");
+        for needle in [
+            "CAMPAIGN_SCHEDULER_SCHEMA_VERSION = 1",
+            "pause/resume",
+            "budget overflow stops scheduling",
+            "Does **not** require a cloud scheduler",
+        ] {
+            assert!(text.contains(needle), "campaign-scheduler.md missing {needle}");
+        }
+        assert!(readme().contains("docs/campaign-scheduler.md"));
+        assert_eq!(crate::campaign_scheduler::CAMPAIGN_SCHEDULER_SCHEMA_VERSION, 1);
     }
 
     #[test]

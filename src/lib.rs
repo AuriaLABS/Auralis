@@ -15,6 +15,7 @@ pub mod bpe;
 pub mod brain_ab;
 pub mod capability_suite;
 pub mod campaign;
+pub mod campaign_scheduler;
 pub mod checkpoint;
 pub mod code_suite;
 pub mod ci_matrix;
