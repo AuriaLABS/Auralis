@@ -10,6 +10,7 @@ pub enum ModalityId {
     Off,
     Text,
     Image,
+    Audio,
 }
 
 impl ModalityId {
@@ -18,6 +19,7 @@ impl ModalityId {
             Self::Off => "off",
             Self::Text => "text",
             Self::Image => "image",
+            Self::Audio => "audio",
         }
     }
 }

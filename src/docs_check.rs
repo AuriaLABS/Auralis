@@ -184,6 +184,7 @@ mod tests {
             "mm-dataset.md",
             "vision.md",
             "fusion.md",
+            "audio.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -819,6 +820,7 @@ mod tests {
         assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
         assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
         assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
+        assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -873,6 +875,7 @@ mod tests {
             "MM_DATASET_SCHEMA_VERSION = 1",
             "VISION_SCHEMA_VERSION = 1",
             "FUSION_SCHEMA_VERSION = 1",
+            "AUDIO_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1203,6 +1206,21 @@ mod tests {
         }
         assert!(readme().contains("docs/fusion.md"));
         assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn audio_doc_matches_contract() {
+        let text = docs("audio.md");
+        for needle in [
+            "AUDIO_SCHEMA_VERSION = 1",
+            "same audio/config yields the same framed tokens",
+            "partial frames are masked",
+            "Does **not** do TTS",
+        ] {
+            assert!(text.contains(needle), "audio.md missing {needle}");
+        }
+        assert!(readme().contains("docs/audio.md"));
+        assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
     }
 
     #[test]

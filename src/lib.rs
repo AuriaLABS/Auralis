@@ -5,6 +5,7 @@ pub mod agent_permissions;
 pub mod arena;
 pub mod architecture;
 pub mod attention;
+pub mod audio;
 pub mod batch;
 pub mod backend;
 pub mod bench;
