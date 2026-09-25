@@ -1,0 +1,33 @@
+name: Scientist Lab Catalog
+
+on:
+  pull_request:
+    paths:
+      - "src/lab_catalog.rs"
+      - "src/lab_registry.rs"
+      - "src/lab_review.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/lab-catalog.md"
+      - "docs/versions.md"
+      - ".github/workflows/scientist_lab_catalog.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lab-catalog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lab catalog contracts
+        run: cargo test --lib lab_catalog::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::lab_catalog_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
