@@ -25,6 +25,7 @@ pub mod equivalence;
 pub mod eval;
 pub mod eval_registry;
 pub mod event_stream;
+pub mod fusion;
 pub mod experiment;
 pub mod gradcheck;
 pub mod inspect;

@@ -183,6 +183,7 @@ mod tests {
             "modality.md",
             "mm-dataset.md",
             "vision.md",
+            "fusion.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -817,6 +818,7 @@ mod tests {
         assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
         assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
+        assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -870,6 +872,7 @@ mod tests {
             "MODALITY_SCHEMA_VERSION = 1",
             "MM_DATASET_SCHEMA_VERSION = 1",
             "VISION_SCHEMA_VERSION = 1",
+            "FUSION_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1185,6 +1188,21 @@ mod tests {
         }
         assert!(readme().contains("docs/vision.md"));
         assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn fusion_doc_matches_contract() {
+        let text = docs("fusion.md");
+        for needle in [
+            "FUSION_SCHEMA_VERSION = 1",
+            "text-only is identity",
+            "required missing modality fails closed",
+            "Does **not** declare a final multimodal architecture",
+        ] {
+            assert!(text.contains(needle), "fusion.md missing {needle}");
+        }
+        assert!(readme().contains("docs/fusion.md"));
+        assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
     }
 
     #[test]
