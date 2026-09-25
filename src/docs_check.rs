@@ -175,6 +175,7 @@ mod tests {
             "lab-runner.md",
             "lab-review.md",
             "lab-proposal.md",
+            "lab-orchestrator.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -801,6 +802,7 @@ mod tests {
         assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
+        assert_eq!(crate::lab_orchestrator::LAB_ORCHESTRATOR_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -846,6 +848,7 @@ mod tests {
             "LAB_RUNNER_SCHEMA_VERSION = 1",
             "LAB_REVIEW_SCHEMA_VERSION = 1",
             "LAB_PROPOSAL_SCHEMA_VERSION = 1",
+            "LAB_ORCHESTRATOR_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1041,6 +1044,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-proposal.md"));
         assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn lab_orchestrator_doc_matches_contract() {
+        let text = docs("lab-orchestrator.md");
+        for needle in [
+            "LAB_ORCHESTRATOR_SCHEMA_VERSION = 1",
+            "exclusive scopes",
+            "handoffs are explicit",
+            "Does **not** auto-merge",
+        ] {
+            assert!(text.contains(needle), "lab-orchestrator.md missing {needle}");
+        }
+        assert!(readme().contains("docs/lab-orchestrator.md"));
+        assert_eq!(crate::lab_orchestrator::LAB_ORCHESTRATOR_SCHEMA_VERSION, 1);
     }
 
     #[test]
