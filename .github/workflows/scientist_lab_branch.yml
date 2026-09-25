@@ -1,0 +1,32 @@
+name: Scientist Lab Branch
+
+on:
+  pull_request:
+    paths:
+      - "src/lab_branch.rs"
+      - "src/lab_proposal.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/lab-branch.md"
+      - "docs/versions.md"
+      - ".github/workflows/scientist_lab_branch.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lab-branch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lab branch contracts
+        run: cargo test --lib lab_branch::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::lab_branch_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
