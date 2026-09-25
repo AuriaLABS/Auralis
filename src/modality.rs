@@ -9,6 +9,7 @@ pub const MODALITY_SCHEMA_VERSION: u32 = 1;
 pub enum ModalityId {
     Off,
     Text,
+    Image,
 }
 
 impl ModalityId {
@@ -16,6 +17,7 @@ impl ModalityId {
         match self {
             Self::Off => "off",
             Self::Text => "text",
+            Self::Image => "image",
         }
     }
 }
