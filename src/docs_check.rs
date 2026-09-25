@@ -174,6 +174,7 @@ mod tests {
             "lab-registry.md",
             "lab-runner.md",
             "lab-review.md",
+            "lab-proposal.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -799,6 +800,7 @@ mod tests {
         assert_eq!(crate::lab_registry::LAB_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
+        assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -843,6 +845,7 @@ mod tests {
             "LAB_REGISTRY_SCHEMA_VERSION = 1",
             "LAB_RUNNER_SCHEMA_VERSION = 1",
             "LAB_REVIEW_SCHEMA_VERSION = 1",
+            "LAB_PROPOSAL_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1023,6 +1026,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-review.md"));
         assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn lab_proposal_doc_matches_contract() {
+        let text = docs("lab-proposal.md");
+        for needle in [
+            "LAB_PROPOSAL_SCHEMA_VERSION = 1",
+            "falsification are required",
+            "cannot become an experiment",
+            "Does **not** write production code",
+        ] {
+            assert!(text.contains(needle), "lab-proposal.md missing {needle}");
+        }
+        assert!(readme().contains("docs/lab-proposal.md"));
+        assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
     }
 
     #[test]
