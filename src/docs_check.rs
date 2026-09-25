@@ -176,6 +176,7 @@ mod tests {
             "lab-review.md",
             "lab-proposal.md",
             "lab-orchestrator.md",
+            "campaign.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -803,6 +804,7 @@ mod tests {
         assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_proposal::LAB_PROPOSAL_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_orchestrator::LAB_ORCHESTRATOR_SCHEMA_VERSION, 1);
+        assert_eq!(crate::campaign::CAMPAIGN_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -849,6 +851,7 @@ mod tests {
             "LAB_REVIEW_SCHEMA_VERSION = 1",
             "LAB_PROPOSAL_SCHEMA_VERSION = 1",
             "LAB_ORCHESTRATOR_SCHEMA_VERSION = 1",
+            "CAMPAIGN_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1059,6 +1062,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-orchestrator.md"));
         assert_eq!(crate::lab_orchestrator::LAB_ORCHESTRATOR_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn campaign_doc_matches_contract() {
+        let text = docs("campaign.md");
+        for needle in [
+            "CAMPAIGN_SCHEMA_VERSION = 1",
+            "resume skips completed runs",
+            "infrastructure failures",
+            "Does **not** pick a winner",
+        ] {
+            assert!(text.contains(needle), "campaign.md missing {needle}");
+        }
+        assert!(readme().contains("docs/campaign.md"));
+        assert_eq!(crate::campaign::CAMPAIGN_SCHEMA_VERSION, 1);
     }
 
     #[test]
