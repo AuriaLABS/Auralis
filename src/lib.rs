@@ -48,6 +48,7 @@ pub mod memory_suite;
 pub mod metrics;
 pub mod modality;
 pub mod mm_dataset;
+pub mod mm_eval;
 pub mod vision;
 pub mod model;
 pub mod moe;

@@ -127,6 +127,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/vision.md](docs/vision.md) — encoder visual reference y tokenización de imagen #62.
 - [docs/fusion.md](docs/fusion.md) — fusión multimodal experimental y máscaras cross-modal #64.
 - [docs/audio.md](docs/audio.md) — encoder de audio reference y representación temporal #63.
+- [docs/mm-eval.md](docs/mm-eval.md) — suite de evaluación unimodal y cross-modal #65.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
