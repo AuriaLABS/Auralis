@@ -1,0 +1,32 @@
+name: Multimodal Vision Encoder
+
+on:
+  pull_request:
+    paths:
+      - "src/vision.rs"
+      - "src/modality.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/vision.md"
+      - "docs/versions.md"
+      - ".github/workflows/mm_vision.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  vision:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Vision contracts
+        run: cargo test --lib vision::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::vision_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

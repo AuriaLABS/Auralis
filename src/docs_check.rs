@@ -182,6 +182,7 @@ mod tests {
             "lab-catalog.md",
             "modality.md",
             "mm-dataset.md",
+            "vision.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -815,6 +816,7 @@ mod tests {
         assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
         assert_eq!(crate::modality::MODALITY_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
+        assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -867,6 +869,7 @@ mod tests {
             "LAB_CATALOG_SCHEMA_VERSION = 1",
             "MODALITY_SCHEMA_VERSION = 1",
             "MM_DATASET_SCHEMA_VERSION = 1",
+            "VISION_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1167,6 +1170,21 @@ mod tests {
         }
         assert!(readme().contains("docs/mm-dataset.md"));
         assert_eq!(crate::mm_dataset::MM_DATASET_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn vision_doc_matches_contract() {
+        let text = docs("vision.md");
+        for needle in [
+            "VISION_SCHEMA_VERSION = 1",
+            "same image/config yields the same patch tokens",
+            "can be disabled without changing the text path",
+            "Does **not** generate images",
+        ] {
+            assert!(text.contains(needle), "vision.md missing {needle}");
+        }
+        assert!(readme().contains("docs/vision.md"));
+        assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
     }
 
     #[test]
