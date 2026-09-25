@@ -180,19 +180,30 @@ mod tests {
 
     #[test]
     fn infra_and_experiment_failures_are_distinct() {
-        let spec = CampaignSpec {
+        let experiment = CampaignSpec {
             id: "c2".into(),
-            candidates: vec!["broken".into(), "adam".into()],
+            candidates: vec!["broken".into()],
+            suites: vec!["reason".into()],
+            seeds: vec![1],
+            budget_units: 1,
+        };
+        let infra = CampaignSpec {
+            id: "c3".into(),
+            candidates: vec!["adam".into()],
             suites: vec!["infra-flaky".into()],
             seeds: vec![0],
-            budget_units: 2,
+            budget_units: 1,
         };
-        let mut state = CampaignState::new(spec).unwrap();
-        let left = state.step().unwrap().unwrap();
-        let right = state.step().unwrap().unwrap();
+        let left = CampaignState::new(experiment)
+            .unwrap()
+            .step()
+            .unwrap()
+            .unwrap();
+        let right = CampaignState::new(infra).unwrap().step().unwrap().unwrap();
         assert_eq!(left.failure, Some(CampaignFailure::Experiment));
         assert_eq!(right.failure, Some(CampaignFailure::Infra));
         assert_ne!(left.run_id, right.run_id);
         assert_eq!(left.spec_id, "c2");
+        assert_eq!(right.spec_id, "c3");
     }
 }
