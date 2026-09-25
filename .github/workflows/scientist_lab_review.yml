@@ -1,0 +1,33 @@
+name: Scientist Lab Review
+
+on:
+  pull_request:
+    paths:
+      - "src/lab_review.rs"
+      - "src/lab_runner.rs"
+      - "src/lab_registry.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/lab-review.md"
+      - "docs/versions.md"
+      - ".github/workflows/scientist_lab_review.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lab-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Lab review contracts
+        run: cargo test --lib lab_review::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::lab_review_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

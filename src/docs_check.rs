@@ -173,6 +173,7 @@ mod tests {
             "adversarial.md",
             "lab-registry.md",
             "lab-runner.md",
+            "lab-review.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -797,6 +798,7 @@ mod tests {
         assert_eq!(crate::adversarial::ADVERSARIAL_SUITE_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_registry::LAB_REGISTRY_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
+        assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -840,6 +842,7 @@ mod tests {
             "ADVERSARIAL_SUITE_SCHEMA_VERSION = 1",
             "LAB_REGISTRY_SCHEMA_VERSION = 1",
             "LAB_RUNNER_SCHEMA_VERSION = 1",
+            "LAB_REVIEW_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1005,6 +1008,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-runner.md"));
         assert_eq!(crate::lab_runner::LAB_RUNNER_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn lab_review_doc_matches_contract() {
+        let text = docs("lab-review.md");
+        for needle in [
+            "LAB_REVIEW_SCHEMA_VERSION = 1",
+            "original spec",
+            "inconclusive",
+            "Does **not** rewrite criteria",
+        ] {
+            assert!(text.contains(needle), "lab-review.md missing {needle}");
+        }
+        assert!(readme().contains("docs/lab-review.md"));
+        assert_eq!(crate::lab_review::LAB_REVIEW_SCHEMA_VERSION, 1);
     }
 
     #[test]
