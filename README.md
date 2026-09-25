@@ -117,6 +117,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/lab-runner.md](docs/lab-runner.md) — runner controlado de experimentos con fixtures allowlisted #53.
 - [docs/lab-review.md](docs/lab-review.md) — revisor independiente de resultados y gates de aceptación #54.
 - [docs/lab-proposal.md](docs/lab-proposal.md) — propuestas estructuradas con hipótesis y criterios predeclarados #55.
+- [docs/lab-orchestrator.md](docs/lab-orchestrator.md) — orquestador multi-IA con scopes exclusivos y handoffs #56.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
