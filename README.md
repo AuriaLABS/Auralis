@@ -121,6 +121,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/campaign.md](docs/campaign.md) — campaign runner de candidatos/suites/seeds con presupuesto y resume #76.
 - [docs/campaign-scheduler.md](docs/campaign-scheduler.md) — scheduler local persistente de campañas #115.
 - [docs/lab-branch.md](docs/lab-branch.md) — ramas y PRs experimentales en draft bajo política #57.
+- [docs/lab-catalog.md](docs/lab-catalog.md) — catálogo consultable de evidencia experimental #58.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.

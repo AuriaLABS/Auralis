@@ -179,6 +179,7 @@ mod tests {
             "campaign.md",
             "campaign-scheduler.md",
             "lab-branch.md",
+            "lab-catalog.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -809,6 +810,7 @@ mod tests {
         assert_eq!(crate::campaign::CAMPAIGN_SCHEMA_VERSION, 1);
         assert_eq!(crate::campaign_scheduler::CAMPAIGN_SCHEDULER_SCHEMA_VERSION, 1);
         assert_eq!(crate::lab_branch::LAB_BRANCH_SCHEMA_VERSION, 1);
+        assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -858,6 +860,7 @@ mod tests {
             "CAMPAIGN_SCHEMA_VERSION = 1",
             "CAMPAIGN_SCHEDULER_SCHEMA_VERSION = 1",
             "LAB_BRANCH_SCHEMA_VERSION = 1",
+            "LAB_CATALOG_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1113,6 +1116,21 @@ mod tests {
         }
         assert!(readme().contains("docs/lab-branch.md"));
         assert_eq!(crate::lab_branch::LAB_BRANCH_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn lab_catalog_doc_matches_contract() {
+        let text = docs("lab-catalog.md");
+        for needle in [
+            "LAB_CATALOG_SCHEMA_VERSION = 1",
+            "positive, negative and inconclusive",
+            "duplicate proposal",
+            "Does **not** treat historical correlation",
+        ] {
+            assert!(text.contains(needle), "lab-catalog.md missing {needle}");
+        }
+        assert!(readme().contains("docs/lab-catalog.md"));
+        assert_eq!(crate::lab_catalog::LAB_CATALOG_SCHEMA_VERSION, 1);
     }
 
     #[test]
