@@ -190,6 +190,7 @@ mod tests {
             "audio-preprocess.md",
             "mm-collator.md",
             "mm-align.md",
+            "video.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -831,6 +832,7 @@ mod tests {
         assert_eq!(crate::audio_preprocess::AUDIO_PREPROCESS_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_collator::MM_COLLATOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_align::MM_ALIGN_SCHEMA_VERSION, 1);
+        assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -891,6 +893,7 @@ mod tests {
             "AUDIO_PREPROCESS_SCHEMA_VERSION = 1",
             "MM_COLLATOR_SCHEMA_VERSION = 1",
             "MM_ALIGN_SCHEMA_VERSION = 1",
+            "VIDEO_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1311,6 +1314,21 @@ mod tests {
         }
         assert!(readme().contains("docs/mm-align.md"));
         assert_eq!(crate::mm_align::MM_ALIGN_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn video_doc_matches_contract() {
+        let text = docs("video.md");
+        for needle in [
+            "VIDEO_SCHEMA_VERSION = 1",
+            "frame sampling and temporal order are deterministic",
+            "the visual encoder is reused",
+            "Does **not** add a heavy video architecture",
+        ] {
+            assert!(text.contains(needle), "video.md missing {needle}");
+        }
+        assert!(readme().contains("docs/video.md"));
+        assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
     }
 
     #[test]
