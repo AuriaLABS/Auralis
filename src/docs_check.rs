@@ -185,6 +185,7 @@ mod tests {
             "vision.md",
             "fusion.md",
             "audio.md",
+            "mm-eval.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -821,6 +822,7 @@ mod tests {
         assert_eq!(crate::vision::VISION_SCHEMA_VERSION, 1);
         assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
         assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
+        assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -876,6 +878,7 @@ mod tests {
             "VISION_SCHEMA_VERSION = 1",
             "FUSION_SCHEMA_VERSION = 1",
             "AUDIO_SCHEMA_VERSION = 1",
+            "MM_EVAL_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1221,6 +1224,21 @@ mod tests {
         }
         assert!(readme().contains("docs/audio.md"));
         assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn mm_eval_doc_matches_contract() {
+        let text = docs("mm-eval.md");
+        for needle in [
+            "MM_EVAL_SCHEMA_VERSION = 1",
+            "text, vision, audio and cross-modal",
+            "modality regression is visible",
+            "Does **not** use a single aggregate score",
+        ] {
+            assert!(text.contains(needle), "mm-eval.md missing {needle}");
+        }
+        assert!(readme().contains("docs/mm-eval.md"));
+        assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
     }
 
     #[test]
