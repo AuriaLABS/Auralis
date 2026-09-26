@@ -6,6 +6,7 @@ pub mod arena;
 pub mod architecture;
 pub mod attention;
 pub mod audio;
+pub mod audio_preprocess;
 pub mod batch;
 pub mod backend;
 pub mod bench;

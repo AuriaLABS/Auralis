@@ -187,6 +187,7 @@ mod tests {
             "audio.md",
             "mm-eval.md",
             "image-preprocess.md",
+            "audio-preprocess.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -825,6 +826,7 @@ mod tests {
         assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
         assert_eq!(crate::image_preprocess::IMAGE_PREPROCESS_SCHEMA_VERSION, 1);
+        assert_eq!(crate::audio_preprocess::AUDIO_PREPROCESS_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -882,6 +884,7 @@ mod tests {
             "AUDIO_SCHEMA_VERSION = 1",
             "MM_EVAL_SCHEMA_VERSION = 1",
             "IMAGE_PREPROCESS_SCHEMA_VERSION = 1",
+            "AUDIO_PREPROCESS_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1257,6 +1260,21 @@ mod tests {
         }
         assert!(readme().contains("docs/image-preprocess.md"));
         assert_eq!(crate::image_preprocess::IMAGE_PREPROCESS_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn audio_preprocess_doc_matches_contract() {
+        let text = docs("audio-preprocess.md");
+        for needle in [
+            "AUDIO_PREPROCESS_SCHEMA_VERSION = 1",
+            "allowed format is `pcm16` mono",
+            "corrupt or unsupported input never reaches the encoder",
+            "Does **not** decode compressed containers",
+        ] {
+            assert!(text.contains(needle), "audio-preprocess.md missing {needle}");
+        }
+        assert!(readme().contains("docs/audio-preprocess.md"));
+        assert_eq!(crate::audio_preprocess::AUDIO_PREPROCESS_SCHEMA_VERSION, 1);
     }
 
     #[test]
