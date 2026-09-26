@@ -188,6 +188,7 @@ mod tests {
             "mm-eval.md",
             "image-preprocess.md",
             "audio-preprocess.md",
+            "mm-collator.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -827,6 +828,7 @@ mod tests {
         assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
         assert_eq!(crate::image_preprocess::IMAGE_PREPROCESS_SCHEMA_VERSION, 1);
         assert_eq!(crate::audio_preprocess::AUDIO_PREPROCESS_SCHEMA_VERSION, 1);
+        assert_eq!(crate::mm_collator::MM_COLLATOR_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -885,6 +887,7 @@ mod tests {
             "MM_EVAL_SCHEMA_VERSION = 1",
             "IMAGE_PREPROCESS_SCHEMA_VERSION = 1",
             "AUDIO_PREPROCESS_SCHEMA_VERSION = 1",
+            "MM_COLLATOR_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1275,6 +1278,21 @@ mod tests {
         }
         assert!(readme().contains("docs/audio-preprocess.md"));
         assert_eq!(crate::audio_preprocess::AUDIO_PREPROCESS_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn mm_collator_doc_matches_contract() {
+        let text = docs("mm-collator.md");
+        for needle in [
+            "MM_COLLATOR_SCHEMA_VERSION = 1",
+            "same examples produce the same batch",
+            "text-only keeps original tokens",
+            "Does **not** change unimodal encoder semantics",
+        ] {
+            assert!(text.contains(needle), "mm-collator.md missing {needle}");
+        }
+        assert!(readme().contains("docs/mm-collator.md"));
+        assert_eq!(crate::mm_collator::MM_COLLATOR_SCHEMA_VERSION, 1);
     }
 
     #[test]
