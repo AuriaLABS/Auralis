@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn oom_preflight_and_empty_fail() {
         assert_eq!(collate(&[]).unwrap_err(), CollatorError::Empty);
-        let long = text(&[1; 32]);
+        let long = text(&[1; 33]);
         assert_eq!(collate(&[long.clone(), long]).unwrap_err(), CollatorError::Oom);
     }
 }
