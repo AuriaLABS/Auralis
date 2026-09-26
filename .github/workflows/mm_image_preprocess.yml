@@ -1,0 +1,32 @@
+name: Multimodal Image Preprocess
+
+on:
+  pull_request:
+    paths:
+      - "src/image_preprocess.rs"
+      - "src/vision.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/image-preprocess.md"
+      - "docs/versions.md"
+      - ".github/workflows/mm_image_preprocess.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  image-preprocess:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Image preprocess contracts
+        run: cargo test --lib image_preprocess::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::image_preprocess_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
