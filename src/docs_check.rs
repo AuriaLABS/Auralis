@@ -192,6 +192,7 @@ mod tests {
             "mm-align.md",
             "video.md",
             "device.md",
+            "gpu.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -835,6 +836,7 @@ mod tests {
         assert_eq!(crate::mm_align::MM_ALIGN_SCHEMA_VERSION, 1);
         assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -897,6 +899,7 @@ mod tests {
             "MM_ALIGN_SCHEMA_VERSION = 1",
             "VIDEO_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
+            "GPU_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1347,6 +1350,21 @@ mod tests {
         }
         assert!(readme().contains("docs/device.md"));
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn gpu_doc_matches_contract() {
+        let text = docs("gpu.md");
+        for needle in [
+            "GPU_SCHEMA_VERSION = 1",
+            "unavailable in CI",
+            "product default stays OptimizedCpu",
+            "Does **not** enable GPU by default",
+        ] {
+            assert!(text.contains(needle), "gpu.md missing {needle}");
+        }
+        assert!(readme().contains("docs/gpu.md"));
+        assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
     }
 
     #[test]
