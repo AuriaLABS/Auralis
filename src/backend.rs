@@ -12,6 +12,7 @@ use std::fmt;
 pub enum DeviceId {
     Cpu,
     Mock(u32),
+    Gpu,
 }
 
 impl DeviceId {
@@ -19,6 +20,7 @@ impl DeviceId {
         match self {
             Self::Cpu => "cpu".into(),
             Self::Mock(index) => format!("mock:{index}"),
+            Self::Gpu => "gpu".into(),
         }
     }
 }
@@ -28,6 +30,7 @@ pub enum BackendId {
     ScalarCpu,
     OptimizedCpu,
     Mock,
+    Gpu,
 }
 
 impl BackendId {
@@ -36,6 +39,7 @@ impl BackendId {
             Self::ScalarCpu => "cpu-scalar",
             Self::OptimizedCpu => "cpu-row-slices",
             Self::Mock => "mock-reference",
+            Self::Gpu => "gpu-single",
         }
     }
 }
@@ -521,7 +525,9 @@ mod tests {
         assert_eq!(BackendId::ScalarCpu.as_str(), "cpu-scalar");
         assert_eq!(BackendId::OptimizedCpu.as_str(), "cpu-row-slices");
         assert_eq!(BackendId::Mock.as_str(), "mock-reference");
+        assert_eq!(BackendId::Gpu.as_str(), "gpu-single");
         assert_eq!(DeviceId::Cpu.label(), "cpu");
         assert_eq!(DeviceId::Mock(4).label(), "mock:4");
+        assert_eq!(DeviceId::Gpu.label(), "gpu");
     }
 }
