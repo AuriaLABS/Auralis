@@ -191,6 +191,7 @@ mod tests {
             "mm-collator.md",
             "mm-align.md",
             "video.md",
+            "device.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -833,6 +834,7 @@ mod tests {
         assert_eq!(crate::mm_collator::MM_COLLATOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_align::MM_ALIGN_SCHEMA_VERSION, 1);
         assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
+        assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -894,6 +896,7 @@ mod tests {
             "MM_COLLATOR_SCHEMA_VERSION = 1",
             "MM_ALIGN_SCHEMA_VERSION = 1",
             "VIDEO_SCHEMA_VERSION = 1",
+            "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1329,6 +1332,21 @@ mod tests {
         }
         assert!(readme().contains("docs/video.md"));
         assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn device_doc_matches_contract() {
+        let text = docs("device.md");
+        for needle in [
+            "DEVICE_SCHEMA_VERSION = 1",
+            "CPU remains the default host device",
+            "implicit copy",
+            "Does **not** implement GPU kernels",
+        ] {
+            assert!(text.contains(needle), "device.md missing {needle}");
+        }
+        assert!(readme().contains("docs/device.md"));
+        assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
     }
 
     #[test]
