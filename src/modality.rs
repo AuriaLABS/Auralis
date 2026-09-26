@@ -11,6 +11,7 @@ pub enum ModalityId {
     Text,
     Image,
     Audio,
+    Video,
 }
 
 impl ModalityId {
@@ -20,6 +21,7 @@ impl ModalityId {
             Self::Text => "text",
             Self::Image => "image",
             Self::Audio => "audio",
+            Self::Video => "video",
         }
     }
 }

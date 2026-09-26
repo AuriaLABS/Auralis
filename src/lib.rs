@@ -54,6 +54,7 @@ pub mod mm_eval;
 pub mod mm_collator;
 pub mod mm_align;
 pub mod vision;
+pub mod video;
 pub mod model;
 pub mod moe;
 pub mod numeric;
