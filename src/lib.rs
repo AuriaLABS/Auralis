@@ -30,6 +30,7 @@ pub mod fusion;
 pub mod experiment;
 pub mod gradcheck;
 pub mod inspect;
+pub mod image_preprocess;
 pub mod kernels;
 pub mod kv_cache;
 pub mod lab_branch;

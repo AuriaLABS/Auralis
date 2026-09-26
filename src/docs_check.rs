@@ -186,6 +186,7 @@ mod tests {
             "fusion.md",
             "audio.md",
             "mm-eval.md",
+            "image-preprocess.md",
         ] {
             let path = root().join("docs").join(name);
             assert!(path.is_file(), "missing docs/{name}");
@@ -823,6 +824,7 @@ mod tests {
         assert_eq!(crate::fusion::FUSION_SCHEMA_VERSION, 1);
         assert_eq!(crate::audio::AUDIO_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
+        assert_eq!(crate::image_preprocess::IMAGE_PREPROCESS_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
             1
@@ -879,6 +881,7 @@ mod tests {
             "FUSION_SCHEMA_VERSION = 1",
             "AUDIO_SCHEMA_VERSION = 1",
             "MM_EVAL_SCHEMA_VERSION = 1",
+            "IMAGE_PREPROCESS_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
             "PERMISSION_POLICY_SCHEMA_VERSION = 1",
@@ -1239,6 +1242,21 @@ mod tests {
         }
         assert!(readme().contains("docs/mm-eval.md"));
         assert_eq!(crate::mm_eval::MM_EVAL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn image_preprocess_doc_matches_contract() {
+        let text = docs("image-preprocess.md");
+        for needle in [
+            "IMAGE_PREPROCESS_SCHEMA_VERSION = 1",
+            "allowed format is `raw8`",
+            "corrupt or unsupported input never reaches the encoder",
+            "Does **not** decode arbitrary container formats",
+        ] {
+            assert!(text.contains(needle), "image-preprocess.md missing {needle}");
+        }
+        assert!(readme().contains("docs/image-preprocess.md"));
+        assert_eq!(crate::image_preprocess::IMAGE_PREPROCESS_SCHEMA_VERSION, 1);
     }
 
     #[test]
