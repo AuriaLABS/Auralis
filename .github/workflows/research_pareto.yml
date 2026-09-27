@@ -1,0 +1,31 @@
+name: Research Pareto
+
+on:
+  pull_request:
+    paths:
+      - "src/pareto.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/pareto.md"
+      - "docs/versions.md"
+      - ".github/workflows/research_pareto.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pareto:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Pareto contracts
+        run: cargo test --lib pareto::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::pareto_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
