@@ -1,0 +1,33 @@
+name: Scale GPU Contract
+
+on:
+  pull_request:
+    paths:
+      - "src/gpu.rs"
+      - "src/backend.rs"
+      - "src/device.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/gpu.md"
+      - "docs/versions.md"
+      - ".github/workflows/scale_gpu.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: GPU contracts
+        run: cargo test --lib gpu::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::gpu_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
