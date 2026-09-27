@@ -191,6 +191,7 @@ mod tests {
             "mm-collator.md",
             "mm-align.md",
             "video.md",
+            "pareto.md",
             "device.md",
         ] {
             let path = root().join("docs").join(name);
@@ -834,6 +835,7 @@ mod tests {
         assert_eq!(crate::mm_collator::MM_COLLATOR_SCHEMA_VERSION, 1);
         assert_eq!(crate::mm_align::MM_ALIGN_SCHEMA_VERSION, 1);
         assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
+        assert_eq!(crate::pareto::PARETO_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -896,6 +898,7 @@ mod tests {
             "MM_COLLATOR_SCHEMA_VERSION = 1",
             "MM_ALIGN_SCHEMA_VERSION = 1",
             "VIDEO_SCHEMA_VERSION = 1",
+            "PARETO_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1347,6 +1350,21 @@ mod tests {
         }
         assert!(readme().contains("docs/device.md"));
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn pareto_doc_matches_contract() {
+        let text = docs("pareto.md");
+        for needle in [
+            "PARETO_SCHEMA_VERSION = 1",
+            "quality/cost/memory/latency stay separate",
+            "missing metrics make the pair incomparable",
+            "Does **not** invent universal metric weights",
+        ] {
+            assert!(text.contains(needle), "pareto.md missing {needle}");
+        }
+        assert!(readme().contains("docs/pareto.md"));
+        assert_eq!(crate::pareto::PARETO_SCHEMA_VERSION, 1);
     }
 
     #[test]
