@@ -136,6 +136,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/device.md](docs/device.md) — frontera de device storage y copias host↔device #67.
 - [docs/pareto.md](docs/pareto.md) — comparación multiobjetivo y frente de Pareto #77.
 - [docs/gpu.md](docs/gpu.md) — contrato GPU single-device y fallback CPU #68.
+- [docs/search.md](docs/search.md) — búsqueda arquitectónica bajo presupuesto #78.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
