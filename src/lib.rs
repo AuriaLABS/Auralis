@@ -10,6 +10,7 @@ pub mod audio_preprocess;
 pub mod batch;
 pub mod backend;
 pub mod device;
+pub mod gpu;
 pub mod bench;
 pub mod bench_format;
 pub mod bench_result;
