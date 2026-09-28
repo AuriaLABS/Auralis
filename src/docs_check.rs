@@ -194,6 +194,7 @@ mod tests {
             "pareto.md",
             "gpu.md",
             "search.md",
+            "compat.md",
             "device.md",
         ] {
             let path = root().join("docs").join(name);
@@ -840,6 +841,7 @@ mod tests {
         assert_eq!(crate::pareto::PARETO_SCHEMA_VERSION, 1);
         assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
         assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
+        assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -905,6 +907,7 @@ mod tests {
             "PARETO_SCHEMA_VERSION = 1",
             "GPU_SCHEMA_VERSION = 1",
             "SEARCH_SCHEMA_VERSION = 1",
+            "COMPAT_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1401,6 +1404,21 @@ mod tests {
         }
         assert!(readme().contains("docs/search.md"));
         assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn compat_doc_matches_contract() {
+        let text = docs("compat.md");
+        for needle in [
+            "COMPAT_SCHEMA_VERSION = 1",
+            "unknown or future versions fail closed",
+            "version 0 is corrupt",
+            "Does **not** freeze private internals",
+        ] {
+            assert!(text.contains(needle), "compat.md missing {needle}");
+        }
+        assert!(readme().contains("docs/compat.md"));
+        assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
     }
 
     #[test]

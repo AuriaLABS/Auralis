@@ -1,0 +1,31 @@
+name: Release Compat
+
+on:
+  pull_request:
+    paths:
+      - "src/compat.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/compat.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_compat.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compat contracts
+        run: cargo test --lib compat::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::compat_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
