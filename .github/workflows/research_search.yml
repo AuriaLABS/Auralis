@@ -1,0 +1,32 @@
+name: Research Search
+
+on:
+  pull_request:
+    paths:
+      - "src/search.rs"
+      - "src/pareto.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/search.md"
+      - "docs/versions.md"
+      - ".github/workflows/research_search.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Search contracts
+        run: cargo test --lib search::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::search_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

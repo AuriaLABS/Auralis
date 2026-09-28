@@ -193,6 +193,7 @@ mod tests {
             "video.md",
             "pareto.md",
             "gpu.md",
+            "search.md",
             "device.md",
         ] {
             let path = root().join("docs").join(name);
@@ -838,6 +839,7 @@ mod tests {
         assert_eq!(crate::video::VIDEO_SCHEMA_VERSION, 1);
         assert_eq!(crate::pareto::PARETO_SCHEMA_VERSION, 1);
         assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
+        assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -902,6 +904,7 @@ mod tests {
             "VIDEO_SCHEMA_VERSION = 1",
             "PARETO_SCHEMA_VERSION = 1",
             "GPU_SCHEMA_VERSION = 1",
+            "SEARCH_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1383,6 +1386,21 @@ mod tests {
         }
         assert!(readme().contains("docs/gpu.md"));
         assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn search_doc_matches_contract() {
+        let text = docs("search.md");
+        for needle in [
+            "SEARCH_SCHEMA_VERSION = 1",
+            "same SearchSpec produces the same candidate sequence",
+            "invalid layers/heads fail before training",
+            "Does **not** auto-merge candidates",
+        ] {
+            assert!(text.contains(needle), "search.md missing {needle}");
+        }
+        assert!(readme().contains("docs/search.md"));
+        assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
     }
 
     #[test]
