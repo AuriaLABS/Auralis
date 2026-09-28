@@ -56,6 +56,7 @@ pub mod mm_eval;
 pub mod pareto;
 pub mod search;
 pub mod compat;
+pub mod soak;
 pub mod mm_collator;
 pub mod mm_align;
 pub mod vision;
