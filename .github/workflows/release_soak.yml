@@ -1,0 +1,31 @@
+name: Release Soak
+
+on:
+  pull_request:
+    paths:
+      - "src/soak.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/soak.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_soak.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Soak contracts
+        run: cargo test --lib soak::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::soak_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

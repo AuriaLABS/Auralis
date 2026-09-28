@@ -195,6 +195,7 @@ mod tests {
             "gpu.md",
             "search.md",
             "compat.md",
+            "soak.md",
             "device.md",
         ] {
             let path = root().join("docs").join(name);
@@ -842,6 +843,7 @@ mod tests {
         assert_eq!(crate::gpu::GPU_SCHEMA_VERSION, 1);
         assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
         assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
+        assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -908,6 +910,7 @@ mod tests {
             "GPU_SCHEMA_VERSION = 1",
             "SEARCH_SCHEMA_VERSION = 1",
             "COMPAT_SCHEMA_VERSION = 1",
+            "SOAK_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1419,6 +1422,21 @@ mod tests {
         }
         assert!(readme().contains("docs/compat.md"));
         assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn soak_doc_matches_contract() {
+        let text = docs("soak.md");
+        for needle in [
+            "SOAK_SCHEMA_VERSION = 1",
+            "resume keeps the same fingerprint",
+            "RSS above the cap fails closed",
+            "Does **not** turn optional experiments into release blockers",
+        ] {
+            assert!(text.contains(needle), "soak.md missing {needle}");
+        }
+        assert!(readme().contains("docs/soak.md"));
+        assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
     }
 
     #[test]
