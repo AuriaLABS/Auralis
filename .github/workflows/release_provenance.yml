@@ -1,0 +1,31 @@
+name: Release Provenance
+
+on:
+  pull_request:
+    paths:
+      - "src/provenance.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/provenance.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_provenance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Provenance contracts
+        run: cargo test --lib provenance::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::provenance_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

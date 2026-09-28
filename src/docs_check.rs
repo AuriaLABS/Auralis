@@ -196,6 +196,7 @@ mod tests {
             "search.md",
             "compat.md",
             "soak.md",
+            "provenance.md",
             "device.md",
         ] {
             let path = root().join("docs").join(name);
@@ -844,6 +845,7 @@ mod tests {
         assert_eq!(crate::search::SEARCH_SCHEMA_VERSION, 1);
         assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
         assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
+        assert_eq!(crate::provenance::PROVENANCE_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -911,6 +913,7 @@ mod tests {
             "SEARCH_SCHEMA_VERSION = 1",
             "COMPAT_SCHEMA_VERSION = 1",
             "SOAK_SCHEMA_VERSION = 1",
+            "PROVENANCE_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1437,6 +1440,21 @@ mod tests {
         }
         assert!(readme().contains("docs/soak.md"));
         assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn provenance_doc_matches_contract() {
+        let text = docs("provenance.md");
+        for needle in [
+            "PROVENANCE_SCHEMA_VERSION = 1",
+            "two equivalent builds compare equal",
+            "secret-bearing metadata fail closed",
+            "Does **not** claim bit-for-bit equality across OS/arch",
+        ] {
+            assert!(text.contains(needle), "provenance.md missing {needle}");
+        }
+        assert!(readme().contains("docs/provenance.md"));
+        assert_eq!(crate::provenance::PROVENANCE_SCHEMA_VERSION, 1);
     }
 
     #[test]
