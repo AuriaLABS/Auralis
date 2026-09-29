@@ -23,6 +23,7 @@ Model card: [model-card.md](model-card.md).
 Tabla RC: [rc-metrics.md](rc-metrics.md).
 Go/no-go: [rc.md](rc.md).
 Pool: [pool.md](pool.md).
+Generate: [generate.md](generate.md).
 Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
@@ -66,6 +67,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/rc-metrics.md` | tabla RC anclada a schemas |
 | `docs/rc.md` | go/no-go RC; no crea tag |
 | `docs/pool.md` | pool de agentes; WIP 2 |
+| `docs/generate.md` | greedy determinista; overflow fail-closed |
 | `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
