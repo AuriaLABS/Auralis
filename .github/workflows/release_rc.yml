@@ -1,0 +1,31 @@
+name: Release RC
+
+on:
+  pull_request:
+    paths:
+      - "src/rc.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/rc.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_rc.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: RC contracts
+        run: cargo test --lib rc::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::rc_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

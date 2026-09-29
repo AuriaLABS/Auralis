@@ -160,6 +160,7 @@ mod tests {
             "rc-gate.md",
             "model-card.md",
             "rc-metrics.md",
+            "rc.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -848,6 +849,7 @@ mod tests {
         assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
         assert_eq!(crate::provenance::PROVENANCE_SCHEMA_VERSION, 1);
         assert_eq!(crate::card::CARD_SCHEMA_VERSION, 1);
+        assert_eq!(crate::rc::RC_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -917,6 +919,7 @@ mod tests {
             "SOAK_SCHEMA_VERSION = 1",
             "PROVENANCE_SCHEMA_VERSION = 1",
             "CARD_SCHEMA_VERSION = 1",
+            "RC_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1478,6 +1481,21 @@ mod tests {
     }
 
     #[test]
+    fn rc_doc_matches_contract() {
+        let text = docs("rc.md");
+        for needle in [
+            "RC_SCHEMA_VERSION = 1",
+            "automated RC stays no-go until human_approval",
+            "`tag_v1` never creates a git tag",
+            "Does **not** cut `v1.0.0` from this slice",
+        ] {
+            assert!(text.contains(needle), "rc.md missing {needle}");
+        }
+        assert!(readme().contains("docs/rc.md"));
+        assert_eq!(crate::rc::RC_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1739,6 +1757,7 @@ mod tests {
             "release-check",
             "model-card.md",
             "rc-metrics.md",
+            "rc.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
