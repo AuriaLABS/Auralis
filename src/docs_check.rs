@@ -162,6 +162,7 @@ mod tests {
             "rc-metrics.md",
             "rc.md",
             "pool.md",
+            "generate.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -852,6 +853,7 @@ mod tests {
         assert_eq!(crate::card::CARD_SCHEMA_VERSION, 1);
         assert_eq!(crate::rc::RC_SCHEMA_VERSION, 1);
         assert_eq!(crate::pool::POOL_SCHEMA_VERSION, 1);
+        assert_eq!(crate::generate::GENERATE_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -923,6 +925,7 @@ mod tests {
             "CARD_SCHEMA_VERSION = 1",
             "RC_SCHEMA_VERSION = 1",
             "POOL_SCHEMA_VERSION = 1",
+            "GENERATE_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1514,6 +1517,21 @@ mod tests {
     }
 
     #[test]
+    fn generate_doc_matches_contract() {
+        let text = docs("generate.md");
+        for needle in [
+            "GENERATE_SCHEMA_VERSION = 1",
+            "same prompt yields the same tokens",
+            "empty prompt and context overflow fail closed",
+            "Does **not** add a remote server",
+        ] {
+            assert!(text.contains(needle), "generate.md missing {needle}");
+        }
+        assert!(readme().contains("docs/generate.md"));
+        assert_eq!(crate::generate::GENERATE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1777,6 +1795,7 @@ mod tests {
             "rc-metrics.md",
             "rc.md",
             "pool.md",
+            "generate.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");

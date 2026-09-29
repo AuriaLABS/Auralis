@@ -61,6 +61,7 @@ pub mod provenance;
 pub mod card;
 pub mod rc;
 pub mod pool;
+pub mod generate;
 pub mod mm_collator;
 pub mod mm_align;
 pub mod vision;
