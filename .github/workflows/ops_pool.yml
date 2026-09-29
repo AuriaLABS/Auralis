@@ -1,0 +1,31 @@
+name: Ops Pool
+
+on:
+  pull_request:
+    paths:
+      - "src/pool.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/pool.md"
+      - "docs/versions.md"
+      - ".github/workflows/ops_pool.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pool:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Pool contracts
+        run: cargo test --lib pool::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::pool_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

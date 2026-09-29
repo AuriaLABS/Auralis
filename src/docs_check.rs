@@ -161,6 +161,7 @@ mod tests {
             "model-card.md",
             "rc-metrics.md",
             "rc.md",
+            "pool.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -850,6 +851,7 @@ mod tests {
         assert_eq!(crate::provenance::PROVENANCE_SCHEMA_VERSION, 1);
         assert_eq!(crate::card::CARD_SCHEMA_VERSION, 1);
         assert_eq!(crate::rc::RC_SCHEMA_VERSION, 1);
+        assert_eq!(crate::pool::POOL_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -920,6 +922,7 @@ mod tests {
             "PROVENANCE_SCHEMA_VERSION = 1",
             "CARD_SCHEMA_VERSION = 1",
             "RC_SCHEMA_VERSION = 1",
+            "POOL_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1496,6 +1499,21 @@ mod tests {
     }
 
     #[test]
+    fn pool_doc_matches_contract() {
+        let text = docs("pool.md");
+        for needle in [
+            "POOL_SCHEMA_VERSION = 1",
+            "WIP cap is 2",
+            "solo-agent self-review is not independent",
+            "Does **not** bind a role to a named vendor",
+        ] {
+            assert!(text.contains(needle), "pool.md missing {needle}");
+        }
+        assert!(readme().contains("docs/pool.md"));
+        assert_eq!(crate::pool::POOL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1758,6 +1776,7 @@ mod tests {
             "model-card.md",
             "rc-metrics.md",
             "rc.md",
+            "pool.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
