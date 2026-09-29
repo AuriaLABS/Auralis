@@ -36,6 +36,17 @@ Un `train-fresh` corto **no** es el soak de Foundation.
 Cualquier número que no salga de un manifiesto + `docs/verify.md` es anecdótico.
 Este archivo no inventa baselines.
 
+Tabla RC anclada a contratos versionados — [rc-metrics.md](rc-metrics.md):
+
+| Contrato | Schema | Dato publicado |
+|---|---|---|
+| soak resume | `SOAK_SCHEMA_VERSION = 1` | fingerprint estable; `MAX_RETRIES = 0` |
+| format freeze | `COMPAT_SCHEMA_VERSION = 1` | checkpoint/manifest/session v1 fail-closed |
+| Pareto | `PARETO_SCHEMA_VERSION = 1` | no hay score único de release |
+| GPU kernels | `GPU_SCHEMA_VERSION = 1` | unavailable en CI; no hay speedup medido |
+
+No hay ppl/human-eval de un tag RC. Esa fila permanece vacía a propósito.
+
 ## Limitations
 
 - contexto tiny; generación todavía débil fuera del corpus
