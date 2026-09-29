@@ -1,0 +1,31 @@
+name: Release Profile
+
+on:
+  pull_request:
+    paths:
+      - "src/profile.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/profile.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_profile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Profile contracts
+        run: cargo test --lib profile::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::profile_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

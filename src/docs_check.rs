@@ -163,6 +163,7 @@ mod tests {
             "rc.md",
             "pool.md",
             "generate.md",
+            "profile.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -854,6 +855,7 @@ mod tests {
         assert_eq!(crate::rc::RC_SCHEMA_VERSION, 1);
         assert_eq!(crate::pool::POOL_SCHEMA_VERSION, 1);
         assert_eq!(crate::generate::GENERATE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::profile::PROFILE_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -926,6 +928,7 @@ mod tests {
             "RC_SCHEMA_VERSION = 1",
             "POOL_SCHEMA_VERSION = 1",
             "GENERATE_SCHEMA_VERSION = 1",
+            "PROFILE_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1532,6 +1535,21 @@ mod tests {
     }
 
     #[test]
+    fn profile_doc_matches_contract() {
+        let text = docs("profile.md");
+        for needle in [
+            "PROFILE_SCHEMA_VERSION = 1",
+            "GPU kernels are Experimental",
+            "Experimental is not a release requirement",
+            "Does **not** promote a feature because the code exists",
+        ] {
+            assert!(text.contains(needle), "profile.md missing {needle}");
+        }
+        assert!(readme().contains("docs/profile.md"));
+        assert_eq!(crate::profile::PROFILE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1796,6 +1814,7 @@ mod tests {
             "rc.md",
             "pool.md",
             "generate.md",
+            "profile.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
