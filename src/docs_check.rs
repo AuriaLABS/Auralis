@@ -159,6 +159,7 @@ mod tests {
             "versions.md",
             "rc-gate.md",
             "model-card.md",
+            "rc-metrics.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -846,6 +847,7 @@ mod tests {
         assert_eq!(crate::compat::COMPAT_SCHEMA_VERSION, 1);
         assert_eq!(crate::soak::SOAK_SCHEMA_VERSION, 1);
         assert_eq!(crate::provenance::PROVENANCE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::card::CARD_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -914,6 +916,7 @@ mod tests {
             "COMPAT_SCHEMA_VERSION = 1",
             "SOAK_SCHEMA_VERSION = 1",
             "PROVENANCE_SCHEMA_VERSION = 1",
+            "CARD_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1458,6 +1461,23 @@ mod tests {
     }
 
     #[test]
+    fn rc_metrics_doc_matches_contract() {
+        let text = docs("rc-metrics.md");
+        for needle in [
+            "CARD_SCHEMA_VERSION = 1",
+            "Only versioned contracts",
+            "GPU kernels remain unmeasured in CI",
+            "Does **not** invent ppl, SOTA or human-eval numbers",
+        ] {
+            assert!(text.contains(needle), "rc-metrics.md missing {needle}");
+        }
+        let card = docs("model-card.md");
+        assert!(card.contains("rc-metrics.md"));
+        assert!(readme().contains("docs/rc-metrics.md"));
+        assert_eq!(crate::card::CARD_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1718,6 +1738,7 @@ mod tests {
             "rc-gate.md",
             "release-check",
             "model-card.md",
+            "rc-metrics.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");
