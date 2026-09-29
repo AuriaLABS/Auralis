@@ -21,6 +21,7 @@ Versiones: [versions.md](versions.md).
 RC local: [rc-gate.md](rc-gate.md).
 Model card: [model-card.md](model-card.md).
 Tabla RC: [rc-metrics.md](rc-metrics.md).
+Go/no-go: [rc.md](rc.md).
 Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
@@ -62,6 +63,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/rc-gate.md` | `DEFAULT_RELEASE_ARTIFACTS` |
 | `docs/model-card.md` | secciones obligatorias |
 | `docs/rc-metrics.md` | tabla RC anclada a schemas |
+| `docs/rc.md` | go/no-go RC; no crea tag |
 | `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
