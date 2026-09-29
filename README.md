@@ -142,6 +142,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/provenance.md](docs/provenance.md) — checksum y provenance de artefactos de release #81.
 - [docs/rc-metrics.md](docs/rc-metrics.md) — tabla RC anclada a contratos versionados #83.
 - [docs/rc.md](docs/rc.md) — checklist go/no-go de RC; no crea el tag #84.
+- [docs/pool.md](docs/pool.md) — pool dinámico de agentes y WIP 2 #85.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
