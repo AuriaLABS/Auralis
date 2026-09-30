@@ -17,7 +17,30 @@ pub const DEFAULT_RELEASE_ARTIFACTS: &[&str] = &[
     ".github/workflows/genesis.yml",
     ".github/workflows/pruebas.yml",
     "docs/ci-pruebas.md",
+    "LICENSE",
+    "docs/api-policy.md",
+    "docs/packaging.md",
+    "docs/baselines.md",
+    "docs/post-tag.md",
 ];
+
+fn artifact_gate_id(rel: &str) -> &'static str {
+    match rel {
+        "Cargo.toml" => "cargo_toml",
+        "README.md" => "readme",
+        "VISION.md" => "vision",
+        "ROADMAP.md" => "roadmap",
+        ".github/workflows/genesis.yml" => "ci_genesis",
+        ".github/workflows/pruebas.yml" => "ci_pruebas",
+        "docs/ci-pruebas.md" => "docs_ci",
+        "LICENSE" => "license",
+        "docs/api-policy.md" => "api_policy",
+        "docs/packaging.md" => "packaging",
+        "docs/baselines.md" => "baselines",
+        "docs/post-tag.md" => "post_tag",
+        _ => "artifact",
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GateStatus {
@@ -135,15 +158,10 @@ fn pending(id: &'static str, detail: &str) -> Gate {
 
 pub fn check_release(root: impl AsRef<Path>) -> ReleaseReport {
     let root = root.as_ref();
-    let mut gates = vec![
-        file_gate("cargo_toml", root, "Cargo.toml"),
-        file_gate("readme", root, "README.md"),
-        file_gate("vision", root, "VISION.md"),
-        file_gate("roadmap", root, "ROADMAP.md"),
-        file_gate("ci_genesis", root, ".github/workflows/genesis.yml"),
-        file_gate("ci_pruebas", root, ".github/workflows/pruebas.yml"),
-        file_gate("docs_ci", root, "docs/ci-pruebas.md"),
-    ];
+    let mut gates: Vec<Gate> = DEFAULT_RELEASE_ARTIFACTS
+        .iter()
+        .map(|rel| file_gate(artifact_gate_id(rel), root, rel))
+        .collect();
     if exists(root, "docs/model-card.md") {
         gates.push(file_gate("model_card", root, "docs/model-card.md"));
     } else {
@@ -163,6 +181,10 @@ pub fn check_release(root: impl AsRef<Path>) -> ReleaseReport {
     gates.push(pending(
         "artifacts_checksums",
         "use auralis release-manifest to emit/verify checksums",
+    ));
+    gates.push(pending(
+        "declared_blockers",
+        "open Scale #68 GPU kernels are experimental and not a v1 release gate",
     ));
     gates.push(Gate {
         id: "human_approval",
@@ -390,6 +412,8 @@ mod tests {
         }
     }
 
+    const COMPLETE: &[&str] = DEFAULT_RELEASE_ARTIFACTS;
+
     #[test]
     fn complete_tree_is_automated_pass_without_human_approval() {
         let root = std::env::temp_dir().join(format!(
@@ -397,24 +421,21 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
-        write_tree(
-            &root,
-            &[
-                "Cargo.toml",
-                "README.md",
-                "VISION.md",
-                "ROADMAP.md",
-                ".github/workflows/genesis.yml",
-                ".github/workflows/pruebas.yml",
-                "docs/ci-pruebas.md",
-            ],
-        );
+        write_tree(&root, COMPLETE);
         let report = check_release(&root);
         let _ = fs::remove_dir_all(&root);
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
+        assert!(report
+            .gates
+            .iter()
+            .any(|g| g.id == "post_tag" && g.status == GateStatus::Pass));
+        assert!(report
+            .gates
+            .iter()
+            .any(|g| g.id == "declared_blockers" && g.status == GateStatus::Pending));
     }
 
     #[test]
@@ -432,6 +453,28 @@ mod tests {
             .gates
             .iter()
             .any(|g| g.id == "ci_genesis" && g.status == GateStatus::Fail));
+    }
+
+    #[test]
+    fn missing_post_tag_contract_fails_automated_pass() {
+        let root = std::env::temp_dir().join(format!(
+            "auralis-release-post-tag-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let partial: Vec<&str> = COMPLETE
+            .iter()
+            .copied()
+            .filter(|p| *p != "docs/post-tag.md")
+            .collect();
+        write_tree(&root, &partial);
+        let report = check_release(&root);
+        let _ = fs::remove_dir_all(&root);
+        assert!(!report.automated_pass);
+        assert!(report
+            .gates
+            .iter()
+            .any(|g| g.id == "post_tag" && g.status == GateStatus::Fail));
     }
 
     #[test]
