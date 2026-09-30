@@ -67,6 +67,53 @@ pub struct Gate {
     pub detail: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TagCandidate {
+    pub name: &'static str,
+    pub tag_sha: &'static str,
+    pub source_sha: &'static str,
+}
+
+/// This checker never creates a git tag. Tagging remains a human #84 action.
+pub fn create_tag() -> Result<(), &'static str> {
+    Err("tag creation forbidden")
+}
+
+/// Absent candidate → pending. Present `v1.0.0` must share tag/source SHA.
+/// A mismatch is fail-closed. The function never writes a tag.
+pub fn rc_tag_gate(candidate: Option<TagCandidate>) -> Gate {
+    match candidate {
+        None => pending(
+            "rc_tag",
+            "no tag candidate supplied; tool never creates `v1.0.0`",
+        ),
+        Some(tag) if tag.name != "v1.0.0" => Gate {
+            id: "rc_tag",
+            status: GateStatus::Fail,
+            kind: "automated",
+            detail: format!("unsupported tag name {}", tag.name),
+        },
+        Some(tag) if tag.tag_sha.is_empty() || tag.source_sha.is_empty() => Gate {
+            id: "rc_tag",
+            status: GateStatus::Fail,
+            kind: "automated",
+            detail: "empty tag or source SHA".into(),
+        },
+        Some(tag) if tag.tag_sha != tag.source_sha => Gate {
+            id: "rc_tag",
+            status: GateStatus::Fail,
+            kind: "automated",
+            detail: format!("tag/source SHA mismatch {} != {}", tag.tag_sha, tag.source_sha),
+        },
+        Some(tag) => Gate {
+            id: "rc_tag",
+            status: GateStatus::Pass,
+            kind: "automated",
+            detail: format!("`v1.0.0` converges to {}", tag.tag_sha),
+        },
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseReport {
     pub root: String,
@@ -157,6 +204,13 @@ fn pending(id: &'static str, detail: &str) -> Gate {
 }
 
 pub fn check_release(root: impl AsRef<Path>) -> ReleaseReport {
+    check_release_with(root, None)
+}
+
+pub fn check_release_with(
+    root: impl AsRef<Path>,
+    tag: Option<TagCandidate>,
+) -> ReleaseReport {
     let root = root.as_ref();
     let mut gates: Vec<Gate> = DEFAULT_RELEASE_ARTIFACTS
         .iter()
@@ -170,10 +224,7 @@ pub fn check_release(root: impl AsRef<Path>) -> ReleaseReport {
             "docs/model-card.md not required for local automated pass yet",
         ));
     }
-    gates.push(pending(
-        "rc_tag",
-        "git tag/RC identity is not created or validated by this tool",
-    ));
+    gates.push(rc_tag_gate(tag));
     gates.push(pending(
         "live_ci",
         "live GitHub check-run status is not queried locally",
@@ -435,7 +486,51 @@ mod tests {
         assert!(report
             .gates
             .iter()
+            .any(|g| g.id == "rc_tag" && g.status == GateStatus::Pending));
+        assert!(report
+            .gates
+            .iter()
             .any(|g| g.id == "declared_blockers" && g.status == GateStatus::Pending));
+        assert_eq!(create_tag(), Err("tag creation forbidden"));
+    }
+
+    #[test]
+    fn rc_tag_converges_or_fails_closed_and_never_creates() {
+        let aligned = TagCandidate {
+            name: "v1.0.0",
+            tag_sha: "abc",
+            source_sha: "abc",
+        };
+        let drifted = TagCandidate {
+            name: "v1.0.0",
+            tag_sha: "abc",
+            source_sha: "def",
+        };
+        assert_eq!(rc_tag_gate(Some(aligned)).status, GateStatus::Pass);
+        assert_eq!(rc_tag_gate(Some(drifted)).status, GateStatus::Fail);
+        assert_eq!(rc_tag_gate(None).status, GateStatus::Pending);
+        assert_eq!(
+            rc_tag_gate(Some(TagCandidate {
+                name: "v0.9.0",
+                tag_sha: "abc",
+                source_sha: "abc",
+            }))
+            .status,
+            GateStatus::Fail
+        );
+        assert_eq!(create_tag(), Err("tag creation forbidden"));
+
+        let root = std::env::temp_dir().join(format!(
+            "auralis-release-tag-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        write_tree(&root, COMPLETE);
+        let pass = check_release_with(&root, Some(aligned));
+        let fail = check_release_with(&root, Some(drifted));
+        let _ = fs::remove_dir_all(&root);
+        assert!(pass.automated_pass);
+        assert!(!fail.automated_pass);
     }
 
     #[test]

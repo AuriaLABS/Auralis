@@ -25,9 +25,16 @@ Does **not** cut `v1.0.0`.
 
 También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no RC).
 
+## Gate `rc_tag`
+
+- sin candidato → pending;
+- `v1.0.0` con tag SHA = source SHA → pass;
+- mismatch o nombre distinto → fail-closed;
+- `create_tag` está prohibido.
+
 ## Gates pendientes (no locales)
 
-- `rc_tag` — identidad git/RC
+- `rc_tag` — pending si no hay candidato; nunca crea el tag
 - `live_ci` — check-runs de GitHub
 - `artifacts_checksums` — usar `release-manifest`
 - `declared_blockers` — #68 GPU experimental no es gate de release
