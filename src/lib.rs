@@ -65,6 +65,7 @@ pub mod generate;
 pub mod profile;
 pub mod cli_v1;
 pub mod api_policy;
+pub mod packaging;
 pub mod mm_collator;
 pub mod mm_align;
 pub mod vision;
