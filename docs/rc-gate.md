@@ -39,11 +39,18 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - job requerido ausente o conclusion distinta de `success` → fail-closed;
 - `benches` no bloquea.
 
+## Gate `artifacts_checksums`
+
+- sin manifiesto almacenado → pending; use auralis release-manifest to emit/verify checksums;
+- texto `RELEASE_MANIFEST_VERSION = 1` que decodifica y `verify` → pass;
+- decode inválido o checksum mismatch → fail-closed;
+- el CLI no inventa el manifiesto.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
 - `live_ci` — pending si no hay snapshot; no hay red
-- `artifacts_checksums` — usar `release-manifest`
+- `artifacts_checksums` — pending si no hay manifiesto almacenado
 - `declared_blockers` — #68 GPU experimental no es gate de release
 - `human_approval` — revisión humana (#84)
 
