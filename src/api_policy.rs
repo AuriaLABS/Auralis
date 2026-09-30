@@ -77,7 +77,7 @@ mod tests {
         for needle in [
             "API_POLICY_SCHEMA_VERSION = 1",
             "internal is not stable by visibility",
-            "experimental may break without a major",
+            "Experimental may break without a major",
             "Does **not** freeze every pub item",
         ] {
             assert!(text.contains(needle), "api-policy.md missing {needle}");
