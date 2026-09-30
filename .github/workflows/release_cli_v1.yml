@@ -1,0 +1,31 @@
+name: Release CLI v1
+
+on:
+  pull_request:
+    paths:
+      - "src/cli_v1.rs"
+      - "src/lib.rs"
+      - "src/docs_check.rs"
+      - "docs/cli-v1.md"
+      - "docs/versions.md"
+      - ".github/workflows/release_cli_v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cli_v1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: CLI v1 contracts
+        run: cargo test --lib cli_v1::tests -- --nocapture
+
+      - name: Documentation contract
+        run: cargo test --lib docs_check::tests::cli_v1_doc_matches_contract -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib

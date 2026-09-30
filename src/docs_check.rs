@@ -164,6 +164,7 @@ mod tests {
             "pool.md",
             "generate.md",
             "profile.md",
+            "cli-v1.md",
             "clean-env.md",
             "e1-workspace-profile.md",
             "e3-cpu-parallelism.md",
@@ -856,6 +857,7 @@ mod tests {
         assert_eq!(crate::pool::POOL_SCHEMA_VERSION, 1);
         assert_eq!(crate::generate::GENERATE_SCHEMA_VERSION, 1);
         assert_eq!(crate::profile::PROFILE_SCHEMA_VERSION, 1);
+        assert_eq!(crate::cli_v1::CLI_V1_SCHEMA_VERSION, 1);
         assert_eq!(crate::device::DEVICE_SCHEMA_VERSION, 1);
         assert_eq!(
             crate::agent_permissions::PERMISSION_POLICY_SCHEMA_VERSION,
@@ -929,6 +931,7 @@ mod tests {
             "POOL_SCHEMA_VERSION = 1",
             "GENERATE_SCHEMA_VERSION = 1",
             "PROFILE_SCHEMA_VERSION = 1",
+            "CLI_V1_SCHEMA_VERSION = 1",
             "DEVICE_SCHEMA_VERSION = 1",
             "AGENT_EVAL_SCHEMA_VERSION = 1",
             "agent-common-baseline-1",
@@ -1550,6 +1553,21 @@ mod tests {
     }
 
     #[test]
+    fn cli_v1_doc_matches_contract() {
+        let text = docs("cli-v1.md");
+        for needle in [
+            "CLI_V1_SCHEMA_VERSION = 1",
+            "0 success, 2 input, 3 runtime, 4 corrupt",
+            "exit 0 is never a partial failure",
+            "Does **not** change persistent formats",
+        ] {
+            assert!(text.contains(needle), "cli-v1.md missing {needle}");
+        }
+        assert!(readme().contains("docs/cli-v1.md"));
+        assert_eq!(crate::cli_v1::CLI_V1_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
     fn event_stream_doc_matches_contract() {
         let text = docs("event-stream.md");
         for needle in [
@@ -1815,6 +1833,7 @@ mod tests {
             "pool.md",
             "generate.md",
             "profile.md",
+            "cli-v1.md",
             "clean-env.md",
         ] {
             assert!(text.contains(needle), "docs/verify.md missing {needle}");

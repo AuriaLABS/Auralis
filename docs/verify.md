@@ -25,6 +25,7 @@ Go/no-go: [rc.md](rc.md).
 Pool: [pool.md](pool.md).
 Generate: [generate.md](generate.md).
 Perfil: [profile.md](profile.md).
+CLI v1: [cli-v1.md](cli-v1.md).
 Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
@@ -70,6 +71,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/pool.md` | pool de agentes; WIP 2 |
 | `docs/generate.md` | greedy determinista; overflow fail-closed |
 | `docs/profile.md` | perfil soportado Core/Experimental |
+| `docs/cli-v1.md` | exit codes 0/2/3/4 |
 | `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
