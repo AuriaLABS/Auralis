@@ -8,7 +8,7 @@
 
 Auralis está en una fase experimental temprana. El núcleo actual está escrito en Rust e incluye un transformer decoder-only, tokenización, backpropagation explícito, Adam, checkpoints y herramientas de entrenamiento/evaluación.
 
-La ambición a largo plazo es muy alta: evolucionar desde un modelo mínimo que aprende desde cero hacia un sistema general, multimodal, eficiente, capaz de usar herramientas, mantener memoria, investigar y participar en la mejora de su propio código y arquitectura bajo un proceso controlado y medible.
+La ambión a largo plazo es muy alta: evolucionar desde un modelo mínimo que aprende desde cero hacia un sistema general, multimodal, eficiente, capaz de usar herramientas, mantener memoria, investigar y participar en la mejora de su propio código y arquitectura bajo un proceso controlado y medible.
 
 Ser “la IA más potente” no se considera una promesa ni un eslogan verificable hoy. Se considera una **dirección de investigación**: acercarse progresivamente al estado del arte y superarlo allí donde los resultados medidos lo demuestren.
 
@@ -146,6 +146,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/generate.md](docs/generate.md) — contrato greedy de inferencia v1 #300.
 - [docs/profile.md](docs/profile.md) — perfil soportado v1 Core/Experimental #299.
 - [docs/cli-v1.md](docs/cli-v1.md) — contrato CLI v1 y exit codes #301.
+- [docs/api-policy.md](docs/api-policy.md) — política de API pública, semver y compatibilidad #302.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
