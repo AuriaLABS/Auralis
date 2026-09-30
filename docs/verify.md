@@ -29,6 +29,7 @@ CLI v1: [cli-v1.md](cli-v1.md).
 API policy: [api-policy.md](api-policy.md).
 Packaging: [packaging.md](packaging.md).
 Baselines: [baselines.md](baselines.md).
+Post-tag: [post-tag.md](post-tag.md).
 Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
@@ -78,6 +79,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/api-policy.md` | Public/Internal/Experimental; visibilidad ≠ estabilidad |
 | `docs/packaging.md` | LICENSE MIT; smoke no usa el checkout |
 | `docs/baselines.md` | umbrales predeclarados; same-runner; GPU no es gate |
+| `docs/post-tag.md` | SHA único; incidente si diverge; no crea el tag |
 | `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
