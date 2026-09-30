@@ -45,7 +45,7 @@ const _SCHEMA: u32 = RELEASE_MANIFEST_VERSION;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release::DEFAULT_RELEASE_ARTIFACTS;
+    use crate::release::{check_release, check_release_full, DEFAULT_RELEASE_ARTIFACTS};
     use std::fs;
 
     fn write_tree(root: &Path, files: &[&str]) {
@@ -88,11 +88,28 @@ mod tests {
             artifacts_checksums_gate(&root, Some(&stored)).status,
             GateStatus::Fail
         );
+        write_tree(&root, DEFAULT_RELEASE_ARTIFACTS);
+
+        let local = check_release(&root);
+        let pass = check_release_full(&root, None, None, Some(&stored));
+        let fail = check_release_full(&root, None, None, Some("not-a-manifest"));
         let _ = fs::remove_dir_all(&root);
+        assert!(local.automated_pass);
+        assert!(local
+            .gates
+            .iter()
+            .any(|g| g.id == "artifacts_checksums" && g.status == GateStatus::Pending));
+        assert!(pass.automated_pass);
+        assert!(pass
+            .gates
+            .iter()
+            .any(|g| g.id == "artifacts_checksums" && g.status == GateStatus::Pass));
+        assert!(!fail.automated_pass);
 
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("use auralis release-manifest to emit/verify checksums"));
         assert!(docs.contains("`RELEASE_MANIFEST_VERSION = 1`"));
+        assert!(docs.contains("`check_release_full`"));
         assert!(docs.contains("Does **not** cut `v1.0.0`"));
     }
 }
