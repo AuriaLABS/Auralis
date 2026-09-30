@@ -5,9 +5,9 @@ on:
     paths:
       - "src/api_policy.rs"
       - "src/lib.rs"
-      - "src/docs_check.rs"
       - "docs/api-policy.md"
       - "docs/versions.md"
+      - "README.md"
       - ".github/workflows/release_api_policy.yml"
 
 permissions:
@@ -23,9 +23,6 @@ jobs:
 
       - name: API policy contracts
         run: cargo test --lib api_policy::tests -- --nocapture
-
-      - name: Documentation contract
-        run: cargo test --lib docs_check::tests::api_policy_doc_matches_contract -- --nocapture
 
       - name: Full suite
         run: cargo test --lib
