@@ -1,0 +1,28 @@
+name: Release baselines
+
+on:
+  pull_request:
+    paths:
+      - "src/baselines.rs"
+      - "src/lib.rs"
+      - "docs/baselines.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/release_baselines.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  baselines:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Baselines contracts
+        run: cargo test --lib baselines::tests -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
