@@ -63,7 +63,7 @@ mod tests {
             "PACKAGING_SCHEMA_VERSION = 1",
             "smoke uses release artifacts, not the dev checkout",
             "missing license or checksum blocks publish",
-            "Does **not** cut v1.0.0",
+            "Does **not** cut `v1.0.0`",
         ] {
             assert!(text.contains(needle), "packaging.md missing {needle}");
         }
