@@ -1,0 +1,28 @@
+name: Release API policy
+
+on:
+  pull_request:
+    paths:
+      - "src/api_policy.rs"
+      - "src/lib.rs"
+      - "docs/api-policy.md"
+      - "docs/versions.md"
+      - "README.md"
+      - ".github/workflows/release_api_policy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  api_policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: API policy contracts
+        run: cargo test --lib api_policy::tests -- --nocapture
+
+      - name: Full suite
+        run: cargo test --lib
