@@ -67,6 +67,7 @@ pub mod cli_v1;
 pub mod api_policy;
 pub mod packaging;
 pub mod baselines;
+pub mod post_tag;
 pub mod mm_collator;
 pub mod mm_align;
 pub mod vision;
