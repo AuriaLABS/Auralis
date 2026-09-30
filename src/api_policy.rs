@@ -49,6 +49,8 @@ pub fn deprecate_ok(surface: Surface, announced: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     #[test]
     fn internal_is_not_stable_by_visibility_and_experimental_has_no_major() {
@@ -66,5 +68,24 @@ mod tests {
         assert!(deprecate_ok(Surface::Public, true));
         assert!(!deprecate_ok(Surface::Public, false));
         assert!(!deprecate_ok(Surface::Internal, true));
+    }
+
+    #[test]
+    fn api_policy_doc_matches_contract() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let text = fs::read_to_string(root.join("docs/api-policy.md")).expect("docs/api-policy.md");
+        for needle in [
+            "API_POLICY_SCHEMA_VERSION = 1",
+            "internal is not stable by visibility",
+            "experimental may break without a major",
+            "Does **not** freeze every pub item",
+        ] {
+            assert!(text.contains(needle), "api-policy.md missing {needle}");
+        }
+        let readme = fs::read_to_string(root.join("README.md")).expect("README.md");
+        assert!(readme.contains("docs/api-policy.md"));
+        let versions = fs::read_to_string(root.join("docs/versions.md")).expect("versions.md");
+        assert!(versions.contains("API_POLICY_SCHEMA_VERSION = 1"));
+        assert_eq!(API_POLICY_SCHEMA_VERSION, 1);
     }
 }
