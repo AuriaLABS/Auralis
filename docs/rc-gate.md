@@ -32,10 +32,17 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - mismatch o nombre distinto → fail-closed;
 - `create_tag` está prohibido.
 
+## Gate `live_ci`
+
+- sin snapshot → pending; live GitHub check-run status is not queried locally;
+- snapshot con `required_pr_jobs` en `success` → pass;
+- job requerido ausente o conclusion distinta de `success` → fail-closed;
+- `benches` no bloquea.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
-- `live_ci` — check-runs de GitHub
+- `live_ci` — pending si no hay snapshot; no hay red
 - `artifacts_checksums` — usar `release-manifest`
 - `declared_blockers` — #68 GPU experimental no es gate de release
 - `human_approval` — revisión humana (#84)
