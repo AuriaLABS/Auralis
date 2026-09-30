@@ -2,6 +2,7 @@
 //!
 //! Reports verifiable gates only. Never creates tags or records human approval.
 
+use crate::ci_matrix::required_pr_jobs;
 use crate::experiment::fingerprint_bytes;
 use crate::manifest::build_revision;
 use std::fs;
@@ -74,6 +75,12 @@ pub struct TagCandidate {
     pub source_sha: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CiRun {
+    pub id: &'static str,
+    pub conclusion: &'static str,
+}
+
 /// This checker never creates a git tag. Tagging remains a human #84 action.
 pub fn create_tag() -> Result<(), &'static str> {
     Err("tag creation forbidden")
@@ -111,6 +118,48 @@ pub fn rc_tag_gate(candidate: Option<TagCandidate>) -> Gate {
             kind: "automated",
             detail: format!("`v1.0.0` converges to {}", tag.tag_sha),
         },
+    }
+}
+
+/// Absent snapshot → pending. The local checker never queries GitHub.
+/// A supplied snapshot must include `required_pr_jobs()` at `success`.
+/// Missing required job or non-success conclusion is fail-closed.
+/// `benches` does not block.
+pub fn live_ci_gate(runs: Option<&[CiRun]>) -> Gate {
+    match runs {
+        None => pending(
+            "live_ci",
+            "live GitHub check-run status is not queried locally",
+        ),
+        Some(runs) => {
+            for job in required_pr_jobs() {
+                match runs.iter().find(|r| r.id == job.id) {
+                    None => {
+                        return Gate {
+                            id: "live_ci",
+                            status: GateStatus::Fail,
+                            kind: "automated",
+                            detail: format!("missing required job {}", job.id),
+                        };
+                    }
+                    Some(run) if run.conclusion != "success" => {
+                        return Gate {
+                            id: "live_ci",
+                            status: GateStatus::Fail,
+                            kind: "automated",
+                            detail: format!("{} conclusion {}", job.id, run.conclusion),
+                        };
+                    }
+                    Some(_) => {}
+                }
+            }
+            Gate {
+                id: "live_ci",
+                status: GateStatus::Pass,
+                kind: "automated",
+                detail: "required_pr_jobs all success".into(),
+            }
+        }
     }
 }
 
@@ -211,6 +260,14 @@ pub fn check_release_with(
     root: impl AsRef<Path>,
     tag: Option<TagCandidate>,
 ) -> ReleaseReport {
+    check_release_with_ci(root, tag, None)
+}
+
+pub fn check_release_with_ci(
+    root: impl AsRef<Path>,
+    tag: Option<TagCandidate>,
+    ci: Option<&[CiRun]>,
+) -> ReleaseReport {
     let root = root.as_ref();
     let mut gates: Vec<Gate> = DEFAULT_RELEASE_ARTIFACTS
         .iter()
@@ -225,10 +282,7 @@ pub fn check_release_with(
         ));
     }
     gates.push(rc_tag_gate(tag));
-    gates.push(pending(
-        "live_ci",
-        "live GitHub check-run status is not queried locally",
-    ));
+    gates.push(live_ci_gate(ci));
     gates.push(pending(
         "artifacts_checksums",
         "use auralis release-manifest to emit/verify checksums",
@@ -465,6 +519,16 @@ mod tests {
 
     const COMPLETE: &[&str] = DEFAULT_RELEASE_ARTIFACTS;
 
+    fn green_ci() -> Vec<CiRun> {
+        required_pr_jobs()
+            .into_iter()
+            .map(|j| CiRun {
+                id: j.id,
+                conclusion: "success",
+            })
+            .collect()
+    }
+
     #[test]
     fn complete_tree_is_automated_pass_without_human_approval() {
         let root = std::env::temp_dir().join(format!(
@@ -487,6 +551,10 @@ mod tests {
             .gates
             .iter()
             .any(|g| g.id == "rc_tag" && g.status == GateStatus::Pending));
+        assert!(report
+            .gates
+            .iter()
+            .any(|g| g.id == "live_ci" && g.status == GateStatus::Pending));
         assert!(report
             .gates
             .iter()
@@ -531,6 +599,67 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         assert!(pass.automated_pass);
         assert!(!fail.automated_pass);
+    }
+
+    #[test]
+    fn live_ci_required_jobs_pass_or_fail_closed_without_network() {
+        let green = green_ci();
+        assert_eq!(live_ci_gate(None).status, GateStatus::Pending);
+        assert_eq!(live_ci_gate(Some(&green)).status, GateStatus::Pass);
+        assert!(live_ci_gate(None)
+            .detail
+            .contains("live GitHub check-run status is not queried locally"));
+
+        let mut missing = green.clone();
+        missing.retain(|r| r.id != "unit");
+        assert_eq!(live_ci_gate(Some(&missing)).status, GateStatus::Fail);
+
+        let mut red = green.clone();
+        for run in &mut red {
+            if run.id == "core" {
+                run.conclusion = "failure";
+            }
+        }
+        assert_eq!(live_ci_gate(Some(&red)).status, GateStatus::Fail);
+
+        let with_skipped_benches = {
+            let mut runs = green.clone();
+            runs.push(CiRun {
+                id: "benches",
+                conclusion: "skipped",
+            });
+            runs
+        };
+        assert_eq!(
+            live_ci_gate(Some(&with_skipped_benches)).status,
+            GateStatus::Pass
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "auralis-release-ci-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        write_tree(&root, COMPLETE);
+        let pass = check_release_with_ci(&root, None, Some(&green));
+        let fail = check_release_with_ci(&root, None, Some(&red));
+        let local = check_release(&root);
+        let _ = fs::remove_dir_all(&root);
+        assert!(pass.automated_pass);
+        assert!(!fail.automated_pass);
+        assert!(local.automated_pass);
+        assert!(local
+            .gates
+            .iter()
+            .any(|g| g.id == "live_ci" && g.status == GateStatus::Pending));
+
+        let docs = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/docs/rc-gate.md"
+        ));
+        assert!(docs.contains("live GitHub check-run status is not queried locally"));
+        assert!(docs.contains("`required_pr_jobs`"));
+        assert!(docs.contains("Does **not** cut `v1.0.0`"));
     }
 
     #[test]
