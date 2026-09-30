@@ -24,3 +24,21 @@ pub const DEFAULT_RELEASE_ARTIFACTS: &[&str] = &[
     "docs/baselines.md",
     "docs/post-tag.md",
 ];
+
+fn artifact_gate_id(rel: &str) -> &'static str {
+    match rel {
+        "Cargo.toml" => "cargo_toml",
+        "README.md" => "readme",
+        "VISION.md" => "vision",
+        "ROADMAP.md" => "roadmap",
+        ".github/workflows/genesis.yml" => "ci_genesis",
+        ".github/workflows/pruebas.yml" => "ci_pruebas",
+        "docs/ci-pruebas.md" => "docs_ci",
+        "LICENSE" => "license",
+        "docs/api-policy.md" => "api_policy",
+        "docs/packaging.md" => "packaging",
+        "docs/baselines.md" => "baselines",
+        "docs/post-tag.md" => "post_tag",
+        _ => "artifact",
+    }
+}
