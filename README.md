@@ -148,6 +148,7 @@ El objetivo no es copiar indefinidamente arquitecturas existentes. Primero const
 - [docs/cli-v1.md](docs/cli-v1.md) — contrato CLI v1 y exit codes #301.
 - [docs/api-policy.md](docs/api-policy.md) — política de API pública, semver y compatibilidad #302.
 - [docs/packaging.md](docs/packaging.md) — packaging, LICENSE y smoke de instalación #303.
+- [docs/baselines.md](docs/baselines.md) — baselines y gates de rendimiento de release #304.
 - [docs/moe-router.md](docs/moe-router.md) — routing MoE determinista, capacidad, fallback, dispatch/gather y métricas de balance.
 - [docs/optimizer-boundary.md](docs/optimizer-boundary.md) — boundary de optimizer y estado Adam versionado.
 - [docs/optimizer-variants.md](docs/optimizer-variants.md) — AdamW/Lion experimentales bajo el mismo contrato.
