@@ -27,6 +27,7 @@ Generate: [generate.md](generate.md).
 Perfil: [profile.md](profile.md).
 CLI v1: [cli-v1.md](cli-v1.md).
 API policy: [api-policy.md](api-policy.md).
+Packaging: [packaging.md](packaging.md).
 Log limpio: [clean-env.md](clean-env.md).
 
 ## Ciclo Genesis (README)
@@ -74,6 +75,7 @@ assert!(!auralis::bench::list_json().is_empty());
 | `docs/profile.md` | perfil soportado Core/Experimental |
 | `docs/cli-v1.md` | exit codes 0/2/3/4 |
 | `docs/api-policy.md` | Public/Internal/Experimental; visibilidad ≠ estabilidad |
+| `docs/packaging.md` | LICENSE MIT; smoke no usa el checkout |
 | `docs/clean-env.md` | comandos del job `cli smoke` |
 | `examples/tiny.cfg` | `RunConfig::load` + schema 1 |
 | `README.md` | comandos del ciclo documentado |
