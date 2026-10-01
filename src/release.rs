@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const RELEASE_MANIFEST_VERSION: u32 = 1;
+pub const RELEASE_REPORT_SCHEMA_VERSION: u32 = 1;
 
 pub const DEFAULT_RELEASE_ARTIFACTS: &[&str] = &[
     "Cargo.toml",
@@ -208,7 +209,8 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"gates\":[{}]}}",
+            RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
             self.human_approval.as_str(),
@@ -550,6 +552,12 @@ mod tests {
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
+        assert!(report.json().contains("\"schema\":1"));
+        assert!(report.json().contains("\"human_approval\":\"pending\""));
+        assert_eq!(RELEASE_REPORT_SCHEMA_VERSION, 1);
+        let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
+        assert!(docs.contains("`RELEASE_REPORT_SCHEMA_VERSION = 1`"));
+        assert!(docs.contains("la herramienta no aprueba ni crea el tag"));
         assert!(report
             .gates
             .iter()
