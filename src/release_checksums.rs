@@ -56,6 +56,7 @@ mod tests {
             }
             fs::write(path, "ok\n").unwrap();
         }
+        crate::release_card::write_stub(root);
     }
 
     #[test]

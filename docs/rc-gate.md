@@ -24,7 +24,7 @@ Does **not** cut `v1.0.0`.
 - `docs/baselines.md`
 - `docs/post-tag.md`
 
-También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no RC).
+También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no RC). El gate exige el fichero y las secciones; no inventa métricas RC.
 
 ## Gate `rc_tag`
 
@@ -68,6 +68,13 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `BASELINES_SCHEMA_VERSION = 1`; matmul/forward comparable y sin regresión bloqueante → pass;
 - bench requerido ausente, Inconclusive o regresión bloqueante → fail-closed;
 - GPU is not a release gate.
+
+## Gate `model_card`
+
+- `docs/model-card.md` ausente o sin sección requerida → fail-closed;
+- secciones presentes y `no inventa baselines` → pass;
+- `CARD_SCHEMA_VERSION = 1`; does not invent RC metrics;
+- contenido Genesis no es una tabla RC.
 
 ## Gates pendientes (no locales)
 

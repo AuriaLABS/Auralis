@@ -96,6 +96,7 @@ mod tests {
             }
             std::fs::write(path, "ok\n").unwrap();
         }
+        crate::release_card::write_stub(&root);
         let local = crate::release::check_release(&root);
         let pass = crate::release::check_release_full(&root, None, None, None, None, Some(&green), None);
         let fail =

@@ -285,14 +285,7 @@ pub fn check_release_full(
         .iter()
         .map(|rel| file_gate(artifact_gate_id(rel), root, rel))
         .collect();
-    if exists(root, "docs/model-card.md") {
-        gates.push(file_gate("model_card", root, "docs/model-card.md"));
-    } else {
-        gates.push(pending(
-            "model_card",
-            "docs/model-card.md not required for local automated pass yet",
-        ));
-    }
+    gates.push(crate::release_card::model_card_gate(root));
     gates.push(rc_tag_gate(tag));
     gates.push(live_ci_gate(ci));
     gates.push(crate::release_checksums::artifacts_checksums_gate(
@@ -530,6 +523,7 @@ mod tests {
             }
             fs::write(path, "ok\n").unwrap();
         }
+        crate::release_card::write_stub(root);
     }
 
     const COMPLETE: &[&str] = DEFAULT_RELEASE_ARTIFACTS;
