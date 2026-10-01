@@ -45,13 +45,15 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - sin manifiesto almacenado → pending; use auralis release-manifest to emit/verify checksums;
 - texto `RELEASE_MANIFEST_VERSION = 1` que decodifica y `verify` → pass;
 - decode inválido o checksum mismatch → fail-closed;
-- el CLI no inventa el manifiesto.
+- el CLI no inventa el manifiesto;
+- `check_release_full` aplica checksums y fixtures al report; el CLI sigue sin inventarlos.
 
 ## Gate `compatibility_fixtures`
 
 - sin fixture → pending; migrate never rewrites;
 - checkpoint/manifest/session v1 que `accept` → pass;
-- version 0 o desconocida → fail-closed.
+- version 0 o desconocida → fail-closed;
+- `check_release_full` aplica el fixture; ausente sigue pending.
 
 ## Gates pendientes (no locales)
 

@@ -99,10 +99,32 @@ mod tests {
             compatibility_fixtures_gate(Some(future)).status,
             GateStatus::Fail
         );
+        let root = std::env::temp_dir().join(format!(
+            "auralis-release-compat-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for rel in crate::release::DEFAULT_RELEASE_ARTIFACTS {
+            let path = root.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, "ok\n").unwrap();
+        }
+        let local = crate::release::check_release(&root);
+        let pass = crate::release::check_release_full(&root, None, None, None, Some(v1));
+        let fail = crate::release::check_release_full(&root, None, None, None, Some(bad));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(local.automated_pass);
+        assert!(local.gates.iter().any(|g| g.id == "compatibility_fixtures"
+            && g.status == GateStatus::Pending));
+        assert!(pass.automated_pass);
+        assert!(!fail.automated_pass);
 
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("`COMPAT_SCHEMA_VERSION = 1`"));
         assert!(docs.contains("migrate never rewrites"));
+        assert!(docs.contains("`check_release_full`"));
         assert!(docs.contains("Does **not** cut `v1.0.0`"));
     }
 }
