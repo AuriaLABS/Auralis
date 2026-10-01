@@ -81,6 +81,7 @@ pub mod position;
 pub mod plan_executor;
 pub mod planner;
 pub mod release;
+pub mod release_card;
 pub mod release_checksums;
 pub mod release_compat;
 pub mod release_benchmarks;
