@@ -113,8 +113,8 @@ mod tests {
         }
         crate::release_card::write_stub(&root);
         let local = crate::release::check_release(&root);
-        let pass = crate::release::check_release_full(&root, None, None, None, Some(v1), None, None);
-        let fail = crate::release::check_release_full(&root, None, None, None, Some(bad), None, None);
+        let pass = crate::release::check_release_full(&root, None, None, None, Some(v1), None, None, None);
+        let fail = crate::release::check_release_full(&root, None, None, None, Some(bad), None, None, None);
         let _ = std::fs::remove_dir_all(&root);
         assert!(local.automated_pass);
         assert!(local.gates.iter().any(|g| g.id == "compatibility_fixtures"

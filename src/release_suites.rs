@@ -98,9 +98,9 @@ mod tests {
         }
         crate::release_card::write_stub(&root);
         let local = crate::release::check_release(&root);
-        let pass = crate::release::check_release_full(&root, None, None, None, None, Some(&green), None);
+        let pass = crate::release::check_release_full(&root, None, None, None, None, Some(&green), None, None);
         let fail =
-            crate::release::check_release_full(&root, None, None, None, None, Some(&missing), None);
+            crate::release::check_release_full(&root, None, None, None, None, Some(&missing), None, None);
         let _ = std::fs::remove_dir_all(&root);
         assert!(local.automated_pass);
         assert!(local
