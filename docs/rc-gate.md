@@ -55,12 +55,20 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - version 0 o desconocida → fail-closed;
 - `check_release_full` aplica el fixture; ausente sigue pending.
 
+## Gate `suites_evals`
+
+- sin snapshot → pending; release-check does not invent scores;
+- reasoning/code/memory/agent complete → pass;
+- suite requerida ausente o incompleta → fail-closed;
+- el CLI no inventa resultados.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
 - `live_ci` — pending si no hay snapshot; no hay red
 - `artifacts_checksums` — pending si no hay manifiesto almacenado
 - `compatibility_fixtures` — pending si no hay fixture
+- `suites_evals` — pending si no hay snapshot; no inventa scores
 - `declared_blockers` — #68 GPU experimental no es gate de release
 - `human_approval` — revisión humana (#84)
 

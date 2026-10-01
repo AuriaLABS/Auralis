@@ -268,7 +268,7 @@ pub fn check_release_with_ci(
     tag: Option<TagCandidate>,
     ci: Option<&[CiRun]>,
 ) -> ReleaseReport {
-    check_release_full(root, tag, ci, None, None)
+    check_release_full(root, tag, ci, None, None, None)
 }
 
 pub fn check_release_full(
@@ -277,6 +277,7 @@ pub fn check_release_full(
     ci: Option<&[CiRun]>,
     stored_manifest: Option<&str>,
     compat: Option<crate::release_compat::CompatFixture>,
+    suites: Option<&[crate::release_suites::SuiteRun]>,
 ) -> ReleaseReport {
     let root = root.as_ref();
     let mut gates: Vec<Gate> = DEFAULT_RELEASE_ARTIFACTS
@@ -298,6 +299,7 @@ pub fn check_release_full(
         stored_manifest,
     ));
     gates.push(crate::release_compat::compatibility_fixtures_gate(compat));
+    gates.push(crate::release_suites::suites_evals_gate(suites));
     gates.push(pending(
         "declared_blockers",
         "open Scale #68 GPU kernels are experimental and not a v1 release gate",
