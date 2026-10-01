@@ -268,6 +268,16 @@ pub fn check_release_with_ci(
     tag: Option<TagCandidate>,
     ci: Option<&[CiRun]>,
 ) -> ReleaseReport {
+    check_release_full(root, tag, ci, None, None)
+}
+
+pub fn check_release_full(
+    root: impl AsRef<Path>,
+    tag: Option<TagCandidate>,
+    ci: Option<&[CiRun]>,
+    stored_manifest: Option<&str>,
+    compat: Option<crate::release_compat::CompatFixture>,
+) -> ReleaseReport {
     let root = root.as_ref();
     let mut gates: Vec<Gate> = DEFAULT_RELEASE_ARTIFACTS
         .iter()
@@ -283,10 +293,11 @@ pub fn check_release_with_ci(
     }
     gates.push(rc_tag_gate(tag));
     gates.push(live_ci_gate(ci));
-    gates.push(pending(
-        "artifacts_checksums",
-        "use auralis release-manifest to emit/verify checksums",
+    gates.push(crate::release_checksums::artifacts_checksums_gate(
+        root,
+        stored_manifest,
     ));
+    gates.push(crate::release_compat::compatibility_fixtures_gate(compat));
     gates.push(pending(
         "declared_blockers",
         "open Scale #68 GPU kernels are experimental and not a v1 release gate",
