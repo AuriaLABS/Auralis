@@ -76,6 +76,12 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `CARD_SCHEMA_VERSION = 1`; does not invent RC metrics;
 - contenido Genesis no es una tabla RC.
 
+## Gate `declared_blockers`
+
+- sin snapshot → pending; release-check does not query GitHub;
+- issue abierto marcado release gate → fail-closed;
+- #68 is not a v1 release gate.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
@@ -84,7 +90,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `compatibility_fixtures` — pending si no hay fixture
 - `suites_evals` — pending si no hay snapshot; no inventa scores
 - `benchmarks` — pending si no hay snapshot; no inventa números
-- `declared_blockers` — #68 GPU experimental no es gate de release
+- `declared_blockers` — pending si no hay snapshot; no consulta GitHub; #68 is not a v1 release gate
 - `human_approval` — revisión humana (#84)
 
 Cómo lanzarlo: [verify.md](verify.md).

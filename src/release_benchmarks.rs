@@ -124,6 +124,7 @@ mod tests {
             None,
             None,
             Some(&ok),
+            None,
         );
         let fail = crate::release::check_release_full(
             &root,
@@ -133,6 +134,7 @@ mod tests {
             None,
             None,
             Some(&gpu_only),
+            None,
         );
         let _ = std::fs::remove_dir_all(&root);
         assert!(local.automated_pass);
