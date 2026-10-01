@@ -93,8 +93,8 @@ mod tests {
             .unwrap()
             .encode();
         let local = check_release(&root);
-        let pass = check_release_full(&root, None, None, Some(&stored), None, None);
-        let fail = check_release_full(&root, None, None, Some("not-a-manifest"), None, None);
+        let pass = check_release_full(&root, None, None, Some(&stored), None, None, None);
+        let fail = check_release_full(&root, None, None, Some("not-a-manifest"), None, None, None);
         let _ = fs::remove_dir_all(&root);
         assert!(local.automated_pass);
         assert!(local.gates.iter().any(|g| g.id == "artifacts_checksums"

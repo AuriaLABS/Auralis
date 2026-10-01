@@ -62,6 +62,13 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - suite requerida ausente o incompleta → fail-closed;
 - el CLI no inventa resultados.
 
+## Gate `benchmarks`
+
+- sin snapshot → pending; release-check does not invent numbers;
+- `BASELINES_SCHEMA_VERSION = 1`; matmul/forward comparable y sin regresión bloqueante → pass;
+- bench requerido ausente, Inconclusive o regresión bloqueante → fail-closed;
+- GPU is not a release gate.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
@@ -69,6 +76,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `artifacts_checksums` — pending si no hay manifiesto almacenado
 - `compatibility_fixtures` — pending si no hay fixture
 - `suites_evals` — pending si no hay snapshot; no inventa scores
+- `benchmarks` — pending si no hay snapshot; no inventa números
 - `declared_blockers` — #68 GPU experimental no es gate de release
 - `human_approval` — revisión humana (#84)
 

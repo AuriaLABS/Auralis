@@ -83,6 +83,7 @@ pub mod planner;
 pub mod release;
 pub mod release_checksums;
 pub mod release_compat;
+pub mod release_benchmarks;
 pub mod release_suites;
 pub mod recurrent;
 pub mod reasoning_suite;
