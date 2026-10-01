@@ -3,6 +3,7 @@
 Herramienta: `auralis release-check` y `auralis release-manifest`.
 Fuente de artefactos: `DEFAULT_RELEASE_ARTIFACTS` en `src/release.rs`.
 Schema del manifiesto de release: `RELEASE_MANIFEST_VERSION = 1`.
+Schema de compatibilidad: `COMPAT_SCHEMA_VERSION = 1`.
 
 Esta herramienta **nunca crea tags** ni registra `human_approval`.
 `automated_pass` solo mira archivos locales.
@@ -46,11 +47,18 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - decode inválido o checksum mismatch → fail-closed;
 - el CLI no inventa el manifiesto.
 
+## Gate `compatibility_fixtures`
+
+- sin fixture → pending; migrate never rewrites;
+- checkpoint/manifest/session v1 que `accept` → pass;
+- version 0 o desconocida → fail-closed.
+
 ## Gates pendientes (no locales)
 
 - `rc_tag` — pending si no hay candidato; nunca crea el tag
 - `live_ci` — pending si no hay snapshot; no hay red
 - `artifacts_checksums` — pending si no hay manifiesto almacenado
+- `compatibility_fixtures` — pending si no hay fixture
 - `declared_blockers` — #68 GPU experimental no es gate de release
 - `human_approval` — revisión humana (#84)
 
