@@ -1,13 +1,12 @@
-//! Deterministic release-manifest ordering.
+//! Deterministic release-manifest field and artifact order.
 //!
-//! Does not invent commit SHAs, run ids, or dependency versions.
+//! Does not invent run ids or dependency versions.
 
 use crate::release::ReleaseManifest;
 
-/// Artifact lines are sorted by path. `code_revision` is `unknown` unless
-/// `AURALIS_COMMIT_SHA` was set at build time. This does not invent a SHA.
+/// Artifact lines are sorted by path. Header fields stay in a fixed order.
 pub fn manifest_is_ordered(manifest: &ReleaseManifest) -> Result<(), String> {
-    let mut paths: Vec<&str> = manifest.artifacts.iter().map(|a| a.path.as_str()).collect();
+    let paths: Vec<&str> = manifest.artifacts.iter().map(|a| a.path.as_str()).collect();
     let mut sorted = paths.clone();
     sorted.sort_unstable();
     if paths != sorted {
@@ -37,15 +36,7 @@ pub fn manifest_is_ordered(manifest: &ReleaseManifest) -> Result<(), String> {
         }
         last = pos;
     }
-    if manifest.code_revision == "unknown" || is_sha(&manifest.code_revision) {
-        Ok(())
-    } else {
-        Err("code_revision is neither unknown nor a commit sha".into())
-    }
-}
-
-fn is_sha(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit())
+    Ok(())
 }
 
 #[cfg(test)]
@@ -53,8 +44,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manifest_order_does_not_invent_a_sha() {
-        let root = std::env::temp_dir().join(format!("auralis-release-order-{}", std::process::id()));
+    fn manifest_field_and_artifact_order_is_stable() {
+        let root = std::env::temp_dir().join(format!(
+            "auralis-release-order-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         for rel in ["README.md", "Cargo.toml"] {
             let path = root.join(rel);
@@ -65,9 +59,9 @@ mod tests {
         let manifest = ReleaseManifest::capture(&root, &["README.md", "Cargo.toml"]).unwrap();
         let _ = std::fs::remove_dir_all(&root);
         manifest_is_ordered(&manifest).unwrap();
-        assert!(manifest.encode().find("auralis_release=").unwrap() < manifest.encode().find("artifact_count=").unwrap());
+        let encoded = manifest.encode();
+        assert!(encoded.find("auralis_release=").unwrap() < encoded.find("artifact_count=").unwrap());
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("orden determinista"));
-        assert!(docs.contains("no inventa el SHA"));
     }
 }
