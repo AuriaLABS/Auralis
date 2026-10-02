@@ -609,6 +609,27 @@ fn parse_hex(item: Option<&str>, key: &str) -> Result<u64, String> {
     u64::from_str_radix(value, 16).map_err(|_| format!("invalid artifact {key}"))
 }
 
+pub fn record_features(supplied: Option<&str>) -> Result<String, String> {
+    let Some(raw) = supplied else {
+        return Ok("unrecorded".to_string());
+    };
+    let mut names = Vec::new();
+    for part in raw.split(',') {
+        let name = part.trim();
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        {
+            return Err(format!("features refuses invented or unsafe name {part:?}"));
+        }
+        names.push(name.to_string());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names.join(","))
+}
+
 fn cargo_lock_field(root: &Path) -> String {
     if !root.join("Cargo.lock").is_file() {
         return "unrecorded".to_string();
@@ -859,6 +880,10 @@ mod tests {
         assert!(docs.contains("no inventan runs"));
         assert!(docs.contains("no inventa checkpoint_id"));
         assert!(docs.contains("no inventa versiones de dependencias"));
+        assert_eq!(record_features(None).unwrap(), "unrecorded");
+        assert_eq!(record_features(Some("b,a")).unwrap(), "a,b");
+        assert!(record_features(Some("GPU")).is_err());
+        assert!(docs.contains("no inventa features"));
         decoded.verify(&root).unwrap();
 
         fs::write(root.join("ckpt.bin"), "ckpt\n").unwrap();
