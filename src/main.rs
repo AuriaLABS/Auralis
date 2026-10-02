@@ -14,7 +14,7 @@ use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
 use auralis::numeric::{self, Diagnostics};
 use auralis::optim::{Adam, Optimizer};
-use auralis::release::{check_release, default_root, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
+use auralis::release::{check_release, default_root, record_features, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
 use auralis::scheduler::{scheduler_path, SchedulerConfig};
 use auralis::sec::scan_tree;
@@ -808,7 +808,7 @@ fn run_release_manifest(args: &[String]) {
                 m.model_id = path;
             }
             if let Some(value) = features {
-                match crate::release::record_features(Some(&value)) {
+                match record_features(Some(&value)) {
                     Ok(recorded) => m.features = recorded,
                     Err(e) => {
                         eprintln!("error: {e}");
