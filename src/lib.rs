@@ -88,6 +88,7 @@ pub mod release_benchmarks;
 pub mod release_blockers;
 pub mod release_order;
 pub mod release_suites;
+pub mod release_sha;
 pub mod recurrent;
 pub mod reasoning_suite;
 pub mod run_config;
