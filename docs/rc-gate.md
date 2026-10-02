@@ -52,6 +52,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `limitations=docs/model-card.md` es una referencia, no una métrica RC;
 - orden determinista: campos fijos y artefactos por path;
 - `code_revision` es `unknown` o un SHA de 40 hex; no inventa el SHA;
+- `verify` rechaza un placeholder de `code_revision` antes de cualquier tag;
 - decode inválido o checksum mismatch → fail-closed;
 - el CLI no inventa el manifiesto;
 - `check_release_full` aplica checksums y fixtures al report; el CLI sigue sin inventarlos.
