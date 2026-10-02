@@ -735,6 +735,8 @@ fn run_release_check(args: &[String]) {
 fn run_release_manifest(args: &[String]) {
     let mut verify: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
+    let mut checkpoint: Option<String> = None;
+    let mut model: Option<String> = None;
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
@@ -747,6 +749,18 @@ fn run_release_manifest(args: &[String]) {
         if args[i] == "--out" {
             let path = args.get(i + 1).expect("--out requires a path");
             out = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
+        if args[i] == "--checkpoint" {
+            let path = args.get(i + 1).expect("--checkpoint requires a path");
+            checkpoint = Some(path.clone());
+            i += 2;
+            continue;
+        }
+        if args[i] == "--model" {
+            let path = args.get(i + 1).expect("--model requires a path");
+            model = Some(path.clone());
             i += 2;
             continue;
         }
@@ -779,7 +793,17 @@ fn run_release_manifest(args: &[String]) {
     }
 
     match ReleaseManifest::capture(&root, DEFAULT_RELEASE_ARTIFACTS) {
-        Ok(m) => {
+        Ok(mut m) => {
+            if let Some(path) = checkpoint {
+                m.checkpoint_id = path;
+            }
+            if let Some(path) = model {
+                m.model_id = path;
+            }
+            if let Err(e) = m.verify(&root) {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
             let encoded = m.encode();
             if let Some(path) = out {
                 if let Err(e) = fs::write(&path, &encoded) {
@@ -1109,7 +1133,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
