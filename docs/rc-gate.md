@@ -93,4 +93,10 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `declared_blockers` — pending si no hay snapshot; no consulta GitHub; #68 is not a v1 release gate
 - `human_approval` — revisión humana (#84)
 
+## Report
+
+- `RELEASE_REPORT_SCHEMA_VERSION = 1`;
+- JSON incluye `schema`, `automated_pass`, `human_approval` y `creates_tags: false`;
+- la herramienta no aprueba ni crea el tag.
+
 Cómo lanzarlo: [verify.md](verify.md).
