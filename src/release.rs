@@ -350,6 +350,7 @@ pub struct ReleaseManifest {
     pub eval_run_ids: String,
     pub checkpoint_id: String,
     pub model_id: String,
+    pub cargo_lock: String,
     pub artifacts: Vec<ReleaseArtifact>,
 }
 
@@ -374,13 +375,14 @@ impl ReleaseManifest {
             eval_run_ids: String::new(),
             checkpoint_id: String::new(),
             model_id: String::new(),
+            cargo_lock: cargo_lock_field(root),
             artifacts,
         })
     }
 
     pub fn encode(&self) -> String {
         let mut out = format!(
-            "auralis_release={}\ncode_revision={}\nrustc={}\ntarget={}\nfeatures={}\nlimitations={}\nbench_run_ids={}\neval_run_ids={}\ncheckpoint_id={}\nmodel_id={}\nartifact_count={}\n",
+            "auralis_release={}\ncode_revision={}\nrustc={}\ntarget={}\nfeatures={}\nlimitations={}\nbench_run_ids={}\neval_run_ids={}\ncheckpoint_id={}\nmodel_id={}\ncargo_lock={}\nartifact_count={}\n",
             self.version,
             self.code_revision,
             self.rustc,
@@ -391,6 +393,7 @@ impl ReleaseManifest {
             self.eval_run_ids,
             self.checkpoint_id,
             self.model_id,
+            self.cargo_lock,
             self.artifacts.len()
         );
         for art in &self.artifacts {
@@ -413,6 +416,7 @@ impl ReleaseManifest {
         let mut eval_run_ids = None;
         let mut checkpoint_id = None;
         let mut model_id = None;
+        let mut cargo_lock = None;
         let mut artifact_count = None;
         let mut artifacts = Vec::new();
         for (i, raw) in text.lines().enumerate() {
@@ -488,6 +492,12 @@ impl ReleaseManifest {
                     }
                     model_id = Some(value.to_string());
                 }
+                "cargo_lock" => {
+                    if cargo_lock.is_some() {
+                        return Err("duplicate cargo_lock".into());
+                    }
+                    cargo_lock = Some(value.to_string());
+                }
                 "artifact_count" => {
                     if artifact_count.is_some() {
                         return Err("duplicate artifact_count".into());
@@ -540,6 +550,7 @@ impl ReleaseManifest {
             eval_run_ids: eval_run_ids.unwrap_or_default(),
             checkpoint_id: checkpoint_id.unwrap_or_default(),
             model_id: model_id.unwrap_or_default(),
+            cargo_lock: cargo_lock.unwrap_or_else(|| "unrecorded".to_string()),
             artifacts,
         })
     }
@@ -571,6 +582,11 @@ impl ReleaseManifest {
                 return Err(format!("{label} reference missing {rel}"));
             }
         }
+        if self.cargo_lock != "unrecorded" {
+            if self.cargo_lock != cargo_lock_field(root) {
+                return Err("cargo_lock checksum mismatch".into());
+            }
+        }
         Ok(())
     }
 }
@@ -591,6 +607,16 @@ fn parse_hex(item: Option<&str>, key: &str) -> Result<u64, String> {
         .strip_prefix(&format!("{key}="))
         .ok_or_else(|| format!("artifact missing {key}"))?;
     u64::from_str_radix(value, 16).map_err(|_| format!("invalid artifact {key}"))
+}
+
+fn cargo_lock_field(root: &Path) -> String {
+    if !root.join("Cargo.lock").is_file() {
+        return "unrecorded".to_string();
+    }
+    match hash_artifact(root, "Cargo.lock") {
+        Ok(art) => format!("{:016x}", art.checksum),
+        Err(_) => "unrecorded".to_string(),
+    }
 }
 
 fn hash_artifact(root: &Path, rel: &str) -> Result<ReleaseArtifact, String> {
@@ -828,9 +854,11 @@ mod tests {
         assert!(manifest.checkpoint_id.is_empty());
         assert!(manifest.model_id.is_empty());
         assert!(manifest.encode().contains("checkpoint_id=\n"));
+        assert!(manifest.cargo_lock == "unrecorded" || manifest.cargo_lock.len() == 16);
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("no inventan runs"));
         assert!(docs.contains("no inventa checkpoint_id"));
+        assert!(docs.contains("no inventa versiones de dependencias"));
         decoded.verify(&root).unwrap();
 
         fs::write(root.join("ckpt.bin"), "ckpt\n").unwrap();
@@ -840,6 +868,13 @@ mod tests {
         with_ids.verify(&root).unwrap();
         with_ids.checkpoint_id = "../secret".into();
         assert!(with_ids.verify(&root).unwrap_err().contains("unsafe"));
+
+        fs::write(root.join("Cargo.lock"), "lock\n").unwrap();
+        let locked = ReleaseManifest::capture(&root, &["Cargo.toml", "README.md"]).unwrap();
+        assert_ne!(locked.cargo_lock, "unrecorded");
+        locked.verify(&root).unwrap();
+        fs::write(root.join("Cargo.lock"), "changed\n").unwrap();
+        assert!(locked.verify(&root).unwrap_err().contains("cargo_lock"));
 
         fs::write(root.join("README.md"), "changed\n").unwrap();
         assert!(decoded.verify(&root).unwrap_err().contains("mismatch"));
