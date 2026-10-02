@@ -343,6 +343,11 @@ pub struct ReleaseManifest {
     pub version: u32,
     pub code_revision: String,
     pub rustc: String,
+    pub target: String,
+    pub features: String,
+    pub limitations: String,
+    pub bench_run_ids: String,
+    pub eval_run_ids: String,
     pub artifacts: Vec<ReleaseArtifact>,
 }
 
@@ -360,14 +365,27 @@ impl ReleaseManifest {
             rustc: option_env!("RUSTC_VERSION")
                 .unwrap_or(env!("CARGO_PKG_VERSION"))
                 .to_string(),
+            target: option_env!("TARGET").unwrap_or("unrecorded").to_string(),
+            features: "unrecorded".to_string(),
+            limitations: "docs/model-card.md".to_string(),
+            bench_run_ids: String::new(),
+            eval_run_ids: String::new(),
             artifacts,
         })
     }
 
     pub fn encode(&self) -> String {
         let mut out = format!(
-            "auralis_release={}\ncode_revision={}\nrustc={}\nartifact_count={}\n",
-            self.version, self.code_revision, self.rustc, self.artifacts.len()
+            "auralis_release={}\ncode_revision={}\nrustc={}\ntarget={}\nfeatures={}\nlimitations={}\nbench_run_ids={}\neval_run_ids={}\nartifact_count={}\n",
+            self.version,
+            self.code_revision,
+            self.rustc,
+            self.target,
+            self.features,
+            self.limitations,
+            self.bench_run_ids,
+            self.eval_run_ids,
+            self.artifacts.len()
         );
         for art in &self.artifacts {
             out.push_str(&format!(
@@ -382,6 +400,11 @@ impl ReleaseManifest {
         let mut version = None;
         let mut code_revision = None;
         let mut rustc = None;
+        let mut target = None;
+        let mut features = None;
+        let mut limitations = None;
+        let mut bench_run_ids = None;
+        let mut eval_run_ids = None;
         let mut artifact_count = None;
         let mut artifacts = Vec::new();
         for (i, raw) in text.lines().enumerate() {
@@ -414,6 +437,36 @@ impl ReleaseManifest {
                         return Err("duplicate rustc".into());
                     }
                     rustc = Some(value.to_string());
+                }
+                "target" => {
+                    if target.is_some() {
+                        return Err("duplicate target".into());
+                    }
+                    target = Some(value.to_string());
+                }
+                "features" => {
+                    if features.is_some() {
+                        return Err("duplicate features".into());
+                    }
+                    features = Some(value.to_string());
+                }
+                "limitations" => {
+                    if limitations.is_some() {
+                        return Err("duplicate limitations".into());
+                    }
+                    limitations = Some(value.to_string());
+                }
+                "bench_run_ids" => {
+                    if bench_run_ids.is_some() {
+                        return Err("duplicate bench_run_ids".into());
+                    }
+                    bench_run_ids = Some(value.to_string());
+                }
+                "eval_run_ids" => {
+                    if eval_run_ids.is_some() {
+                        return Err("duplicate eval_run_ids".into());
+                    }
+                    eval_run_ids = Some(value.to_string());
                 }
                 "artifact_count" => {
                     if artifact_count.is_some() {
@@ -460,11 +513,17 @@ impl ReleaseManifest {
             version,
             code_revision: code_revision.ok_or("release manifest missing code_revision")?,
             rustc: rustc.ok_or("release manifest missing rustc")?,
+            target: target.unwrap_or_else(|| "unrecorded".to_string()),
+            features: features.unwrap_or_else(|| "unrecorded".to_string()),
+            limitations: limitations.unwrap_or_default(),
+            bench_run_ids: bench_run_ids.unwrap_or_default(),
+            eval_run_ids: eval_run_ids.unwrap_or_default(),
             artifacts,
         })
     }
 
     pub fn verify(&self, root: impl AsRef<Path>) -> Result<(), String> {
+        let root = root.as_ref();
         let live = Self::capture(
             root,
             &self
@@ -475,6 +534,9 @@ impl ReleaseManifest {
         )?;
         if live.artifacts != self.artifacts {
             return Err("release artifact checksum or size mismatch".into());
+        }
+        if !self.limitations.is_empty() && !root.join(&self.limitations).is_file() {
+            return Err(format!("limitations reference missing {}", self.limitations));
         }
         Ok(())
     }
@@ -727,6 +789,12 @@ mod tests {
         let manifest = ReleaseManifest::capture(&root, &["Cargo.toml", "README.md"]).unwrap();
         let decoded = ReleaseManifest::decode(&manifest.encode()).unwrap();
         assert_eq!(decoded, manifest);
+        assert!(manifest.bench_run_ids.is_empty());
+        assert!(manifest.eval_run_ids.is_empty());
+        assert!(manifest.encode().contains("bench_run_ids=\n"));
+        assert!(manifest.encode().contains("eval_run_ids=\n"));
+        let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
+        assert!(docs.contains("no inventan runs"));
         decoded.verify(&root).unwrap();
 
         fs::write(root.join("README.md"), "changed\n").unwrap();
