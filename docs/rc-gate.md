@@ -44,6 +44,8 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 
 - sin manifiesto almacenado → pending; use auralis release-manifest to emit/verify checksums;
 - texto `RELEASE_MANIFEST_VERSION = 1` que decodifica y `verify` → pass;
+- `target` y `features` pueden quedar `unrecorded`; `bench_run_ids` y `eval_run_ids` vacíos no inventan runs;
+- `limitations=docs/model-card.md` es una referencia, no una métrica RC;
 - decode inválido o checksum mismatch → fail-closed;
 - el CLI no inventa el manifiesto;
 - `check_release_full` aplica checksums y fixtures al report; el CLI sigue sin inventarlos.
