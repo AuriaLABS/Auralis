@@ -348,6 +348,8 @@ pub struct ReleaseManifest {
     pub limitations: String,
     pub bench_run_ids: String,
     pub eval_run_ids: String,
+    pub checkpoint_id: String,
+    pub model_id: String,
     pub artifacts: Vec<ReleaseArtifact>,
 }
 
@@ -370,13 +372,15 @@ impl ReleaseManifest {
             limitations: "docs/model-card.md".to_string(),
             bench_run_ids: String::new(),
             eval_run_ids: String::new(),
+            checkpoint_id: String::new(),
+            model_id: String::new(),
             artifacts,
         })
     }
 
     pub fn encode(&self) -> String {
         let mut out = format!(
-            "auralis_release={}\ncode_revision={}\nrustc={}\ntarget={}\nfeatures={}\nlimitations={}\nbench_run_ids={}\neval_run_ids={}\nartifact_count={}\n",
+            "auralis_release={}\ncode_revision={}\nrustc={}\ntarget={}\nfeatures={}\nlimitations={}\nbench_run_ids={}\neval_run_ids={}\ncheckpoint_id={}\nmodel_id={}\nartifact_count={}\n",
             self.version,
             self.code_revision,
             self.rustc,
@@ -385,6 +389,8 @@ impl ReleaseManifest {
             self.limitations,
             self.bench_run_ids,
             self.eval_run_ids,
+            self.checkpoint_id,
+            self.model_id,
             self.artifacts.len()
         );
         for art in &self.artifacts {
@@ -405,6 +411,8 @@ impl ReleaseManifest {
         let mut limitations = None;
         let mut bench_run_ids = None;
         let mut eval_run_ids = None;
+        let mut checkpoint_id = None;
+        let mut model_id = None;
         let mut artifact_count = None;
         let mut artifacts = Vec::new();
         for (i, raw) in text.lines().enumerate() {
@@ -468,6 +476,18 @@ impl ReleaseManifest {
                     }
                     eval_run_ids = Some(value.to_string());
                 }
+                "checkpoint_id" => {
+                    if checkpoint_id.is_some() {
+                        return Err("duplicate checkpoint_id".into());
+                    }
+                    checkpoint_id = Some(value.to_string());
+                }
+                "model_id" => {
+                    if model_id.is_some() {
+                        return Err("duplicate model_id".into());
+                    }
+                    model_id = Some(value.to_string());
+                }
                 "artifact_count" => {
                     if artifact_count.is_some() {
                         return Err("duplicate artifact_count".into());
@@ -518,6 +538,8 @@ impl ReleaseManifest {
             limitations: limitations.unwrap_or_default(),
             bench_run_ids: bench_run_ids.unwrap_or_default(),
             eval_run_ids: eval_run_ids.unwrap_or_default(),
+            checkpoint_id: checkpoint_id.unwrap_or_default(),
+            model_id: model_id.unwrap_or_default(),
             artifacts,
         })
     }
@@ -537,6 +559,17 @@ impl ReleaseManifest {
         }
         if !self.limitations.is_empty() && !root.join(&self.limitations).is_file() {
             return Err(format!("limitations reference missing {}", self.limitations));
+        }
+        for (label, rel) in [("checkpoint_id", &self.checkpoint_id), ("model_id", &self.model_id)] {
+            if rel.is_empty() {
+                continue;
+            }
+            if rel.starts_with('/') || rel.contains("..") {
+                return Err(format!("{label} refuses unsafe path {rel}"));
+            }
+            if !root.join(rel).is_file() {
+                return Err(format!("{label} reference missing {rel}"));
+            }
         }
         Ok(())
     }
@@ -792,10 +825,21 @@ mod tests {
         assert!(manifest.bench_run_ids.is_empty());
         assert!(manifest.eval_run_ids.is_empty());
         assert!(manifest.encode().contains("bench_run_ids=\n"));
-        assert!(manifest.encode().contains("eval_run_ids=\n"));
+        assert!(manifest.checkpoint_id.is_empty());
+        assert!(manifest.model_id.is_empty());
+        assert!(manifest.encode().contains("checkpoint_id=\n"));
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("no inventan runs"));
+        assert!(docs.contains("no inventa checkpoint_id"));
         decoded.verify(&root).unwrap();
+
+        fs::write(root.join("ckpt.bin"), "ckpt\n").unwrap();
+        let mut with_ids = decoded.clone();
+        with_ids.checkpoint_id = "ckpt.bin".into();
+        with_ids.model_id = "ckpt.bin".into();
+        with_ids.verify(&root).unwrap();
+        with_ids.checkpoint_id = "../secret".into();
+        assert!(with_ids.verify(&root).unwrap_err().contains("unsafe"));
 
         fs::write(root.join("README.md"), "changed\n").unwrap();
         assert!(decoded.verify(&root).unwrap_err().contains("mismatch"));
