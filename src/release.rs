@@ -591,6 +591,7 @@ impl ReleaseManifest {
                 .map(|a| a.path.as_str())
                 .collect::<Vec<_>>(),
         )?;
+        crate::release_sha::revisions_match(&self.code_revision, &live.code_revision)?;
         if live.artifacts != self.artifacts {
             return Err("release artifact checksum or size mismatch".into());
         }

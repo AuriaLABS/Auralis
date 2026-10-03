@@ -15,6 +15,14 @@ pub fn code_revision_is_honest(manifest: &ReleaseManifest) -> Result<(), String>
     }
 }
 
+/// Two 40-hex revisions that differ fail closed. `unknown` does not invent a match.
+pub fn revisions_match(stored: &str, live: &str) -> Result<(), String> {
+    if is_sha(stored) && is_sha(live) && stored != live {
+        return Err("code_revision mismatch".into());
+    }
+    Ok(())
+}
+
 fn is_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -39,6 +47,8 @@ mod tests {
         assert!(code_revision_is_honest(&fake).is_err());
         fake.code_revision = "a".repeat(40);
         code_revision_is_honest(&fake).unwrap();
+        assert!(revisions_match(&"a".repeat(40), &"b".repeat(40)).unwrap_err().contains("mismatch"));
+        revisions_match("unknown", &"a".repeat(40)).unwrap();
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("no inventa el SHA"));
         assert!(docs.contains("Does **not** cut `v1.0.0`"));
