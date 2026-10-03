@@ -14,7 +14,7 @@ use auralis::metrics::Throughput;
 use auralis::model::{Config, Gpt};
 use auralis::numeric::{self, Diagnostics};
 use auralis::optim::{Adam, Optimizer};
-use auralis::release::{check_release, default_root, record_features, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
+use auralis::release::{check_release_full, default_root, record_features, ReleaseManifest, DEFAULT_RELEASE_ARTIFACTS};
 use auralis::run_config::RunConfig;
 use auralis::scheduler::{scheduler_path, SchedulerConfig};
 use auralis::sec::scan_tree;
@@ -710,6 +710,7 @@ fn run_inspect(args: &[String]) {
 
 fn run_release_check(args: &[String]) {
     let mut json = false;
+    let mut manifest: Option<PathBuf> = None;
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
@@ -718,10 +719,36 @@ fn run_release_check(args: &[String]) {
             i += 1;
             continue;
         }
+        if args[i] == "--manifest" {
+            let path = args.get(i + 1).expect("--manifest requires a path");
+            manifest = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
         root = PathBuf::from(&args[i]);
         i += 1;
     }
-    let report = check_release(&root);
+    let stored = if let Some(path) = manifest {
+        match fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", path.display());
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
+    let report = check_release_full(
+        &root,
+        None,
+        None,
+        stored.as_deref(),
+        None,
+        None,
+        None,
+        None,
+    );
     if json {
         println!("{}", report.json());
     } else {
@@ -1149,7 +1176,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 

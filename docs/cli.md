@@ -10,7 +10,7 @@ auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--mod
 auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]
 auralis config [FILE]
 auralis inspect [checkpoint] [--json]
-auralis release-check [ROOT] [--json]
+auralis release-check [ROOT] [--json] [--manifest FILE]
 auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]
 auralis sec-audit [SRC_ROOT]
 auralis bench list [--json|--csv]
