@@ -556,6 +556,7 @@ impl ReleaseManifest {
     }
 
     pub fn verify(&self, root: impl AsRef<Path>) -> Result<(), String> {
+        crate::release_sha::code_revision_is_honest(self)?;
         let root = root.as_ref();
         let live = Self::capture(
             root,
@@ -884,6 +885,9 @@ mod tests {
         assert_eq!(record_features(Some("b,a")).unwrap(), "a,b");
         assert!(record_features(Some("GPU")).is_err());
         assert!(docs.contains("no inventa features"));
+        let mut placeholder = decoded.clone();
+        placeholder.code_revision = "not-a-sha".into();
+        assert!(placeholder.verify(&root).unwrap_err().contains("code_revision"));
         decoded.verify(&root).unwrap();
 
         fs::write(root.join("ckpt.bin"), "ckpt\n").unwrap();
