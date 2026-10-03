@@ -169,6 +169,10 @@ pub struct ReleaseReport {
     pub root: String,
     pub automated_pass: bool,
     pub human_approval: GateStatus,
+    pub code_revision: String,
+    pub features: String,
+    pub cargo_lock: String,
+    pub bench_run_ids: String,
     pub gates: Vec<Gate>,
 }
 
@@ -209,11 +213,15 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
             self.human_approval.as_str(),
+            escape(&self.code_revision),
+            escape(&self.features),
+            escape(&self.cargo_lock),
+            escape(&self.bench_run_ids),
             gates
         )
     }
@@ -310,11 +318,28 @@ pub fn check_release_full(
         .iter()
         .filter(|g| g.kind == "automated")
         .all(|g| g.status == GateStatus::Pass);
+    let provenance = ReleaseManifest::capture(root, DEFAULT_RELEASE_ARTIFACTS).ok();
 
     ReleaseReport {
         root: root.display().to_string(),
         automated_pass,
         human_approval: GateStatus::Pending,
+        code_revision: provenance
+            .as_ref()
+            .map(|m| m.code_revision.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
+        features: provenance
+            .as_ref()
+            .map(|m| m.features.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
+        cargo_lock: provenance
+            .as_ref()
+            .map(|m| m.cargo_lock.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
+        bench_run_ids: provenance
+            .as_ref()
+            .map(|m| m.bench_run_ids.clone())
+            .unwrap_or_default(),
         gates,
     }
 }
@@ -695,12 +720,16 @@ mod tests {
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
+        assert!(report.json().contains("\"bench_run_ids\":\"\""));
+        assert!(report.json().contains("\"code_revision\":"));
+        assert!(!report.json().contains("\"code_revision\":\"invented\""));
         assert!(report.json().contains("\"schema\":1"));
         assert!(report.json().contains("\"human_approval\":\"pending\""));
         assert_eq!(RELEASE_REPORT_SCHEMA_VERSION, 1);
         let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
         assert!(docs.contains("`RELEASE_REPORT_SCHEMA_VERSION = 1`"));
         assert!(docs.contains("la herramienta no aprueba ni crea el tag"));
+        assert!(docs.contains("no inventa runs"));
         assert!(report
             .gates
             .iter()
