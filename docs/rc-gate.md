@@ -57,6 +57,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - el report copia `code_revision`, `features` y `cargo_lock`; `bench_run_ids` vacío no inventa runs; `eval_run_ids` vacío no inventa runs;
 - decode inválido o checksum mismatch → fail-closed;
 - el CLI no inventa el manifiesto;
+- `--manifest FILE` aplica ese texto; ausente sigue pending;
 - `check_release_full` aplica checksums y fixtures al report; el CLI sigue sin inventarlos.
 
 ## Gate `compatibility_fixtures`
