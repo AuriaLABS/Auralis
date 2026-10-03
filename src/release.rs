@@ -173,6 +173,7 @@ pub struct ReleaseReport {
     pub features: String,
     pub cargo_lock: String,
     pub bench_run_ids: String,
+    pub eval_run_ids: String,
     pub gates: Vec<Gate>,
 }
 
@@ -213,7 +214,7 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -222,6 +223,7 @@ impl ReleaseReport {
             escape(&self.features),
             escape(&self.cargo_lock),
             escape(&self.bench_run_ids),
+            escape(&self.eval_run_ids),
             gates
         )
     }
@@ -339,6 +341,10 @@ pub fn check_release_full(
         bench_run_ids: provenance
             .as_ref()
             .map(|m| m.bench_run_ids.clone())
+            .unwrap_or_default(),
+        eval_run_ids: provenance
+            .as_ref()
+            .map(|m| m.eval_run_ids.clone())
             .unwrap_or_default(),
         gates,
     }
@@ -722,6 +728,7 @@ mod tests {
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
         assert!(report.json().contains("\"bench_run_ids\":\"\""));
+        assert!(report.json().contains("\"eval_run_ids\":\"\""));
         assert!(report.json().contains("\"code_revision\":"));
         assert!(!report.json().contains("\"code_revision\":\"invented\""));
         assert!(report.json().contains("\"schema\":1"));

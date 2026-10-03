@@ -54,7 +54,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `code_revision` es `unknown` o un SHA de 40 hex; no inventa el SHA;
 - `verify` rechaza un placeholder de `code_revision` antes de cualquier tag;
 - dos SHA de 40 hex distintos → fail-closed; `unknown` no inventa un match;
-- el report copia `code_revision`, `features` y `cargo_lock`; `bench_run_ids` vacío no inventa runs;
+- el report copia `code_revision`, `features` y `cargo_lock`; `bench_run_ids` vacío no inventa runs; `eval_run_ids` vacío no inventa runs;
 - decode inválido o checksum mismatch → fail-closed;
 - el CLI no inventa el manifiesto;
 - `check_release_full` aplica checksums y fixtures al report; el CLI sigue sin inventarlos.
