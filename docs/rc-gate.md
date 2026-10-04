@@ -70,6 +70,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `suites_evals`
 
 - sin snapshot → pending; release-check does not invent scores;
+- `--suites FILE` aplica ese snapshot; ausente sigue pending; no inventa scores;
 - reasoning/code/memory/agent complete → pass;
 - suite requerida ausente o incompleta → fail-closed;
 - el CLI no inventa resultados.

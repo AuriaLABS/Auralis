@@ -56,6 +56,51 @@ pub fn suites_evals_gate(runs: Option<&[SuiteRun]>) -> Gate {
     }
 }
 
+/// Parse a supplied snapshot. Does not invent scores.
+/// Line form: `suite=reasoning complete=true|false`. Unknown ids fail closed.
+pub fn parse_suites(text: &str) -> Result<Vec<SuiteRun>, String> {
+    let mut runs: Vec<SuiteRun> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut id = None;
+        let mut complete = None;
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid suite line {}", i + 1))?;
+            match key {
+                "suite" => {
+                    let known = REQUIRED_RELEASE_SUITES
+                        .iter()
+                        .find(|candidate| **candidate == value)
+                        .copied();
+                    id = Some(known.ok_or_else(|| format!("unknown suite {value}"))?);
+                }
+                "complete" => {
+                    complete = Some(match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(format!("invalid complete on line {}", i + 1)),
+                    });
+                }
+                other => return Err(format!("unknown suite field {other}")),
+            }
+        }
+        let id = id.ok_or_else(|| format!("suite line {} missing suite", i + 1))?;
+        if runs.iter().any(|run| run.id == id) {
+            return Err(format!("duplicate suite {id}"));
+        }
+        runs.push(SuiteRun {
+            id,
+            complete: complete.ok_or_else(|| format!("suite {id} missing complete"))?,
+        });
+    }
+    Ok(runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +128,12 @@ mod tests {
             suites_evals_gate(Some(&incomplete)).status,
             GateStatus::Fail
         );
+        let parsed = parse_suites(
+            "suite=reasoning complete=true\nsuite=code complete=true\nsuite=memory complete=true\nsuite=agent complete=true\n",
+        )
+        .unwrap();
+        assert_eq!(suites_evals_gate(Some(&parsed)).status, GateStatus::Pass);
+        assert!(parse_suites("suite=sota complete=true\n").is_err());
 
         let root = std::env::temp_dir().join(format!(
             "auralis-release-suites-{}",
