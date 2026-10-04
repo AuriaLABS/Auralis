@@ -36,6 +36,8 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `live_ci`
 
 - sin snapshot → pending; live GitHub check-run status is not queried locally;
+- `--ci FILE` aplica ese snapshot; ausente sigue pending; no consulta GitHub;
+- `job=benches` es fail-closed; `benches` no bloquea;
 - snapshot con `required_pr_jobs` en `success` → pass;
 - job requerido ausente o conclusion distinta de `success` → fail-closed;
 - `benches` no bloquea.
