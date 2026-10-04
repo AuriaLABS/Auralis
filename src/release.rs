@@ -305,12 +305,30 @@ impl ReleaseReport {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let pass_count = self
+            .gates
+            .iter()
+            .filter(|g| g.status == GateStatus::Pass)
+            .count();
+        let fail_count = self
+            .gates
+            .iter()
+            .filter(|g| g.status == GateStatus::Fail)
+            .count();
+        let pending_count = self
+            .gates
+            .iter()
+            .filter(|g| g.status == GateStatus::Pending)
+            .count();
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
             self.human_approval.as_str(),
+            pass_count,
+            fail_count,
+            pending_count,
             escape(&self.code_revision),
             escape(&self.features),
             escape(&self.cargo_lock),
@@ -819,6 +837,8 @@ mod tests {
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
+        assert!(report.json().contains("\"pending_count\":"));
+        assert!(report.human_approval == GateStatus::Pending);
         assert!(report.json().contains("\"bench_run_ids\":\"\""));
         assert!(report.json().contains("\"eval_run_ids\":\"\""));
         assert!(report.json().contains("\"code_revision\":"));
