@@ -47,7 +47,8 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 
 - sin manifiesto almacenado → pending; use auralis release-manifest to emit/verify checksums;
 - texto `RELEASE_MANIFEST_VERSION = 1` que decodifica y `verify` → pass;
-- `target` y `features` pueden quedar `unrecorded`; `bench_run_ids` y `eval_run_ids` vacíos no inventan runs;
+- `bench_run_ids` y `eval_run_ids` vacíos no inventan runs;
+- un id de run no vacío es fail-closed; no inventa runs;
 - `--features` registra solo nombres `a-z0-9_-` ordenados; no inventa features;
 - `checkpoint_id` y `model_id` vacíos por defecto; no inventa checkpoint_id;
 - una ruta relativa existente se verifica; `..` o ausente → fail-closed;

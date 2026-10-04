@@ -698,6 +698,9 @@ impl ReleaseManifest {
 
     pub fn verify(&self, root: impl AsRef<Path>) -> Result<(), String> {
         crate::release_sha::code_revision_is_honest(self)?;
+        if !self.bench_run_ids.is_empty() || !self.eval_run_ids.is_empty() {
+            return Err("bench_run_ids and eval_run_ids must stay empty; tool does not invent runs".into());
+        }
         let root = root.as_ref();
         let live = Self::capture(
             root,
@@ -1051,6 +1054,10 @@ mod tests {
         assert_eq!(record_features(Some("b,a")).unwrap(), "a,b");
         assert!(record_features(Some("GPU")).is_err());
         assert!(docs.contains("no inventa features"));
+        let mut invented = decoded.clone();
+        invented.bench_run_ids = "fake-run".into();
+        assert!(invented.verify(&root).unwrap_err().contains("does not invent runs"));
+
         let mut placeholder = decoded.clone();
         placeholder.code_revision = "not-a-sha".into();
         assert!(placeholder.verify(&root).unwrap_err().contains("code_revision"));
