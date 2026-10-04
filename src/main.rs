@@ -716,6 +716,7 @@ fn run_release_check(args: &[String]) {
     let mut benches: Option<PathBuf> = None;
     let mut ci: Option<PathBuf> = None;
     let mut compat: Option<PathBuf> = None;
+    let mut tag: Option<PathBuf> = None;
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
@@ -757,6 +758,12 @@ fn run_release_check(args: &[String]) {
         if args[i] == "--compat" {
             let path = args.get(i + 1).expect("--compat requires a path");
             compat = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
+        if args[i] == "--tag" {
+            let path = args.get(i + 1).expect("--tag requires a path");
+            tag = Some(PathBuf::from(path));
             i += 2;
             continue;
         }
@@ -884,9 +891,31 @@ fn run_release_check(args: &[String]) {
     } else {
         None
     };
+    let tag_text = if let Some(path) = tag {
+        match fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", path.display());
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
+    let parsed_tag = if let Some(text) = tag_text.as_deref() {
+        match auralis::release::parse_tag(text) {
+            Ok(item) => Some(item),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
     let report = check_release_full(
         &root,
-        None,
+        parsed_tag,
         parsed_ci.as_deref(),
         stored.as_deref(),
         parsed_compat,
@@ -1321,7 +1350,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE] [--blockers FILE] [--suites FILE] [--benches FILE] [--ci FILE] [--compat FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE] [--blockers FILE] [--suites FILE] [--benches FILE] [--ci FILE] [--compat FILE] [--tag FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
