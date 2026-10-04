@@ -52,7 +52,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `--features` registra solo nombres `a-z0-9_-` ordenados; no inventa features;
 - `checkpoint_id` y `model_id` vacíos por defecto; no inventa checkpoint_id;
 - una ruta relativa existente se verifica; `..` o ausente → fail-closed;
-- `cargo_lock` es el checksum de `Cargo.lock` o `unrecorded`; no inventa versiones de dependencias;
+- `rustc` es `unrecorded` salvo `RUSTC_VERSION`; no usa la versión del paquete;
 - `limitations=docs/model-card.md` es una referencia, no una métrica RC;
 - orden determinista: campos fijos y artefactos por path;
 - `code_revision` es `unknown` o un SHA de 40 hex; no inventa el SHA;
