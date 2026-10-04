@@ -62,6 +62,39 @@ pub fn compatibility_fixtures_gate(fixture: Option<CompatFixture>) -> Gate {
     }
 }
 
+/// Parse a supplied fixture. Does not invent versions and does not rewrite.
+/// Line form: `checkpoint=1 manifest=1 session=1`.
+pub fn parse_compat(text: &str) -> Result<CompatFixture, String> {
+    let mut checkpoint = None;
+    let mut manifest = None;
+    let mut session = None;
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid compat line {}", i + 1))?;
+            let version = value
+                .parse::<u32>()
+                .map_err(|_| format!("invalid version {value}"))?;
+            match key {
+                "checkpoint" => checkpoint = Some(version),
+                "manifest" => manifest = Some(version),
+                "session" => session = Some(version),
+                other => return Err(format!("unknown compat field {other}")),
+            }
+        }
+    }
+    Ok(CompatFixture {
+        checkpoint: checkpoint.ok_or("compat missing checkpoint")?,
+        manifest: manifest.ok_or("compat missing manifest")?,
+        session: session.ok_or("compat missing session")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +105,9 @@ mod tests {
             compatibility_fixtures_gate(None).status,
             GateStatus::Pending
         );
+        let parsed = parse_compat("checkpoint=1 manifest=1 session=1\n").unwrap();
+        assert_eq!(compatibility_fixtures_gate(Some(parsed)).status, GateStatus::Pass);
+        assert!(parse_compat("checkpoint=1\n").is_err());
         let v1 = CompatFixture {
             checkpoint: 1,
             manifest: 1,

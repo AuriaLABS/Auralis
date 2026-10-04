@@ -65,6 +65,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `compatibility_fixtures`
 
 - sin fixture → pending; migrate never rewrites;
+- `--compat FILE` aplica ese fixture; ausente sigue pending; no inventa versiones;
 - checkpoint/manifest/session v1 que `accept` → pass;
 - version 0 o desconocida → fail-closed;
 - `check_release_full` aplica el fixture; ausente sigue pending.
