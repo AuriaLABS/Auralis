@@ -66,6 +66,59 @@ pub fn benchmarks_gate(runs: Option<&[BenchRun]>) -> Gate {
     }
 }
 
+/// Parse a supplied snapshot. Does not invent numbers. GPU is not a required bench.
+/// Line form: `bench=matmul comparable=true|false blocking_regression=true|false`.
+pub fn parse_benches(text: &str) -> Result<Vec<BenchRun>, String> {
+    let mut runs: Vec<BenchRun> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut id = None;
+        let mut comparable = None;
+        let mut blocking_regression = None;
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid bench line {}", i + 1))?;
+            match key {
+                "bench" => {
+                    let known = REQUIRED_RELEASE_BENCHES
+                        .iter()
+                        .find(|candidate| **candidate == value)
+                        .copied();
+                    id = Some(known.ok_or_else(|| {
+                        format!("unknown bench {value}; GPU is not a release gate")
+                    })?);
+                }
+                "comparable" => comparable = Some(parse_bool(value, i + 1)?),
+                "blocking_regression" => blocking_regression = Some(parse_bool(value, i + 1)?),
+                other => return Err(format!("unknown bench field {other}")),
+            }
+        }
+        let id = id.ok_or_else(|| format!("bench line {} missing bench", i + 1))?;
+        if runs.iter().any(|run| run.id == id) {
+            return Err(format!("duplicate bench {id}"));
+        }
+        runs.push(BenchRun {
+            id,
+            comparable: comparable.ok_or_else(|| format!("bench {id} missing comparable"))?,
+            blocking_regression: blocking_regression
+                .ok_or_else(|| format!("bench {id} missing blocking_regression"))?,
+        });
+    }
+    Ok(runs)
+}
+
+fn parse_bool(value: &str, line: usize) -> Result<bool, String> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("invalid bool on line {line}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +154,12 @@ mod tests {
         let mut regressed = green();
         regressed[1].blocking_regression = true;
         assert_eq!(benchmarks_gate(Some(&regressed)).status, GateStatus::Fail);
+        let parsed = parse_benches(
+            "bench=matmul comparable=true blocking_regression=false\nbench=forward comparable=true blocking_regression=false\n",
+        )
+        .unwrap();
+        assert_eq!(benchmarks_gate(Some(&parsed)).status, GateStatus::Pass);
+        assert!(parse_benches("bench=gpu comparable=true blocking_regression=false\n").is_err());
 
         let root = std::env::temp_dir().join(format!(
             "auralis-release-bench-{}",
