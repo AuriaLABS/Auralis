@@ -164,6 +164,60 @@ pub fn live_ci_gate(runs: Option<&[CiRun]>) -> Gate {
     }
 }
 
+/// Parse a supplied CI snapshot. Does not query GitHub.
+/// Line form: `job=unit conclusion=success`. Unknown jobs fail closed.
+/// `benches` is not a required release job.
+pub fn parse_ci(text: &str) -> Result<Vec<CiRun>, String> {
+    let allowed: Vec<&str> = required_pr_jobs().iter().map(|job| job.id).collect();
+    let mut runs: Vec<CiRun> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut id = None;
+        let mut conclusion = None;
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid ci line {}", i + 1))?;
+            match key {
+                "job" => {
+                    if value == "benches" {
+                        return Err("benches does not block and is not a release CI job".into());
+                    }
+                    id = Some(
+                        allowed
+                            .iter()
+                            .find(|candidate| **candidate == value)
+                            .copied()
+                            .ok_or_else(|| format!("unknown ci job {value}"))?,
+                    );
+                }
+                "conclusion" => {
+                    conclusion = Some(match value {
+                        "success" => "success",
+                        "failure" => "failure",
+                        "skipped" => "skipped",
+                        "cancelled" => "cancelled",
+                        _ => return Err(format!("unknown conclusion {value}")),
+                    });
+                }
+                other => return Err(format!("unknown ci field {other}")),
+            }
+        }
+        let id = id.ok_or_else(|| format!("ci line {} missing job", i + 1))?;
+        if runs.iter().any(|run| run.id == id) {
+            return Err(format!("duplicate ci job {id}"));
+        }
+        runs.push(CiRun {
+            id,
+            conclusion: conclusion.ok_or_else(|| format!("ci job {id} missing conclusion"))?,
+        });
+    }
+    Ok(runs)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseReport {
     pub root: String,
@@ -755,6 +809,19 @@ mod tests {
             .iter()
             .any(|g| g.id == "declared_blockers" && g.status == GateStatus::Pending));
         assert_eq!(create_tag(), Err("tag creation forbidden"));
+    }
+
+    #[test]
+    fn parse_ci_does_not_query_github() {
+        assert!(parse_ci("job=benches conclusion=success\n").is_err());
+        let text = required_pr_jobs()
+            .into_iter()
+            .map(|job| format!("job={} conclusion=success\n", job.id))
+            .collect::<String>();
+        let runs = parse_ci(&text).unwrap();
+        assert_eq!(live_ci_gate(Some(&runs)).status, GateStatus::Pass);
+        let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
+        assert!(docs.contains("no consulta GitHub"));
     }
 
     #[test]
