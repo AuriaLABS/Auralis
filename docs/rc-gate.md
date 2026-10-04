@@ -117,6 +117,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 
 - `RELEASE_REPORT_SCHEMA_VERSION = 1`;
 - JSON incluye `schema`, `automated_pass`, `human_approval` y `creates_tags: false`;
+- `pass_count`, `fail_count` y `pending_count` salen de los gates; no aprueban ni crean el tag;
 - la herramienta no aprueba ni crea el tag.
 
 Cómo lanzarlo: [verify.md](verify.md).
