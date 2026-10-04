@@ -29,6 +29,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `rc_tag`
 
 - sin candidato → pending;
+- `--tag FILE` aplica ese candidato; ausente sigue pending; nunca crea el tag;
 - `v1.0.0` con tag SHA = source SHA → pass;
 - mismatch o nombre distinto → fail-closed;
 - `create_tag` está prohibido.

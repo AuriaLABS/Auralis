@@ -69,11 +69,11 @@ pub struct Gate {
     pub detail: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagCandidate {
-    pub name: &'static str,
-    pub tag_sha: &'static str,
-    pub source_sha: &'static str,
+    pub name: String,
+    pub tag_sha: String,
+    pub source_sha: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +119,44 @@ pub fn rc_tag_gate(candidate: Option<TagCandidate>) -> Gate {
             kind: "automated",
             detail: format!("`v1.0.0` converges to {}", tag.tag_sha),
         },
+    }
+}
+
+/// Parse a supplied tag candidate. Does not create a tag.
+/// Line form: `name=v1.0.0 tag_sha=<40 hex> source_sha=<40 hex>`.
+pub fn parse_tag(text: &str) -> Result<TagCandidate, String> {
+    let mut name = None;
+    let mut tag_sha = None;
+    let mut source_sha = None;
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid tag line {}", i + 1))?;
+            match key {
+                "name" => name = Some(value.to_string()),
+                "tag_sha" => tag_sha = Some(require_sha(value)?),
+                "source_sha" => source_sha = Some(require_sha(value)?),
+                other => return Err(format!("unknown tag field {other}")),
+            }
+        }
+    }
+    Ok(TagCandidate {
+        name: name.ok_or("tag candidate missing name")?,
+        tag_sha: tag_sha.ok_or("tag candidate missing tag_sha")?,
+        source_sha: source_sha.ok_or("tag candidate missing source_sha")?,
+    })
+}
+
+fn require_sha(value: &str) -> Result<String, String> {
+    if value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(value.to_string())
+    } else {
+        Err("tag SHA must be 40 hex; tool never creates v1.0.0".into())
     }
 }
 
@@ -827,28 +865,32 @@ mod tests {
     #[test]
     fn rc_tag_converges_or_fails_closed_and_never_creates() {
         let aligned = TagCandidate {
-            name: "v1.0.0",
-            tag_sha: "abc",
-            source_sha: "abc",
+            name: "v1.0.0".into(),
+            tag_sha: "abc".into(),
+            source_sha: "abc".into(),
         };
         let drifted = TagCandidate {
-            name: "v1.0.0",
-            tag_sha: "abc",
-            source_sha: "def",
+            name: "v1.0.0".into(),
+            tag_sha: "abc".into(),
+            source_sha: "def".into(),
         };
-        assert_eq!(rc_tag_gate(Some(aligned)).status, GateStatus::Pass);
-        assert_eq!(rc_tag_gate(Some(drifted)).status, GateStatus::Fail);
+        assert_eq!(rc_tag_gate(Some(aligned.clone())).status, GateStatus::Pass);
+        assert_eq!(rc_tag_gate(Some(drifted.clone())).status, GateStatus::Fail);
         assert_eq!(rc_tag_gate(None).status, GateStatus::Pending);
         assert_eq!(
             rc_tag_gate(Some(TagCandidate {
-                name: "v0.9.0",
-                tag_sha: "abc",
-                source_sha: "abc",
+                name: "v0.9.0".into(),
+                tag_sha: "abc".into(),
+                source_sha: "abc".into(),
             }))
             .status,
             GateStatus::Fail
         );
         assert_eq!(create_tag(), Err("tag creation forbidden"));
+        let sha = "a".repeat(40);
+        let parsed = parse_tag(&format!("name=v1.0.0 tag_sha={sha} source_sha={sha}\n")).unwrap();
+        assert_eq!(rc_tag_gate(Some(parsed)).status, GateStatus::Pass);
+        assert!(parse_tag("name=v1.0.0 tag_sha=abc source_sha=abc\n").is_err());
 
         let root = std::env::temp_dir().join(format!(
             "auralis-release-tag-{}",
