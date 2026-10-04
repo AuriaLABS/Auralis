@@ -78,6 +78,8 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `benchmarks`
 
 - sin snapshot → pending; release-check does not invent numbers;
+- `--benches FILE` aplica ese snapshot; ausente sigue pending; no inventa números;
+- `bench=gpu` es fail-closed; GPU is not a release gate;
 - `BASELINES_SCHEMA_VERSION = 1`; matmul/forward comparable y sin regresión bloqueante → pass;
 - bench requerido ausente, Inconclusive o regresión bloqueante → fail-closed;
 - GPU is not a release gate.
