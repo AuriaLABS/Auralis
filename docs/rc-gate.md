@@ -91,6 +91,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 ## Gate `declared_blockers`
 
 - sin snapshot → pending; release-check does not query GitHub;
+- `--blockers FILE` aplica ese snapshot; ausente sigue pending; no consulta GitHub;
 - issue abierto marcado release gate → fail-closed;
 - #68 is not a v1 release gate.
 
