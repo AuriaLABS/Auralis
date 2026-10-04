@@ -711,6 +711,7 @@ fn run_inspect(args: &[String]) {
 fn run_release_check(args: &[String]) {
     let mut json = false;
     let mut manifest: Option<PathBuf> = None;
+    let mut blockers: Option<PathBuf> = None;
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
@@ -722,6 +723,12 @@ fn run_release_check(args: &[String]) {
         if args[i] == "--manifest" {
             let path = args.get(i + 1).expect("--manifest requires a path");
             manifest = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
+        if args[i] == "--blockers" {
+            let path = args.get(i + 1).expect("--blockers requires a path");
+            blockers = Some(PathBuf::from(path));
             i += 2;
             continue;
         }
@@ -739,6 +746,28 @@ fn run_release_check(args: &[String]) {
     } else {
         None
     };
+    let blocker_text = if let Some(path) = blockers {
+        match fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", path.display());
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
+    let parsed_blockers = if let Some(text) = blocker_text.as_deref() {
+        match auralis::release_blockers::parse_blockers(text) {
+            Ok(items) => Some(items),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
     let report = check_release_full(
         &root,
         None,
@@ -747,7 +776,7 @@ fn run_release_check(args: &[String]) {
         None,
         None,
         None,
-        None,
+        parsed_blockers.as_deref(),
     );
     if json {
         println!("{}", report.json());
@@ -1176,7 +1205,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE] [--blockers FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 

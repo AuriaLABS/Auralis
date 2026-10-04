@@ -43,6 +43,57 @@ pub fn declared_blockers_gate(blockers: Option<&[DeclaredBlocker]>) -> Gate {
     }
 }
 
+/// Parse a supplied snapshot. Does not query GitHub.
+/// Line form: `issue=N open=true|false release_gate=true|false`.
+pub fn parse_blockers(text: &str) -> Result<Vec<DeclaredBlocker>, String> {
+    let mut blockers: Vec<DeclaredBlocker> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut number = None;
+        let mut open = None;
+        let mut release_gate = None;
+        for part in line.split_whitespace() {
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("invalid blocker line {}", i + 1))?;
+            match key {
+                "issue" => {
+                    number = Some(
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| format!("invalid issue on line {}", i + 1))?,
+                    );
+                }
+                "open" => open = Some(parse_bool(value, i + 1)?),
+                "release_gate" => release_gate = Some(parse_bool(value, i + 1)?),
+                other => return Err(format!("unknown blocker field {other}")),
+            }
+        }
+        let number = number.ok_or_else(|| format!("blocker line {} missing issue", i + 1))?;
+        if blockers.iter().any(|b| b.number == number) {
+            return Err(format!("duplicate blocker {number}"));
+        }
+        blockers.push(DeclaredBlocker {
+            number,
+            open: open.ok_or_else(|| format!("blocker {number} missing open"))?,
+            release_gate: release_gate
+                .ok_or_else(|| format!("blocker {number} missing release_gate"))?,
+        });
+    }
+    Ok(blockers)
+}
+
+fn parse_bool(value: &str, line: usize) -> Result<bool, String> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("invalid bool on line {line}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +122,11 @@ mod tests {
             release_gate: true,
         }];
         assert_eq!(declared_blockers_gate(Some(&closed)).status, GateStatus::Pass);
+        let parsed = parse_blockers("issue=68 open=true release_gate=false\n").unwrap();
+        assert_eq!(declared_blockers_gate(Some(&parsed)).status, GateStatus::Pass);
+        assert!(parse_blockers("issue=68 open=true release_gate=maybe\n").is_err());
+        let docs = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/rc-gate.md"));
+        assert!(docs.contains("no consulta GitHub"));
 
         let root = std::env::temp_dir().join(format!(
             "auralis-release-blockers-{}",
