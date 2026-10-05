@@ -121,6 +121,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - JSON incluye `schema`, `automated_pass`, `human_approval` y `creates_tags: false`;
 - `pass_count`, `fail_count` y `pending_count` salen de los gates; no aprueban ni crean el tag;
 - `pending_ids` nombra los gates pending, incluido `human_approval`; no es una RC;
+- la salida humana lista `pending | ids=`; no aprueba ni crea el tag;
 - la herramienta no aprueba ni crea el tag.
 
 Cómo lanzarlo: [verify.md](verify.md).
