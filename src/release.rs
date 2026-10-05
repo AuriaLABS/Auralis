@@ -287,6 +287,14 @@ impl ReleaseReport {
                 gate.detail
             ));
         }
+        let pending_ids = self
+            .gates
+            .iter()
+            .filter(|g| g.status == GateStatus::Pending)
+            .map(|g| g.id)
+            .collect::<Vec<_>>()
+            .join(",");
+        out.push_str(&format!("pending | ids={pending_ids}\n"));
         out.push_str("note | this tool never creates tags or approves a release\n");
         out
     }
@@ -868,6 +876,8 @@ mod tests {
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
+        assert!(report.human().contains("pending | ids="));
+        assert!(report.human().contains("human_approval"));
         assert!(report.json().contains("\"creates_tags\":false"));
         assert!(report.json().contains("\"pending_count\":"));
         assert!(report.json().contains("\"pending_ids\":"));
