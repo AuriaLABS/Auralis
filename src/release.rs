@@ -959,6 +959,7 @@ mod tests {
             GateStatus::Fail
         );
         assert_eq!(create_tag(), Err("tag creation forbidden"));
+        assert_eq!(approve(), Err("approval forbidden"));
         let sha = "a".repeat(40);
         let parsed = parse_tag(&format!("name=v1.0.0 tag_sha={sha} source_sha={sha}\n")).unwrap();
         assert_eq!(rc_tag_gate(Some(parsed)).status, GateStatus::Pass);

@@ -720,6 +720,10 @@ fn run_release_check(args: &[String]) {
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
+        if args[i] == "--approve" {
+            eprintln!("error: {}", auralis::release::approve().unwrap_err());
+            std::process::exit(2);
+        }
         if args[i] == "--json" {
             json = true;
             i += 1;
