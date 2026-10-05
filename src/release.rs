@@ -262,6 +262,7 @@ pub struct ReleaseReport {
     pub automated_pass: bool,
     pub human_approval: GateStatus,
     pub code_revision: String,
+    pub rustc: String,
     pub features: String,
     pub cargo_lock: String,
     pub bench_run_ids: String,
@@ -321,7 +322,7 @@ impl ReleaseReport {
             .filter(|g| g.status == GateStatus::Pending)
             .count();
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"code_revision\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"code_revision\":\"{}\",\"rustc\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -330,6 +331,7 @@ impl ReleaseReport {
             fail_count,
             pending_count,
             escape(&self.code_revision),
+            escape(&self.rustc),
             escape(&self.features),
             escape(&self.cargo_lock),
             escape(&self.bench_run_ids),
@@ -439,6 +441,10 @@ pub fn check_release_full(
         code_revision: provenance
             .as_ref()
             .map(|m| m.code_revision.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
+        rustc: provenance
+            .as_ref()
+            .map(|m| m.rustc.clone())
             .unwrap_or_else(|| "unrecorded".to_string()),
         features: provenance
             .as_ref()
@@ -860,6 +866,8 @@ mod tests {
         assert!(report.json().contains("\"bench_run_ids\":\"\""));
         assert!(report.json().contains("\"eval_run_ids\":\"\""));
         assert!(report.json().contains("\"code_revision\":"));
+        assert!(report.json().contains("\"rustc\":\"unrecorded\"") || option_env!("RUSTC_VERSION").is_some());
+        assert!(!report.json().contains(&format!("\"rustc\":\"{}\"", env!("CARGO_PKG_VERSION"))));
         assert!(!report.json().contains("\"code_revision\":\"invented\""));
         assert!(report.json().contains("\"schema\":1"));
         assert!(report.json().contains("\"human_approval\":\"pending\""));
