@@ -87,6 +87,11 @@ pub fn create_tag() -> Result<(), &'static str> {
     Err("tag creation forbidden")
 }
 
+/// This checker never approves a release. Approval remains a human #84 action.
+pub fn approve() -> Result<(), &'static str> {
+    Err("approval forbidden")
+}
+
 /// Absent candidate → pending. Present `v1.0.0` must share tag/source SHA.
 /// A mismatch is fail-closed. The function never writes a tag.
 pub fn rc_tag_gate(candidate: Option<TagCandidate>) -> Gate {
