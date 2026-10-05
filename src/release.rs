@@ -506,9 +506,7 @@ impl ReleaseManifest {
         Ok(Self {
             version: RELEASE_MANIFEST_VERSION,
             code_revision: build_revision().to_string(),
-            rustc: option_env!("RUSTC_VERSION")
-                .unwrap_or(env!("CARGO_PKG_VERSION"))
-                .to_string(),
+            rustc: rustc_field(),
             target: option_env!("TARGET").unwrap_or("unrecorded").to_string(),
             features: "unrecorded".to_string(),
             limitations: "docs/model-card.md".to_string(),
@@ -698,6 +696,7 @@ impl ReleaseManifest {
 
     pub fn verify(&self, root: impl AsRef<Path>) -> Result<(), String> {
         crate::release_sha::code_revision_is_honest(self)?;
+        rustc_is_honest(&self.rustc)?;
         if !self.bench_run_ids.is_empty() || !self.eval_run_ids.is_empty() {
             return Err("bench_run_ids and eval_run_ids must stay empty; tool does not invent runs".into());
         }
@@ -774,6 +773,22 @@ pub fn record_features(supplied: Option<&str>) -> Result<String, String> {
     names.sort();
     names.dedup();
     Ok(names.join(","))
+}
+
+fn rustc_field() -> String {
+    option_env!("RUSTC_VERSION")
+        .unwrap_or("unrecorded")
+        .to_string()
+}
+
+fn rustc_is_honest(value: &str) -> Result<(), String> {
+    if value == "unrecorded" {
+        return Ok(());
+    }
+    if value.is_empty() || value == env!("CARGO_PKG_VERSION") {
+        return Err("rustc refuses the package version; toolchain stays unrecorded".into());
+    }
+    Ok(())
 }
 
 fn cargo_lock_field(root: &Path) -> String {
@@ -1057,6 +1072,10 @@ mod tests {
         let mut invented = decoded.clone();
         invented.bench_run_ids = "fake-run".into();
         assert!(invented.verify(&root).unwrap_err().contains("does not invent runs"));
+        let mut pkg = decoded.clone();
+        pkg.rustc = env!("CARGO_PKG_VERSION").into();
+        assert!(pkg.verify(&root).unwrap_err().contains("unrecorded"));
+
 
         let mut placeholder = decoded.clone();
         placeholder.code_revision = "not-a-sha".into();
