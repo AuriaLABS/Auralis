@@ -321,8 +321,15 @@ impl ReleaseReport {
             .iter()
             .filter(|g| g.status == GateStatus::Pending)
             .count();
+        let pending_ids = self
+            .gates
+            .iter()
+            .filter(|g| g.status == GateStatus::Pending)
+            .map(|g| format!("\"{}\"", escape(g.id)))
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"code_revision\":\"{}\",\"rustc\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -330,6 +337,7 @@ impl ReleaseReport {
             pass_count,
             fail_count,
             pending_count,
+            pending_ids,
             escape(&self.code_revision),
             escape(&self.rustc),
             escape(&self.features),
@@ -862,6 +870,9 @@ mod tests {
         assert!(report.human().contains("never creates tags"));
         assert!(report.json().contains("\"creates_tags\":false"));
         assert!(report.json().contains("\"pending_count\":"));
+        assert!(report.json().contains("\"pending_ids\":"));
+        assert!(report.json().contains("\"human_approval\""));
+        assert!(report.gates.iter().any(|g| g.id == "human_approval" && g.status == GateStatus::Pending));
         assert!(report.human_approval == GateStatus::Pending);
         assert!(report.json().contains("\"bench_run_ids\":\"\""));
         assert!(report.json().contains("\"eval_run_ids\":\"\""));
