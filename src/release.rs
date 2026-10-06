@@ -87,6 +87,11 @@ pub fn create_tag() -> Result<(), &'static str> {
     Err("tag creation forbidden")
 }
 
+/// This checker never approves a release. Approval remains a human #84 action.
+pub fn approve() -> Result<(), &'static str> {
+    Err("approval forbidden")
+}
+
 /// Absent candidate → pending. Present `v1.0.0` must share tag/source SHA.
 /// A mismatch is fail-closed. The function never writes a tag.
 pub fn rc_tag_gate(candidate: Option<TagCandidate>) -> Gate {
@@ -954,6 +959,7 @@ mod tests {
             GateStatus::Fail
         );
         assert_eq!(create_tag(), Err("tag creation forbidden"));
+        assert_eq!(approve(), Err("approval forbidden"));
         let sha = "a".repeat(40);
         let parsed = parse_tag(&format!("name=v1.0.0 tag_sha={sha} source_sha={sha}\n")).unwrap();
         assert_eq!(rc_tag_gate(Some(parsed)).status, GateStatus::Pass);
