@@ -285,8 +285,8 @@ impl ReleaseReport {
             self.human_approval.as_str()
         );
         out.push_str(&format!(
-            "provenance | rustc={} target={}\n",
-            self.rustc, self.target
+            "provenance | rustc={} target={} features={} cargo_lock={}\n",
+            self.rustc, self.target, self.features, self.cargo_lock
         ));
         for gate in &self.gates {
             out.push_str(&format!(
