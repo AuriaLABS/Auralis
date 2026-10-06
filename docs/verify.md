@@ -47,6 +47,9 @@ cargo run --release -- release-check --json
 
 `train-fresh` corto deja checkpoint + manifiesto. No sustituye al soak de Foundation.
 `release-check` no crea tags.
+`release-check --approve` y `release-manifest --approve` salen con `approval forbidden`.
+`release-check --create-tag` y `release-manifest --create-tag` salen con `tag creation forbidden`.
+No corta `v1.0.0`.
 
 ## Snippet compilable (API pública)
 

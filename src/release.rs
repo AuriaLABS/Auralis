@@ -960,6 +960,10 @@ mod tests {
         );
         assert_eq!(create_tag(), Err("tag creation forbidden"));
         assert_eq!(approve(), Err("approval forbidden"));
+        let verify = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/verify.md"));
+        assert!(verify.contains("approval forbidden"));
+        assert!(verify.contains("tag creation forbidden"));
+        assert!(verify.contains("Does **not** cut `v1.0.0`") || verify.contains("No corta `v1.0.0`"));
         let sha = "a".repeat(40);
         let parsed = parse_tag(&format!("name=v1.0.0 tag_sha={sha} source_sha={sha}\n")).unwrap();
         assert_eq!(rc_tag_gate(Some(parsed)).status, GateStatus::Pass);
