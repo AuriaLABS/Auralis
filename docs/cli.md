@@ -29,6 +29,8 @@ Binario auxiliar (no está en `fn usage()`): `cargo run --release --bin auralis_
 
 `--json` y `--csv` son exclusivos en `bench`.
 
+`--approve` y `--create-tag` no son flags de éxito: salen con `approval forbidden` y `tag creation forbidden`. No corta `v1.0.0`.
+
 Config de ejemplo (schema 2): [`examples/tiny.cfg`](../examples/tiny.cfg). Clipping OFF: [`examples/clipping-off.cfg`](../examples/clipping-off.cfg).
 
 Cómo ejecutarlos: [verify.md](verify.md).
