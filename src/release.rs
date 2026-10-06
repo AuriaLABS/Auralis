@@ -268,6 +268,7 @@ pub struct ReleaseReport {
     pub human_approval: GateStatus,
     pub code_revision: String,
     pub rustc: String,
+    pub target: String,
     pub features: String,
     pub cargo_lock: String,
     pub bench_run_ids: String,
@@ -342,7 +343,7 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"target\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -353,6 +354,7 @@ impl ReleaseReport {
             pending_ids,
             escape(&self.code_revision),
             escape(&self.rustc),
+            escape(&self.target),
             escape(&self.features),
             escape(&self.cargo_lock),
             escape(&self.bench_run_ids),
@@ -466,6 +468,10 @@ pub fn check_release_full(
         rustc: provenance
             .as_ref()
             .map(|m| m.rustc.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
+        target: provenance
+            .as_ref()
+            .map(|m| m.target.clone())
             .unwrap_or_else(|| "unrecorded".to_string()),
         features: provenance
             .as_ref()
@@ -893,6 +899,7 @@ mod tests {
         assert!(report.json().contains("\"eval_run_ids\":\"\""));
         assert!(report.json().contains("\"code_revision\":"));
         assert!(report.json().contains("\"rustc\":\"unrecorded\"") || option_env!("RUSTC_VERSION").is_some());
+        assert!(report.json().contains("\"target\":\"unrecorded\"") || option_env!("TARGET").is_some());
         assert!(!report.json().contains(&format!("\"rustc\":\"{}\"", env!("CARGO_PKG_VERSION"))));
         assert!(!report.json().contains("\"code_revision\":\"invented\""));
         assert!(report.json().contains("\"schema\":1"));
