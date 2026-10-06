@@ -123,6 +123,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `pending_ids` nombra los gates pending, incluido `human_approval`; no es una RC;
 - la salida humana lista `pending | ids=`; no aprueba ni crea el tag;
 - `--approve` es fail-closed en `release-check` y `release-manifest`; approval forbidden;
+- `--create-tag` es fail-closed en ambos; tag creation forbidden;
 - la herramienta no aprueba ni crea el tag.
 
 Cómo lanzarlo: [verify.md](verify.md).

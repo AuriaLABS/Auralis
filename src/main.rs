@@ -724,6 +724,10 @@ fn run_release_check(args: &[String]) {
             eprintln!("error: {}", auralis::release::approve().unwrap_err());
             std::process::exit(2);
         }
+        if args[i] == "--create-tag" {
+            eprintln!("error: {}", auralis::release::create_tag().unwrap_err());
+            std::process::exit(2);
+        }
         if args[i] == "--json" {
             json = true;
             i += 1;
@@ -948,6 +952,10 @@ fn run_release_manifest(args: &[String]) {
     while i < args.len() {
         if args[i] == "--approve" {
             eprintln!("error: {}", auralis::release::approve().unwrap_err());
+            std::process::exit(2);
+        }
+        if args[i] == "--create-tag" {
+            eprintln!("error: {}", auralis::release::create_tag().unwrap_err());
             std::process::exit(2);
         }
         if args[i] == "--verify" {
