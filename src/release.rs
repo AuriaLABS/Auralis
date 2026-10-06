@@ -964,6 +964,9 @@ mod tests {
         assert!(verify.contains("approval forbidden"));
         assert!(verify.contains("tag creation forbidden"));
         assert!(verify.contains("Does **not** cut `v1.0.0`") || verify.contains("No corta `v1.0.0`"));
+        let cli = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/cli.md"));
+        assert!(cli.contains("approval forbidden"));
+        assert!(cli.contains("tag creation forbidden"));
         let sha = "a".repeat(40);
         let parsed = parse_tag(&format!("name=v1.0.0 tag_sha={sha} source_sha={sha}\n")).unwrap();
         assert_eq!(rc_tag_gate(Some(parsed)).status, GateStatus::Pass);
