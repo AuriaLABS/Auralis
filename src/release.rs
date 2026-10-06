@@ -284,6 +284,10 @@ impl ReleaseReport {
             self.automated_pass,
             self.human_approval.as_str()
         );
+        out.push_str(&format!(
+            "provenance | rustc={} target={}\n",
+            self.rustc, self.target
+        ));
         for gate in &self.gates {
             out.push_str(&format!(
                 "gate | id={} status={} kind={} detail={}\n",
@@ -888,6 +892,8 @@ mod tests {
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.human().contains("pending | ids="));
+        assert!(report.human().contains("provenance | rustc="));
+        assert!(report.human().contains("target="));
         assert!(report.human().contains("human_approval"));
         assert!(report.json().contains("\"creates_tags\":false"));
         assert!(report.json().contains("\"pending_count\":"));
