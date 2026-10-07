@@ -124,6 +124,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - la salida humana lista `pending | ids=`; no aprueba ni crea el tag;
 - la salida humana copia `code_revision`, `rustc`, `target`, `features` y `cargo_lock`; `unknown` no inventa el SHA;
 - la salida humana deja `bench_run_ids` y `eval_run_ids` vacíos; no inventa runs;
+- el report copia `limitations` como ruta; no inventa el texto de la ficha;
 - `--approve` es fail-closed en `release-check` y `release-manifest`; approval forbidden;
 - `--create-tag` es fail-closed en ambos; tag creation forbidden;
 - la herramienta no aprueba ni crea el tag.
