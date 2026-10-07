@@ -487,6 +487,10 @@ pub fn check_release_full(
             .as_ref()
             .map(|m| m.cargo_lock.clone())
             .unwrap_or_else(|| "unrecorded".to_string()),
+        limitations: provenance
+            .as_ref()
+            .map(|m| m.limitations.clone())
+            .unwrap_or_else(|| "unrecorded".to_string()),
         bench_run_ids: provenance
             .as_ref()
             .map(|m| m.bench_run_ids.clone())
