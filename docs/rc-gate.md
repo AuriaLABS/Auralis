@@ -126,6 +126,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - la salida humana deja `bench_run_ids` y `eval_run_ids` vacíos; no inventa runs;
 - el report copia `limitations` como ruta; no inventa el texto de la ficha;
 - `checkpoint_id` y `model_id` vacíos no inventan pesos;
+- si hay `--manifest`, el report copia esos ids del manifiesto; no inventa pesos;
 - `--approve` es fail-closed en `release-check` y `release-manifest`; approval forbidden;
 - `--create-tag` es fail-closed en ambos; tag creation forbidden;
 - la herramienta no aprueba ni crea el tag.

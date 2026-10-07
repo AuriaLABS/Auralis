@@ -465,7 +465,8 @@ pub fn check_release_full(
         .iter()
         .filter(|g| g.kind == "automated")
         .all(|g| g.status == GateStatus::Pass);
-    let provenance = ReleaseManifest::capture(root, DEFAULT_RELEASE_ARTIFACTS).ok();
+    let stored = stored_manifest.and_then(|text| ReleaseManifest::decode(text).ok());
+    let provenance = stored.or_else(|| ReleaseManifest::capture(root, DEFAULT_RELEASE_ARTIFACTS).ok());
 
     ReleaseReport {
         root: root.display().to_string(),
@@ -905,6 +906,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         write_tree(&root, COMPLETE);
         let report = check_release(&root);
+        let encoded = {
+            let mut manifest = ReleaseManifest::capture(&root, COMPLETE).unwrap();
+            manifest.checkpoint_id = "docs/model-card.md".into();
+            manifest.encode()
+        };
+        let from_manifest = check_release_full(&root, None, None, Some(&encoded), None, None, None, None);
         let _ = fs::remove_dir_all(&root);
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, GateStatus::Pending);
@@ -919,6 +926,7 @@ mod tests {
         assert!(report.checkpoint_id.is_empty());
         assert!(report.model_id.is_empty());
         assert!(report.human().contains("checkpoint_id="));
+        assert_eq!(from_manifest.checkpoint_id, "docs/model-card.md");
         assert!(report.eval_run_ids.is_empty());
         assert!(report.human().contains("features="));
         assert!(report.human().contains("cargo_lock="));
