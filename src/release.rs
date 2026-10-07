@@ -285,8 +285,8 @@ impl ReleaseReport {
             self.human_approval.as_str()
         );
         out.push_str(&format!(
-            "provenance | rustc={} target={} features={} cargo_lock={}\n",
-            self.rustc, self.target, self.features, self.cargo_lock
+            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={}\n",
+            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock
         ));
         for gate in &self.gates {
             out.push_str(&format!(
@@ -892,7 +892,8 @@ mod tests {
         assert_eq!(report.human_approval, GateStatus::Pending);
         assert!(report.human().contains("never creates tags"));
         assert!(report.human().contains("pending | ids="));
-        assert!(report.human().contains("provenance | rustc="));
+        assert!(report.human().contains("provenance | rustc=") || report.human().contains("code_revision="));
+        assert!(report.human().contains("code_revision="));
         assert!(report.human().contains("features="));
         assert!(report.human().contains("cargo_lock="));
         assert!(report.human().contains("target="));
