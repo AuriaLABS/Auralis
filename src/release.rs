@@ -906,6 +906,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         write_tree(&root, COMPLETE);
         let report = check_release(&root);
+        let encoded = {
+            let mut manifest = ReleaseManifest::capture(&root, COMPLETE).unwrap();
+            manifest.checkpoint_id = "docs/model-card.md".into();
+            manifest.encode()
+        };
+        let from_manifest = check_release_full(&root, None, None, Some(&encoded), None, None, None, None);
         let _ = fs::remove_dir_all(&root);
         assert!(report.automated_pass);
         assert_eq!(report.human_approval, GateStatus::Pending);
@@ -920,12 +926,6 @@ mod tests {
         assert!(report.checkpoint_id.is_empty());
         assert!(report.model_id.is_empty());
         assert!(report.human().contains("checkpoint_id="));
-        let encoded = {
-            let mut manifest = ReleaseManifest::capture(&root, COMPLETE).unwrap();
-            manifest.checkpoint_id = "docs/model-card.md".into();
-            manifest.encode()
-        };
-        let from_manifest = check_release_full(&root, None, None, Some(&encoded), None, None, None, None);
         assert_eq!(from_manifest.checkpoint_id, "docs/model-card.md");
         assert!(report.eval_run_ids.is_empty());
         assert!(report.human().contains("features="));
