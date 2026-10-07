@@ -285,8 +285,8 @@ impl ReleaseReport {
             self.human_approval.as_str()
         );
         out.push_str(&format!(
-            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={}\n",
-            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock
+            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={} bench_run_ids={} eval_run_ids={}\n",
+            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock, self.bench_run_ids, self.eval_run_ids
         ));
         for gate in &self.gates {
             out.push_str(&format!(
@@ -894,6 +894,10 @@ mod tests {
         assert!(report.human().contains("pending | ids="));
         assert!(report.human().contains("provenance | rustc=") || report.human().contains("code_revision="));
         assert!(report.human().contains("code_revision="));
+        assert!(report.human().contains("bench_run_ids="));
+        assert!(report.human().contains("eval_run_ids="));
+        assert!(report.bench_run_ids.is_empty());
+        assert!(report.eval_run_ids.is_empty());
         assert!(report.human().contains("features="));
         assert!(report.human().contains("cargo_lock="));
         assert!(report.human().contains("target="));
