@@ -286,8 +286,8 @@ impl ReleaseReport {
             self.human_approval.as_str()
         );
         out.push_str(&format!(
-            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={} limitations={} bench_run_ids={} eval_run_ids={}\n",
-            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock, self.limitations, self.bench_run_ids, self.eval_run_ids
+            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={} limitations={} checkpoint_id={} model_id={} bench_run_ids={} eval_run_ids={}\n",
+            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock, self.limitations, self.checkpoint_id, self.model_id, self.bench_run_ids, self.eval_run_ids
         ));
         for gate in &self.gates {
             out.push_str(&format!(
@@ -348,7 +348,7 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"target\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"limitations\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"target\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"limitations\":\"{}\",\"checkpoint_id\":\"{}\",\"model_id\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -363,6 +363,8 @@ impl ReleaseReport {
             escape(&self.features),
             escape(&self.cargo_lock),
             escape(&self.limitations),
+            escape(&self.checkpoint_id),
+            escape(&self.model_id),
             escape(&self.bench_run_ids),
             escape(&self.eval_run_ids),
             gates
@@ -491,6 +493,14 @@ pub fn check_release_full(
             .as_ref()
             .map(|m| m.limitations.clone())
             .unwrap_or_else(|| "unrecorded".to_string()),
+        checkpoint_id: provenance
+            .as_ref()
+            .map(|m| m.checkpoint_id.clone())
+            .unwrap_or_default(),
+        model_id: provenance
+            .as_ref()
+            .map(|m| m.model_id.clone())
+            .unwrap_or_default(),
         bench_run_ids: provenance
             .as_ref()
             .map(|m| m.bench_run_ids.clone())
@@ -904,6 +914,9 @@ mod tests {
         assert!(report.human().contains("eval_run_ids="));
         assert!(report.human().contains("limitations="));
         assert!(report.json().contains("\"limitations\":\"docs/model-card.md\""));
+        assert!(report.checkpoint_id.is_empty());
+        assert!(report.model_id.is_empty());
+        assert!(report.human().contains("checkpoint_id="));
         assert!(report.eval_run_ids.is_empty());
         assert!(report.human().contains("features="));
         assert!(report.human().contains("cargo_lock="));
