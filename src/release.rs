@@ -272,6 +272,8 @@ pub struct ReleaseReport {
     pub features: String,
     pub cargo_lock: String,
     pub limitations: String,
+    pub checkpoint_id: String,
+    pub model_id: String,
     pub bench_run_ids: String,
     pub eval_run_ids: String,
     pub gates: Vec<Gate>,
