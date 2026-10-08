@@ -276,6 +276,7 @@ pub struct ReleaseReport {
     pub model_id: String,
     pub bench_run_ids: String,
     pub eval_run_ids: String,
+    pub provenance_source: String,
     pub gates: Vec<Gate>,
 }
 
@@ -288,8 +289,8 @@ impl ReleaseReport {
             self.human_approval.as_str()
         );
         out.push_str(&format!(
-            "provenance | code_revision={} rustc={} target={} features={} cargo_lock={} limitations={} checkpoint_id={} model_id={} bench_run_ids={} eval_run_ids={}\n",
-            self.code_revision, self.rustc, self.target, self.features, self.cargo_lock, self.limitations, self.checkpoint_id, self.model_id, self.bench_run_ids, self.eval_run_ids
+            "provenance | source={} code_revision={} rustc={} target={} features={} cargo_lock={} limitations={} checkpoint_id={} model_id={} bench_run_ids={} eval_run_ids={}\n",
+            self.provenance_source, self.code_revision, self.rustc, self.target, self.features, self.cargo_lock, self.limitations, self.checkpoint_id, self.model_id, self.bench_run_ids, self.eval_run_ids
         ));
         for gate in &self.gates {
             out.push_str(&format!(
@@ -308,6 +309,9 @@ impl ReleaseReport {
             .collect::<Vec<_>>()
             .join(",");
         out.push_str(&format!("pending | ids={pending_ids}\n"));
+        for (item, id, status) in checklist_rows(&self.gates) {
+            out.push_str(&format!("checklist | item={item} gate={id} status={status}\n"));
+        }
         out.push_str("note | this tool never creates tags or approves a release\n");
         out
     }
@@ -349,8 +353,20 @@ impl ReleaseReport {
             .map(|g| format!("\"{}\"", escape(g.id)))
             .collect::<Vec<_>>()
             .join(",");
+        let checklist = checklist_rows(&self.gates)
+            .into_iter()
+            .map(|(item, id, status)| {
+                format!(
+                    "{{\"item\":\"{}\",\"gate\":\"{}\",\"status\":\"{}\"}}",
+                    escape(item),
+                    escape(id),
+                    escape(&status)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"target\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"limitations\":\"{}\",\"checkpoint_id\":\"{}\",\"model_id\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
+            "{{\"schema\":{},\"root\":\"{}\",\"automated_pass\":{},\"human_approval\":\"{}\",\"creates_tags\":false,\"pass_count\":{},\"fail_count\":{},\"pending_count\":{},\"pending_ids\":[{}],\"provenance_source\":\"{}\",\"checklist\":[{}],\"code_revision\":\"{}\",\"rustc\":\"{}\",\"target\":\"{}\",\"features\":\"{}\",\"cargo_lock\":\"{}\",\"limitations\":\"{}\",\"checkpoint_id\":\"{}\",\"model_id\":\"{}\",\"bench_run_ids\":\"{}\",\"eval_run_ids\":\"{}\",\"gates\":[{}]}}",
             RELEASE_REPORT_SCHEMA_VERSION,
             escape(&self.root),
             self.automated_pass,
@@ -359,6 +375,8 @@ impl ReleaseReport {
             fail_count,
             pending_count,
             pending_ids,
+            escape(&self.provenance_source),
+            checklist,
             escape(&self.code_revision),
             escape(&self.rustc),
             escape(&self.target),
@@ -372,6 +390,30 @@ impl ReleaseReport {
             gates
         )
     }
+}
+
+pub fn checklist_rows(gates: &[Gate]) -> Vec<(&'static str, &'static str, String)> {
+    const ROWS: &[(&str, &str)] = &[
+        ("commit/tag RC", "rc_tag"),
+        ("CI requerida", "live_ci"),
+        ("suites/evals", "suites_evals"),
+        ("benchmarks", "benchmarks"),
+        ("artifacts/checksums", "artifacts_checksums"),
+        ("compatibility fixtures", "compatibility_fixtures"),
+        ("model card", "model_card"),
+        ("declared blockers", "declared_blockers"),
+        ("human approval", "human_approval"),
+    ];
+    ROWS.iter()
+        .map(|(item, id)| {
+            let status = gates
+                .iter()
+                .find(|g| g.id == *id)
+                .map(|g| g.status.as_str())
+                .unwrap_or("missing");
+            (*item, *id, status.to_string())
+        })
+        .collect()
 }
 
 fn escape(s: &str) -> String {
@@ -466,6 +508,13 @@ pub fn check_release_full(
         .filter(|g| g.kind == "automated")
         .all(|g| g.status == GateStatus::Pass);
     let stored = stored_manifest.and_then(|text| ReleaseManifest::decode(text).ok());
+    let provenance_source = if stored.is_some() {
+        "manifest"
+    } else if ReleaseManifest::capture(root, DEFAULT_RELEASE_ARTIFACTS).is_ok() {
+        "capture"
+    } else {
+        "unrecorded"
+    };
     let provenance = stored.or_else(|| ReleaseManifest::capture(root, DEFAULT_RELEASE_ARTIFACTS).ok());
 
     ReleaseReport {
@@ -512,6 +561,7 @@ pub fn check_release_full(
             .as_ref()
             .map(|m| m.eval_run_ids.clone())
             .unwrap_or_default(),
+        provenance_source: provenance_source.to_string(),
         gates,
     }
 }
@@ -927,6 +977,11 @@ mod tests {
         assert!(report.model_id.is_empty());
         assert!(report.human().contains("checkpoint_id="));
         assert_eq!(from_manifest.checkpoint_id, "docs/model-card.md");
+        assert_eq!(report.provenance_source, "capture");
+        assert_eq!(from_manifest.provenance_source, "manifest");
+        assert!(report.human().contains("checklist | item=human approval"));
+        assert!(report.json().contains("\"checklist\":["));
+        assert!(checklist_rows(&report.gates).iter().any(|row| row.1 == "human_approval" && row.2 == "pending"));
         assert!(report.eval_run_ids.is_empty());
         assert!(report.human().contains("features="));
         assert!(report.human().contains("cargo_lock="));

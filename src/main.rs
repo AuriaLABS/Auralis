@@ -717,6 +717,7 @@ fn run_release_check(args: &[String]) {
     let mut ci: Option<PathBuf> = None;
     let mut compat: Option<PathBuf> = None;
     let mut tag: Option<PathBuf> = None;
+    let mut snapshot_dir: Option<PathBuf> = None;
     let mut root = default_root();
     let mut i = 2;
     while i < args.len() {
@@ -775,8 +776,27 @@ fn run_release_check(args: &[String]) {
             i += 2;
             continue;
         }
+        if args[i] == "--snapshot-dir" {
+            let path = args.get(i + 1).expect("--snapshot-dir requires a path");
+            snapshot_dir = Some(PathBuf::from(path));
+            i += 2;
+            continue;
+        }
         root = PathBuf::from(&args[i]);
         i += 1;
+    }
+    if let Some(dir) = snapshot_dir {
+        if !dir.is_dir() {
+            eprintln!("error: snapshot dir {} is not a directory", dir.display());
+            std::process::exit(2);
+        }
+        fill_snapshot(&dir, &mut manifest, "manifest");
+        fill_snapshot(&dir, &mut blockers, "blockers");
+        fill_snapshot(&dir, &mut suites, "suites");
+        fill_snapshot(&dir, &mut benches, "benches");
+        fill_snapshot(&dir, &mut ci, "ci");
+        fill_snapshot(&dir, &mut compat, "compat");
+        fill_snapshot(&dir, &mut tag, "tag");
     }
     let stored = if let Some(path) = manifest {
         match fs::read_to_string(&path) {
@@ -938,6 +958,16 @@ fn run_release_check(args: &[String]) {
     }
     if !report.automated_pass {
         std::process::exit(2);
+    }
+}
+
+fn fill_snapshot(dir: &Path, slot: &mut Option<PathBuf>, name: &str) {
+    if slot.is_some() {
+        return;
+    }
+    let path = dir.join(name);
+    if path.is_file() {
+        *slot = Some(path);
     }
 }
 
@@ -1366,7 +1396,7 @@ fn parse_train_args(
 
 fn usage() {
     eprintln!(
-        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE] [--blockers FILE] [--suites FILE] [--benches FILE] [--ci FILE] [--compat FILE] [--tag FILE]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
+        "Auralis\n  auralis train [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis train-fresh [steps] [checkpoint] [seed] [batch] [accum] [--config FILE] [--model-config FILE] [--scheduler-config FILE] [--diagnostics]\n  auralis config [FILE]\n  auralis inspect [checkpoint] [--json]\n  auralis release-check [ROOT] [--json] [--manifest FILE] [--blockers FILE] [--suites FILE] [--benches FILE] [--ci FILE] [--compat FILE] [--tag FILE] [--snapshot-dir DIR]\n  auralis release-manifest [ROOT] [--out FILE] [--verify FILE] [--checkpoint PATH] [--model PATH] [--features LIST]\n  auralis sec-audit [SRC_ROOT]\n  auralis bench list [--json|--csv]\n  auralis bench describe ID [--json|--csv]\n  auralis bench run ID [--warmup N] [--iterations N] [--repeats N] [--json|--csv]\n  auralis numeric [VALUES|--fixture NAME]\n  auralis numeric forward CHECKPOINT --tokens 1,2,3\n  auralis eval [checkpoint]\n  auralis chat [checkpoint]\n  auralis check\n  auralis bpe"
     );
 }
 
