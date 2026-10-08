@@ -127,6 +127,7 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - el report copia `limitations` como ruta; no inventa el texto de la ficha;
 - `checkpoint_id` y `model_id` vacíos no inventan pesos;
 - si hay `--manifest`, el report copia esos ids del manifiesto; no inventa pesos;
+- `provenance_source` es `manifest`, `capture` o `unrecorded`; no inventa el origen;
 - `--approve` es fail-closed en `release-check` y `release-manifest`; approval forbidden;
 - `--create-tag` es fail-closed en ambos; tag creation forbidden;
 - la herramienta no aprueba ni crea el tag.
