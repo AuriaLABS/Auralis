@@ -128,6 +128,8 @@ También presente: [`docs/model-card.md`](model-card.md) (contenido Genesis, no 
 - `checkpoint_id` y `model_id` vacíos no inventan pesos;
 - si hay `--manifest`, el report copia esos ids del manifiesto; no inventa pesos;
 - `provenance_source` es `manifest`, `capture` o `unrecorded`; no inventa el origen;
+- `--snapshot-dir DIR` lee `manifest`, `blockers`, `suites`, `benches`, `ci`, `compat` y `tag` si existen; un fichero ausente sigue pending;
+- el checklist nombra los ítems de issue 121; `human approval` sigue pending; no cierra la issue;
 - `--approve` es fail-closed en `release-check` y `release-manifest`; approval forbidden;
 - `--create-tag` es fail-closed en ambos; tag creation forbidden;
 - la herramienta no aprueba ni crea el tag.
